@@ -1,0 +1,8 @@
+/target/
+/dist/
+/.update-test/
+.env
+.env.*
+*.log
+*.pdb
+/assets/adbhelper-logo.png
