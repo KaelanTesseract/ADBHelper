@@ -37,7 +37,6 @@ enum Outcome {
     VictoryRewards,
     Retry,
     PowerUp,
-    AmbiguousResult,
     NetworkError,
     FinalStage,
 }
@@ -192,6 +191,10 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
             &include_bytes!("../../assets/AFKJourney/afk_stages/tap_to_close.png")[..]
         }
         "battle/battle.png" => &include_bytes!("../../assets/AFKJourney/battle/battle.png")[..],
+        "battle/next.png" => include_bytes!("../../assets/AFKJourney/battle/next.png"),
+        "battle/victory_rewards_wide.png" => {
+            include_bytes!("../../assets/AFKJourney/event/sunlit_showdown/victory.png")
+        }
         "battle/copy.png" => &include_bytes!("../../assets/AFKJourney/battle/copy.png")[..],
         "battle/formation_next.png" => {
             &include_bytes!("../../assets/AFKJourney/battle/formation_next.png")[..]
@@ -659,31 +662,84 @@ fn start_battle(
     Ok(())
 }
 
+fn detect_decisive_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)>, String> {
+    // Failure indicators take priority over generic statistics or transition art.
+    // A statistics icon alone appears on both victory and defeat screens.
+    for (paths, outcome, threshold) in [
+        (&["retry.png"][..], Outcome::Retry, 0.70),
+        (
+            &["battle/power_up.png"][..],
+            Outcome::PowerUp,
+            MATCH_THRESHOLD,
+        ),
+        (
+            &["navigation/confirm.png"][..],
+            Outcome::NetworkError,
+            MATCH_THRESHOLD,
+        ),
+        (&["next.png", "battle/next.png"][..], Outcome::Next, 0.74),
+        (
+            &[
+                "battle/victory_rewards.png",
+                "battle/victory_rewards_wide.png",
+            ][..],
+            Outcome::VictoryRewards,
+            0.76,
+        ),
+        (
+            &["afk_stages/tap_to_close.png"][..],
+            Outcome::FinalStage,
+            MATCH_THRESHOLD,
+        ),
+    ] {
+        if let Some((_, found)) = get_match(screen, paths, lower_screen(), threshold)? {
+            return Ok(Some((outcome, found)));
+        }
+    }
+    Ok(None)
+}
+
+#[derive(Default)]
+struct ResultWait {
+    generic_since: Option<Duration>,
+}
+
+impl ResultWait {
+    fn observe(
+        &mut self,
+        screen: &GrayImage,
+        elapsed: Duration,
+    ) -> Result<Option<(Outcome, Match)>, String> {
+        if let Some(result) = detect_decisive_outcome(screen)? {
+            return Ok(Some(result));
+        }
+        if find_template(screen, "battle/result.png", lower_screen(), MATCH_THRESHOLD)?.is_some() {
+            let visible = self.generic_since.get_or_insert(elapsed);
+            if elapsed.saturating_sub(*visible) >= Duration::from_secs(15) {
+                return Err("Ergebnisanzeige erkannt, aber Sieg oder Niederlage nicht bestätigt. Der Bildschirm wurde nicht weitergeklickt.".into());
+            }
+        } else {
+            self.generic_since = None;
+        }
+        Ok(None)
+    }
+}
+
 fn wait_for_outcome(
     serial: &str,
     log: &mut impl FnMut(String),
     cancelled: &AtomicBool,
 ) -> Result<(Outcome, Match, (u32, u32)), String> {
-    let paths = [
-        ("next.png", Outcome::Next),
-        ("battle/victory_rewards.png", Outcome::VictoryRewards),
-        ("retry.png", Outcome::Retry),
-        ("battle/power_up.png", Outcome::PowerUp),
-        ("battle/result.png", Outcome::AmbiguousResult),
-        ("navigation/confirm.png", Outcome::NetworkError),
-        ("afk_stages/tap_to_close.png", Outcome::FinalStage),
-    ];
     let started = Instant::now();
+    let mut result_wait = ResultWait::default();
     while started.elapsed() < Duration::from_secs(BATTLE_TIMEOUT_SECONDS) {
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
-        for (path, outcome) in paths {
-            if let Some(found) = find_template(&screen, path, lower_screen(), MATCH_THRESHOLD)? {
-                log(format!("Battle result detected: {path}."));
-                return Ok((outcome, found, size));
-            }
+        if let Some((outcome, found)) = result_wait.observe(&screen, started.elapsed())? {
+            log(format!("Battle result confirmed: {outcome:?}."));
+            return Ok((outcome, found, size));
         }
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_millis(500));
     }
     Err("Battle result was not detected within four minutes.".to_owned())
 }
@@ -737,34 +793,6 @@ fn battle_with_current_team(
                 adb::press_back(serial).map_err(|error| error.to_string())?;
                 log("This team did not clear the stage; trying another suggested team.".into());
                 return Ok(StageResult::FormationFailed);
-            }
-            Outcome::AmbiguousResult => {
-                let (screen, screen_size) = screenshot(serial)?;
-                if let Some(retry) = find_template(&screen, "retry.png", lower_screen(), 0.7)? {
-                    progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Lost));
-                    tap_match(serial, retry, screen_size)?;
-                    settle_cancellable(cancelled)?;
-                    continue;
-                }
-                adb::tap_game_point(serial, 950, 1800, screen_size)
-                    .map_err(|error| error.to_string())?;
-                settle_cancellable(cancelled)?;
-                let (_, next, next_size) = wait_for_match(
-                    serial,
-                    &["next.png"],
-                    lower_screen(),
-                    Duration::from_secs(5),
-                    cancelled,
-                )
-                .map_err(|_| {
-                    progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
-                    "Kampfergebnis unklar; es wird keine Stufe als geschafft gezählt.".to_owned()
-                })?;
-                progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Won));
-                progress(ProgressEvent::StageCleared(mode));
-                tap_match(serial, next, next_size)?;
-                settle_cancellable(cancelled)?;
-                return Ok(StageResult::Won);
             }
             Outcome::NetworkError => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
@@ -1160,6 +1188,91 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn result_screen(paths: &[&str]) -> GrayImage {
+        let mut screen = GrayImage::new(BASE_RESOLUTION.0, BASE_RESOLUTION.1);
+        for (index, path) in paths.iter().enumerate() {
+            let template = load_template(path).unwrap();
+            image::imageops::replace(
+                &mut screen,
+                &template,
+                120 + index as i64 * 400,
+                1300 + index as i64 * 220,
+            );
+        }
+        screen
+    }
+
+    #[test]
+    fn both_next_button_styles_confirm_a_win_without_an_extra_click() {
+        for path in ["next.png", "battle/next.png"] {
+            let screen = result_screen(&[path]);
+            assert_eq!(
+                detect_decisive_outcome(&screen).unwrap().unwrap().0,
+                Outcome::Next,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn victory_rewards_confirm_a_win_even_without_a_next_button() {
+        for path in [
+            "battle/victory_rewards.png",
+            "battle/victory_rewards_wide.png",
+        ] {
+            let screen = result_screen(&[path]);
+            assert_eq!(
+                detect_decisive_outcome(&screen).unwrap().unwrap().0,
+                Outcome::VictoryRewards,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_statistics_icon_is_not_treated_as_a_win() {
+        let screen = result_screen(&["battle/result.png"]);
+        assert!(detect_decisive_outcome(&screen).unwrap().is_none());
+        let mut wait = ResultWait::default();
+        assert!(wait.observe(&screen, Duration::ZERO).unwrap().is_none());
+        assert!(wait
+            .observe(&screen, Duration::from_secs(14))
+            .unwrap()
+            .is_none());
+        assert!(wait.observe(&screen, Duration::from_secs(15)).is_err());
+    }
+
+    #[test]
+    fn delayed_success_indicator_is_accepted_after_the_old_five_second_limit() {
+        let mut wait = ResultWait::default();
+        assert!(wait
+            .observe(&result_screen(&["battle/result.png"]), Duration::ZERO)
+            .unwrap()
+            .is_none());
+        let result = wait
+            .observe(
+                &result_screen(&["battle/result.png", "battle/next.png"]),
+                Duration::from_secs(7),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.0, Outcome::Next);
+    }
+
+    #[test]
+    fn defeat_indicators_take_priority_over_the_shared_result_icon() {
+        for (path, expected) in [
+            ("retry.png", Outcome::Retry),
+            ("battle/power_up.png", Outcome::PowerUp),
+        ] {
+            let screen = result_screen(&["battle/result.png", path]);
+            assert_eq!(
+                detect_decisive_outcome(&screen).unwrap().unwrap().0,
+                expected
+            );
+        }
+    }
 
     #[test]
     fn selected_modes_always_run_season_first_and_skip_unselected_modes() {

@@ -89,3 +89,8 @@ ported; this is not feature parity yet.
 
 The Windows build embeds the ADBHelper logo as a multi-resolution executable
 icon (16–256 px), in addition to the window/taskbar icon and header logo.
+
+Result recognition checks both Next-button styles and victory-reward styles
+before advancing. A shared statistics icon does not itself count as success;
+the recognizer waits for delayed result controls and preserves an unrecognized
+result screen for inspection rather than blindly advancing it.
