@@ -9,6 +9,6 @@
 
 Repository: https://github.com/KaelanTesseract/ADBHelper
 
-Die App verwendet öffentliche stabile Releases, SemVer-Vergleich und den GitHub-Asset-Digest. Assetname: `ADBHelper-Windows-x64.exe`. Drafts und Vorabversionen werden nicht angeboten. Updates werden beim Start und alle sechs Stunden abgefragt; der Nutzer startet die Installation ausdrücklich mit „Updaten“.
+Die App verwendet öffentliche stabile Releases, SemVer-Vergleich und den GitHub-Asset-Digest. Assetname: `ADBHelper-Windows-x64.exe`. Drafts und Vorabversionen werden nicht angeboten. Ein Hintergrund-Thread prüft beim Start und alle fünf Minuten, auch bei minimiertem Fenster. Ein grünes Symbol neben Einstellungen öffnet das Patchnotes-Popup; der Nutzer startet die Installation ausdrücklich mit „Herunterladen und installieren“.
 
 Der separate Rust-Helfer wartet auf das Ende der App, prüft den Download nochmals, ersetzt die EXE und startet sie am ursprünglichen Pfad. Die vorherige Datei bleibt bis zur Initialisierung der neuen GUI gesichert. Ein fehlgeschlagener Austausch oder fehlgeschlagener Prozessstart stellt die alte Datei wieder her. Kein PowerShell-/CMD-Skript wird auf dem Rechner des Anwenders gestartet.

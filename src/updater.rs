@@ -14,7 +14,32 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REPOSITORY: &str = "KaelanTesseract/ADBHelper";
 pub const REPOSITORY_URL: &str = "https://github.com/KaelanTesseract/ADBHelper";
 pub const ASSET_NAME: &str = "ADBHelper-Windows-x64.exe";
-pub const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+pub const CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+pub enum CheckEvent {
+    Started,
+    Finished(Result<Option<Release>, String>),
+}
+
+pub fn watch_updates(requests: std::sync::mpsc::Receiver<()>, report: impl FnMut(CheckEvent)) {
+    watch_with(CHECK_INTERVAL, requests, || check(VERSION), report);
+}
+
+fn watch_with(
+    interval: Duration,
+    requests: std::sync::mpsc::Receiver<()>,
+    mut fetch: impl FnMut() -> Result<Option<Release>, String>,
+    mut report: impl FnMut(CheckEvent),
+) {
+    loop {
+        report(CheckEvent::Started);
+        report(CheckEvent::Finished(fetch()));
+        match requests.recv_timeout(interval) {
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
 const MAX_SIZE: u64 = 250 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -492,6 +517,73 @@ pub fn startup_notice() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checks_continue_without_ui_events_and_stop_after_sender_is_dropped() {
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            watch_with(
+                Duration::from_millis(20),
+                request_rx,
+                || Ok(None),
+                |event| {
+                    if let CheckEvent::Finished(result) = event {
+                        result_tx.send(result.is_ok()).unwrap();
+                    }
+                },
+            )
+        });
+        assert!(result_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        assert!(result_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        drop(request_tx);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn manual_check_wakes_the_same_worker_after_a_network_error() {
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut count = 0;
+            watch_with(
+                Duration::from_secs(60),
+                request_rx,
+                || {
+                    count += 1;
+                    if count == 1 {
+                        Err("offline".into())
+                    } else {
+                        Ok(None)
+                    }
+                },
+                |event| {
+                    if let CheckEvent::Finished(result) = event {
+                        result_tx.send(result.is_ok()).unwrap();
+                    }
+                },
+            );
+        });
+        assert!(!result_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        request_tx.send(()).unwrap();
+        assert!(result_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        drop(request_tx);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn each_check_reports_started_before_result() {
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        drop(request_tx);
+        let mut events = Vec::new();
+        watch_with(
+            Duration::from_secs(60),
+            request_rx,
+            || Ok(None),
+            |event| events.push(matches!(event, CheckEvent::Started)),
+        );
+        assert_eq!(events, vec![true, false]);
+    }
     struct TestDir(PathBuf);
     impl TestDir {
         fn new() -> Self {

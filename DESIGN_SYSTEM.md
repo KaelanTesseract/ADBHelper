@@ -17,6 +17,8 @@ The user requested closer matching to the Meely reference. These overrides repla
 
 ## Original Graphit source specification
 
+Update UI override (0.2.2): a compact green circular-arrow button appears immediately after Settings only when a newer stable release is available. Clicking it opens a centered modal with scrollable patchnotes, version comparison, download/install control and progress/error display. Dismissing the modal leaves the icon available. Background polling runs every five minutes independently of drawing or minimization. Other active app elements retain the turquoise accent.
+
 This app uses the user's Graphit Artifact system, adapted for an AFK Journey automation dashboard. The source rules and exact color values are in the Graphit README and `Rust / egui` section. Implementation tokens live in `src/design_system.rs`.
 
 ## Principles

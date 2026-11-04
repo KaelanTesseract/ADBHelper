@@ -3,9 +3,10 @@
 Native Rust desktop app for AFK Journey on Windows x64.
 
 Download stable versions and patchnotes from [GitHub Releases](https://github.com/KaelanTesseract/ADBHelper/releases).
-The app checks for updates at startup and every six hours. New releases display
-their patchnotes in the app. Click **Updaten** to download, verify, replace and
-restart the executable. Updates require write access to the executable's folder;
+The app checks for updates at startup and every five minutes, including while
+minimized. A green update icon beside Settings indicates a new release. Click it
+to open the patchnotes popup, then choose **Herunterladen und installieren** to
+download, verify, replace and restart the executable. Updates require write access to the executable's folder;
 no GitHub login is needed. See [RELEASING.md](RELEASING.md) for publishing.
 
 The AFK Journey recognition templates originate from the MIT-licensed

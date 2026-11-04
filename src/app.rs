@@ -20,6 +20,7 @@ enum Event {
     Activity(ActivityEvent),
     StagesFinished(Option<String>),
     UpdateChecked(Result<Option<updater::Release>, String>),
+    UpdateCheckStarted,
     UpdateProgress(u8),
     UpdateReady(Result<(), String>),
 }
@@ -57,11 +58,14 @@ pub struct PlayerApp {
     update_error: Option<String>,
     update_notice: Option<String>,
     close_for_update: bool,
+    update_dialog_open: bool,
+    update_requests: Sender<()>,
 }
 
 impl PlayerApp {
     pub fn new(context: &eframe::CreationContext<'_>) -> Self {
         let (sender, receiver) = mpsc::channel();
+        let (update_requests, update_receiver) = mpsc::channel();
         let logo_image = image::load_from_memory(include_bytes!("../assets/adbhelper-logo-v2.png"))
             .expect("embedded ADBHelper logo should be a valid PNG")
             .to_rgba8();
@@ -96,17 +100,30 @@ impl PlayerApp {
             activity: RunActivity::default(),
             stage_error: None,
             available_update: None,
-            update_checking: false,
+            update_checking: true,
             update_checked: false,
             last_update_check: None,
             update_progress: None,
             update_error: None,
             update_notice: updater::startup_notice(),
             close_for_update: false,
+            update_dialog_open: false,
+            update_requests,
         };
         app.log("AFK Journey · App gestartet. Verbinde ein Android-Gerät mit aktiviertem ADB-Debugging.");
         app.refresh_devices();
-        app.check_updates();
+        let update_sender = app.sender.clone();
+        let update_context = context.egui_ctx.clone();
+        thread::spawn(move || {
+            updater::watch_updates(update_receiver, |event| {
+                let message = match event {
+                    updater::CheckEvent::Started => Event::UpdateCheckStarted,
+                    updater::CheckEvent::Finished(result) => Event::UpdateChecked(result),
+                };
+                let _ = update_sender.send(message);
+                update_context.request_repaint();
+            })
+        });
         design_system::apply_theme(&context.egui_ctx);
         app
     }
@@ -125,10 +142,10 @@ impl PlayerApp {
         self.update_checking = true;
         self.update_error = None;
         self.last_update_check = Some(Instant::now());
-        let sender = self.sender.clone();
-        thread::spawn(move || {
-            let _ = sender.send(Event::UpdateChecked(updater::check(updater::VERSION)));
-        });
+        if self.update_requests.send(()).is_err() {
+            self.update_checking = false;
+            self.update_error = Some("Der Update-Dienst ist nicht verfügbar.".into());
+        }
     }
 
     fn install_update(&mut self) {
@@ -150,7 +167,7 @@ impl PlayerApp {
         });
     }
 
-    fn show_update_banner(&mut self, ui: &mut egui::Ui) {
+    fn show_update_notice(&mut self, ui: &mut egui::Ui) {
         if let Some(notice) = self.update_notice.clone() {
             card(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -162,20 +179,31 @@ impl PlayerApp {
             });
             ui.add_space(SpaceTokens::MD);
         }
-        if let Some(release) = self.available_update.clone() {
-            design_system::active_card(ui, |ui| {
+    }
+
+    fn show_update_dialog(&mut self, context: &egui::Context) {
+        if !self.update_dialog_open {
+            return;
+        }
+        let Some(release) = self.available_update.clone() else {
+            self.update_dialog_open = false;
+            return;
+        };
+        let mut close = false;
+        let response = egui::Modal::new(egui::Id::unique("app-update-dialog"))
+            .frame(design_system::panel_frame())
+            .show(context, |ui| {
+                ui.set_width((context.content_rect().width() - 64.0).clamp(260.0, 560.0));
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("Update {} verfügbar", release.version))
                             .color(ColorTokens::GLOW),
                     );
-                    if ui
-                        .add_enabled(!self.busy, primary_button("Updaten"))
-                        .clicked()
-                    {
-                        self.install_update();
-                    }
-                    ui.hyperlink_to("Release auf GitHub", &release.url);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Schließen").clicked() {
+                            close = true;
+                        }
+                    });
                 });
                 ui.label(format!(
                     "Installiert: {} · Neu: {}",
@@ -185,7 +213,7 @@ impl PlayerApp {
                 ui.strong("Patchnotes");
                 egui::ScrollArea::vertical()
                     .id_salt("update-patchnotes")
-                    .max_height(135.0)
+                    .max_height((context.content_rect().height() - 260.0).clamp(80.0, 360.0))
                     .show(ui, |ui| {
                         for line in release.notes.lines() {
                             if line.starts_with('#') {
@@ -198,6 +226,18 @@ impl PlayerApp {
                             }
                         }
                     });
+                ui.add_space(SpaceTokens::MD);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!self.busy, primary_button("Herunterladen und installieren"))
+                        .clicked()
+                    {
+                        self.install_update();
+                    }
+                    ui.hyperlink_to("Release auf GitHub", &release.url);
+                });
+                ui.small("Nach der Installation startet ADBHelper automatisch neu.");
                 if let Some(percent) = self.update_progress {
                     ui.add(egui::ProgressBar::new(f32::from(percent) / 100.0).text(
                         if percent == 100 {
@@ -213,7 +253,8 @@ impl PlayerApp {
                     ui.add(egui::Label::new(error).wrap());
                 }
             });
-            ui.add_space(SpaceTokens::MD);
+        if close || response.should_close() {
+            self.update_dialog_open = false;
         }
     }
 
@@ -388,13 +429,19 @@ impl PlayerApp {
                 Event::UpdateChecked(result) => {
                     self.update_checking = false;
                     self.update_checked = true;
-                    match result {
-                        Ok(release) => {
-                            self.available_update = release;
-                            self.update_error = None;
+                    if self.update_progress.is_none() {
+                        match result {
+                            Ok(release) => {
+                                self.available_update = release;
+                                self.update_error = None;
+                            }
+                            Err(error) => self.update_error = Some(error),
                         }
-                        Err(error) => self.update_error = Some(error),
                     }
+                }
+                Event::UpdateCheckStarted => {
+                    self.update_checking = true;
+                    self.last_update_check = Some(Instant::now());
                 }
                 Event::UpdateProgress(percent) => self.update_progress = Some(percent),
                 Event::UpdateReady(Ok(())) => self.close_for_update = true,
@@ -554,7 +601,14 @@ impl PlayerApp {
             ui.strong("App-Updates");
             ui.label(format!("ADBHelper {}", updater::VERSION));
             ui.hyperlink_to("GitHub-Repository", updater::REPOSITORY_URL);
-            ui.small("Automatische Prüfung beim Start und alle 6 Stunden.");
+            ui.small(
+                "Automatische Prüfung beim Start und alle 5 Minuten, auch bei minimierter App.",
+            );
+            if self.available_update.is_some()
+                && ui.button("Update und Patchnotes anzeigen").clicked()
+            {
+                self.update_dialog_open = true;
+            }
             let cooldown = self
                 .last_update_check
                 .is_some_and(|last| last.elapsed() < Duration::from_secs(30));
@@ -711,14 +765,6 @@ impl eframe::App for PlayerApp {
                     return;
                 }
                 context.request_repaint_after(Duration::from_secs(1));
-                if !self.update_checking
-                    && self.update_progress.is_none()
-                    && self
-                        .last_update_check
-                        .is_none_or(|last| last.elapsed() >= updater::CHECK_INTERVAL)
-                {
-                    self.check_updates();
-                }
                 if self.busy {
                     context.request_repaint_after(Duration::from_millis(100));
                 }
@@ -757,6 +803,11 @@ impl eframe::App for PlayerApp {
                                 GeometryTokens::NAV_SETTINGS_WIDTH,
                             ) {
                                 self.page = Page::Settings;
+                            }
+                            if let Some(release) = &self.available_update {
+                                if update_icon(ui, &release.version).clicked() {
+                                    self.update_dialog_open = true;
+                                }
                             }
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -815,14 +866,58 @@ impl eframe::App for PlayerApp {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        self.show_update_banner(ui);
+                        self.show_update_notice(ui);
                         match self.page {
                             Page::Automations => self.show_dashboard(ui),
                             Page::Settings => self.show_settings(ui),
                         }
                     });
             });
+        self.show_update_dialog(ui.ctx());
     }
+}
+
+fn update_icon(ui: &mut egui::Ui, version: &str) -> egui::Response {
+    let response = ui
+        .add_sized(
+            egui::vec2(32.0, GeometryTokens::TITLEBAR_HEIGHT),
+            egui::Button::new("").frame(false),
+        )
+        .on_hover_text(format!("Update {version} verfügbar – Patchnotes anzeigen"));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::Role::Button,
+            true,
+            format!("Update {version} verfügbar"),
+        )
+    });
+    let color = if response.hovered() {
+        egui::Color32::from_rgb(146, 245, 176)
+    } else {
+        egui::Color32::from_rgb(89, 216, 134)
+    };
+    let center = response.rect.center();
+    let points: Vec<_> = (0..=28)
+        .map(|i| {
+            let angle = -0.7 + i as f32 / 28.0 * 5.2;
+            center + egui::vec2(angle.cos(), angle.sin()) * 7.0
+        })
+        .collect();
+    let end = *points.last().unwrap();
+    ui.painter()
+        .add(egui::Shape::line(points, egui::Stroke::new(1.6, color)));
+    let tangent = egui::vec2(-4.5_f32.sin(), 4.5_f32.cos());
+    let normal = egui::vec2(-tangent.y, tangent.x);
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            end + tangent * 3.0,
+            end - tangent * 2.0 + normal * 3.0,
+            end - tangent * 2.0 - normal * 3.0,
+        ],
+        color,
+        egui::Stroke::NONE,
+    ));
+    response
 }
 
 fn nav_tab(ui: &mut egui::Ui, selected: bool, label: &str, width: f32) -> bool {
