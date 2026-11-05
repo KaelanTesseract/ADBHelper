@@ -9,6 +9,10 @@ pub const BASE_RESOLUTION: (u32, u32) = (1080, 1920);
 pub const BATTLE_TIMEOUT_SECONDS: u64 = 240;
 
 pub mod afk_stages;
+pub mod duras_trials;
+pub mod legend_trial;
+mod ocr;
+pub mod union_campaign;
 
 pub fn is_supported_package(package: &str) -> bool {
     PACKAGE_NAMES.contains(&package)

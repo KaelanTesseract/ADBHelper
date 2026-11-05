@@ -1,6 +1,7 @@
-use crate::activity::{ActivityEvent, GameMode, RunActivity};
+use crate::activity::{ActivityEvent, GameMode, LegendTower, RunActivity};
 use crate::adb::{self, Device};
 use crate::afk_journey::afk_stages::StageSelection;
+use crate::afk_journey::legend_trial::TowerSelection;
 use crate::design_system::{
     self, card, primary_button, status_badge, ColorTokens, GeometryTokens, SpaceTokens, TypeTokens,
 };
@@ -18,7 +19,7 @@ enum Event {
     Log(String),
     Busy(bool),
     Activity(ActivityEvent),
-    StagesFinished(Option<String>),
+    StagesFinished(StageAction, Option<String>),
     UpdateChecked(Result<Option<updater::Release>, String>),
     UpdateCheckStarted,
     UpdateProgress(u8),
@@ -29,6 +30,68 @@ enum Event {
 enum Page {
     Automations,
     Settings,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StageAction {
+    AfkStages,
+    SeasonLegendTrial,
+    UnionCampaign,
+    DurasTrials,
+}
+
+impl StageAction {
+    fn index(self) -> usize {
+        match self {
+            Self::AfkStages => 0,
+            Self::SeasonLegendTrial => 1,
+            Self::UnionCampaign => 2,
+            Self::DurasTrials => 3,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::AfkStages => "AFK-Stages",
+            Self::SeasonLegendTrial => "Season Legend Trial",
+            Self::UnionCampaign => "Union Campaign",
+            Self::DurasTrials => "Dura’s Trials",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ActionBattleOptions {
+    suggested_formations: bool,
+    current_team_first: bool,
+    skip_manual_formations: bool,
+    max_formations: u32,
+    attempts_per_formation: u32,
+}
+
+impl Default for ActionBattleOptions {
+    fn default() -> Self {
+        Self {
+            suggested_formations: true,
+            current_team_first: true,
+            skip_manual_formations: false,
+            max_formations: 10,
+            attempts_per_formation: 5,
+        }
+    }
+}
+
+impl ActionBattleOptions {
+    fn battle_settings(self, mode: GameMode) -> crate::afk_journey::afk_stages::BattleSettings {
+        crate::afk_journey::afk_stages::BattleSettings {
+            mode,
+            use_suggested_formations: self.suggested_formations,
+            current_team_first: self.current_team_first,
+            skip_manual_formations: self.skip_manual_formations,
+            max_formations: self.max_formations.clamp(1, 10),
+            attempts_per_formation: self.attempts_per_formation.clamp(1, 10),
+        }
+    }
 }
 
 pub struct PlayerApp {
@@ -43,14 +106,14 @@ pub struct PlayerApp {
     adb_path: String,
     stage_cancel: Option<Arc<AtomicBool>>,
     stage_selection: StageSelection,
-    suggested_formations: bool,
-    current_team_first: bool,
-    skip_manual_formations: bool,
-    max_formations: u32,
-    attempts_per_formation: u32,
+    tower_selection: TowerSelection,
+    dura_sweep_after_cap: bool,
+    active_action: Option<StageAction>,
+    battle_options: [ActionBattleOptions; 4],
+    action_settings_dialog: Option<StageAction>,
     logo: egui::TextureHandle,
     activity: RunActivity,
-    stage_error: Option<String>,
+    action_error: Option<(StageAction, String)>,
     available_update: Option<updater::Release>,
     update_checking: bool,
     update_checked: bool,
@@ -93,14 +156,14 @@ impl PlayerApp {
                 .unwrap_or_else(|_| adb::suggested_adb_path()),
             stage_cancel: None,
             stage_selection: StageSelection::default(),
-            suggested_formations: true,
-            current_team_first: true,
-            skip_manual_formations: false,
-            max_formations: 10,
-            attempts_per_formation: 5,
+            tower_selection: TowerSelection::default(),
+            dura_sweep_after_cap: true,
+            active_action: None,
+            battle_options: [ActionBattleOptions::default(); 4],
+            action_settings_dialog: None,
             logo,
             activity: RunActivity::default(),
-            stage_error: None,
+            action_error: None,
             available_update: None,
             update_checking: true,
             update_checked: false,
@@ -345,51 +408,97 @@ impl PlayerApp {
         });
     }
 
-    fn start_stages(&mut self) {
-        self.stage_error = None;
+    fn start_action(&mut self, action: StageAction) {
+        if self.busy {
+            return;
+        }
+        self.action_error = None;
         let selection = self.stage_selection;
-        let Some(mode) = selection.modes().first().copied() else {
-            self.stage_error = Some("Bitte mindestens eine Stage-Art auswählen.".into());
+        let towers = self.tower_selection;
+        let dura_sweep_after_cap = self.dura_sweep_after_cap;
+        let mode = match action {
+            StageAction::AfkStages => selection.modes().first().copied(),
+            StageAction::SeasonLegendTrial => towers
+                .selected()
+                .first()
+                .copied()
+                .map(GameMode::SeasonLegendTrial),
+            StageAction::UnionCampaign => Some(GameMode::UnionCampaign),
+            StageAction::DurasTrials => Some(GameMode::DurasTrials),
+        };
+        let Some(mode) = mode else {
+            self.action_error = Some((
+                action,
+                match action {
+                    StageAction::AfkStages => "Bitte mindestens eine Stage-Art auswählen.",
+                    StageAction::SeasonLegendTrial => {
+                        "Bitte über das Zahnrad mindestens einen Turm auswählen."
+                    }
+                    StageAction::UnionCampaign => "Union Campaign ist nicht verfügbar.",
+                    StageAction::DurasTrials => "Dura’s Trials sind nicht verfügbar.",
+                }
+                .into(),
+            ));
             return;
         };
         let Some(serial) = self.selected_serial() else {
-            self.stage_error = Some("Bitte zuerst unter Einstellungen ein Gerät verbinden.".into());
+            self.action_error = Some((
+                action,
+                "Bitte zuerst unter Einstellungen ein Gerät verbinden.".into(),
+            ));
             return;
         };
         self.activity.start(mode, Instant::now());
-        self.stage_error = None;
-        let battle_settings = crate::afk_journey::afk_stages::BattleSettings {
-            mode,
-            use_suggested_formations: self.suggested_formations,
-            current_team_first: self.current_team_first,
-            skip_manual_formations: self.skip_manual_formations,
-            max_formations: self.max_formations.clamp(1, 10),
-            attempts_per_formation: self.attempts_per_formation.clamp(1, 10),
-        };
+        let battle_settings = self.battle_options[action.index()].battle_settings(mode);
         let cancelled = Arc::new(AtomicBool::new(false));
         self.stage_cancel = Some(cancelled.clone());
+        self.active_action = Some(action);
         self.busy = true;
-        self.log(format!(
-            "{} gestartet · läuft bis keine weitere Stufe geschafft werden kann.",
-            mode.label()
-        ));
+        self.log(format!("{} gestartet.", action.label()));
         let sender = self.sender.clone();
         thread::spawn(move || {
-            let result = crate::afk_journey::afk_stages::run_selected(
-                &serial,
-                battle_settings,
-                selection,
-                &cancelled,
-                |message| {
-                    let _ = sender.send(Event::Log(message));
-                },
-                |progress| {
-                    let _ = sender.send(Event::Activity(progress));
-                },
-            );
+            let log = |message| {
+                let _ = sender.send(Event::Log(message));
+            };
+            let progress = |progress| {
+                let _ = sender.send(Event::Activity(progress));
+            };
+            let result = match action {
+                StageAction::AfkStages => crate::afk_journey::afk_stages::run_selected(
+                    &serial,
+                    battle_settings,
+                    selection,
+                    &cancelled,
+                    log,
+                    progress,
+                ),
+                StageAction::SeasonLegendTrial => crate::afk_journey::legend_trial::run(
+                    &serial,
+                    battle_settings,
+                    towers,
+                    &cancelled,
+                    log,
+                    progress,
+                ),
+                StageAction::UnionCampaign => crate::afk_journey::union_campaign::run(
+                    &serial,
+                    battle_settings,
+                    &cancelled,
+                    log,
+                    progress,
+                ),
+                StageAction::DurasTrials => crate::afk_journey::duras_trials::run(
+                    &serial,
+                    battle_settings,
+                    dura_sweep_after_cap,
+                    &cancelled,
+                    log,
+                    progress,
+                ),
+            };
             let message = match &result {
-                Ok(cleared) => format!("AFK-Stages-Lauf abgeschlossen · {cleared} geschafft."),
-                Err(error) => format!("AFK-Stages-Lauf beendet: {error}"),
+                Ok(cleared) => format!("{} abgeschlossen · {cleared} geschafft.", action.label()),
+                Err(error) => format!("{} beendet: {error}", action.label()),
             };
             let _ = sender.send(Event::Log(message));
             let error = if cancelled.load(Ordering::Relaxed) {
@@ -397,7 +506,7 @@ impl PlayerApp {
             } else {
                 result.err()
             };
-            let _ = sender.send(Event::StagesFinished(error));
+            let _ = sender.send(Event::StagesFinished(action, error));
             let _ = sender.send(Event::Busy(false));
         });
     }
@@ -428,7 +537,9 @@ impl PlayerApp {
                 }
                 Event::Log(message) => self.log(message),
                 Event::Activity(event) => self.activity.apply(event),
-                Event::StagesFinished(error) => self.stage_error = error,
+                Event::StagesFinished(action, error) => {
+                    self.action_error = error.map(|error| (action, error))
+                }
                 Event::UpdateChecked(result) => {
                     self.update_checking = false;
                     self.update_checked = true;
@@ -458,13 +569,14 @@ impl PlayerApp {
                     if !busy {
                         self.activity.finish(Instant::now());
                         self.stage_cancel = None;
+                        self.active_action = None;
                     }
                 }
             }
         }
     }
 
-    fn show_dashboard(&mut self, ui: &mut egui::Ui) {
+    fn show_dashboard(&mut self, ui: &mut egui::Ui, dashboard_height: f32) {
         let full_width = ui.available_width();
         let usable_width = (full_width - SpaceTokens::MD * 2.0).max(1.0);
         let left_width = usable_width * 0.34;
@@ -479,23 +591,25 @@ impl PlayerApp {
                     ui.spacing_mut().item_spacing.x = SpaceTokens::SM;
                     ui.heading(egui::RichText::new("Aktionen").color(ColorTokens::TEXT_PRIMARY));
                     ui.add_space(SpaceTokens::SM);
-                    let active = self.stage_cancel.is_some();
+                    let active = self.active_action == Some(StageAction::AfkStages)
+                        && self.stage_cancel.is_some();
                     design_system::state_card(ui, active, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("AFK-Stages").size(14.0).color(ColorTokens::TEXT_PRIMARY));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if active {
-                                    status_badge(ui, "LÄUFT", true);
-                                }
-                            });
-                        });
+                        self.show_action_header(ui, StageAction::AfkStages, active);
                         ui.label("Ausgewählte Stages pushen");
                         ui.add_space(SpaceTokens::SM);
                         ui.add_enabled_ui(!self.busy, |ui| {
                             ui.spacing_mut().interact_size.y = 20.0;
                             ui.horizontal(|ui| {
-                            design_system::active_checkbox(ui, &mut self.stage_selection.season, "Season-Stages");
-                            design_system::active_checkbox(ui, &mut self.stage_selection.normal, "Normale Stages");
+                                design_system::active_checkbox(
+                                    ui,
+                                    &mut self.stage_selection.season,
+                                    "Season-Stages",
+                                );
+                                design_system::active_checkbox(
+                                    ui,
+                                    &mut self.stage_selection.normal,
+                                    "Normale Stages",
+                                );
                             });
                         });
                         if self.stage_selection.season && self.stage_selection.normal {
@@ -504,8 +618,16 @@ impl PlayerApp {
                         ui.add_space(SpaceTokens::SM);
                         ui.separator();
                         ui.horizontal(|ui| {
-                            if ui.add_enabled(!self.busy && (self.stage_selection.season || self.stage_selection.normal), primary_button("Starten")).clicked() {
-                                self.start_stages();
+                            if ui
+                                .add_enabled(
+                                    !self.busy
+                                        && (self.stage_selection.season
+                                            || self.stage_selection.normal),
+                                    primary_button("Starten"),
+                                )
+                                .clicked()
+                            {
+                                self.start_action(StageAction::AfkStages);
                             }
                             if let Some(cancel) = self.stage_cancel.as_ref().filter(|_| active) {
                                 let cancel = cancel.clone();
@@ -515,12 +637,125 @@ impl PlayerApp {
                                 }
                             }
                         });
-                        if let Some(error) = self.stage_error.as_ref() {
-                            ui.add(egui::Label::new(egui::RichText::new(error).color(ColorTokens::DANGER_HOVER)).wrap());
+                        if let Some((StageAction::AfkStages, error)) = self.action_error.as_ref() {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(error).color(ColorTokens::DANGER_HOVER),
+                                )
+                                .wrap(),
+                            );
                         }
                     });
                     ui.add_space(SpaceTokens::MD);
-
+                    let legend_active = self.active_action == Some(StageAction::SeasonLegendTrial)
+                        && self.stage_cancel.is_some();
+                    design_system::state_card(ui, legend_active, |ui| {
+                        self.show_action_header(ui, StageAction::SeasonLegendTrial, legend_active);
+                        ui.label("Verfügbare Fraktionstürme pushen");
+                        ui.small(format!(
+                            "{} Türme ausgewählt",
+                            self.tower_selection.selected().len()
+                        ));
+                        ui.add_space(SpaceTokens::SM);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(
+                                    !self.busy && !self.tower_selection.selected().is_empty(),
+                                    primary_button("Starten"),
+                                )
+                                .clicked()
+                            {
+                                self.start_action(StageAction::SeasonLegendTrial);
+                            }
+                            if legend_active {
+                                if let Some(cancel) = self.stage_cancel.clone() {
+                                    if ui.add(design_system::stop_button("Stop")).clicked() {
+                                        cancel.store(true, Ordering::Relaxed);
+                                        self.log(
+                                            "Stop für den gesamten Legend-Trial-Lauf angefordert.",
+                                        );
+                                    }
+                                }
+                            }
+                        });
+                        if let Some((StageAction::SeasonLegendTrial, error)) =
+                            self.action_error.as_ref()
+                        {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(error).color(ColorTokens::DANGER_HOVER),
+                                )
+                                .wrap(),
+                            );
+                        }
+                    });
+                    ui.add_space(SpaceTokens::MD);
+                    let union_active = self.active_action == Some(StageAction::UnionCampaign)
+                        && self.stage_cancel.is_some();
+                    design_system::state_card(ui, union_active, |ui| {
+                        self.show_action_header(ui, StageAction::UnionCampaign, union_active);
+                        ui.label("Gilden-Etagen pushen");
+                        ui.add_space(SpaceTokens::SM);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(!self.busy, primary_button("Starten"))
+                                .clicked()
+                            {
+                                self.start_action(StageAction::UnionCampaign);
+                            }
+                            if union_active {
+                                if let Some(cancel) = self.stage_cancel.clone() {
+                                    if ui.add(design_system::stop_button("Stop")).clicked() {
+                                        cancel.store(true, Ordering::Relaxed);
+                                        self.log("Stop für die Union Campaign angefordert.");
+                                    }
+                                }
+                            }
+                        });
+                        if let Some((StageAction::UnionCampaign, error)) =
+                            self.action_error.as_ref()
+                        {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(error).color(ColorTokens::DANGER_HOVER),
+                                )
+                                .wrap(),
+                            );
+                        }
+                    });
+                    ui.add_space(SpaceTokens::MD);
+                    let dura_active = self.active_action == Some(StageAction::DurasTrials)
+                        && self.stage_cancel.is_some();
+                    design_system::state_card(ui, dura_active, |ui| {
+                        self.show_action_header(ui, StageAction::DurasTrials, dura_active);
+                        ui.label("Stufen pushen · Sweep nur am bestätigten Maximum");
+                        ui.add_space(SpaceTokens::SM);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(!self.busy, primary_button("Starten"))
+                                .clicked()
+                            {
+                                self.start_action(StageAction::DurasTrials);
+                            }
+                            if dura_active {
+                                if let Some(cancel) = self.stage_cancel.clone() {
+                                    if ui.add(design_system::stop_button("Stop")).clicked() {
+                                        cancel.store(true, Ordering::Relaxed);
+                                        self.log("Stop für Dura’s Trials angefordert.");
+                                    }
+                                }
+                            }
+                        });
+                        if let Some((StageAction::DurasTrials, error)) = self.action_error.as_ref()
+                        {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(error).color(ColorTokens::DANGER_HOVER),
+                                )
+                                .wrap(),
+                            );
+                        }
+                    });
                 },
             );
 
@@ -529,32 +764,7 @@ impl PlayerApp {
                 egui::vec2(center_width, ui.available_height()),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    ui.spacing_mut().item_spacing.x = SpaceTokens::SM;
-                    ui.heading(egui::RichText::new("Statistiken").color(ColorTokens::TEXT_PRIMARY));
-                    ui.add_space(SpaceTokens::SM);
-                    card(ui, |ui| {
-                        stat_value(ui, "LAUFZEIT", &format_duration(self.activity.elapsed(Instant::now())));
-                        ui.small("Aktueller Lauf inkl. Navigation");
-                        ui.add_space(SpaceTokens::SM);
-                        crate::charts::stage_history(ui, &self.activity);
-                    });
-                    ui.add_space(SpaceTokens::MD);
-                    card(ui, |ui| {
-                        let rate = self.activity.success_rate().map(|r| format!("{r:.0} %")).unwrap_or_else(|| "—".into());
-                        stat_value(ui, "ERFOLGSQUOTE", &rate);
-                        let (wins, losses) = self.activity.outcomes();
-                        ui.small(format!("{wins} Siege · {losses} Niederlagen"))
-                            .on_hover_text("Siege / entschiedene Kämpfe. Laufende und unklare Kämpfe werden nicht eingerechnet.");
-                    });
-                    ui.add_space(SpaceTokens::MD);
-                    card(ui, |ui| {
-                        let average = self.activity.attempts_per_clear().map(|a| format!("{a:.1}").replace('.', ",")).unwrap_or_else(|| "—".into());
-                        stat_value(ui, "Ø VERSUCHE PRO STAGE", &average);
-                        ui.small("Nur abgeschlossene Stufen")
-                            .on_hover_text("Versuche bis zur letzten geschafften Stufe / geschaffte Stufen. Versuche an einer noch offenen Stufe werden ausgeschlossen.");
-                    });
-                    ui.add_space(SpaceTokens::MD);
-                    card(ui, |ui| crate::charts::mode_comparison(ui, &self.activity));
+                    crate::charts::statistics(ui, &self.activity, dashboard_height);
                 },
             );
 
@@ -567,27 +777,50 @@ impl PlayerApp {
                     ui.heading(egui::RichText::new("Aktivität").color(ColorTokens::TEXT_PRIMARY));
                     ui.add_space(SpaceTokens::SM);
                     card(ui, |ui| {
-                        ui.small(if self.activity.is_running() { "AKTUELLER SPIELMODUS" } else { "LETZTER SPIELMODUS" });
+                        ui.small(if self.activity.is_running() {
+                            "AKTUELLER SPIELMODUS"
+                        } else {
+                            "LETZTER SPIELMODUS"
+                        });
                         match self.activity.current_mode {
-                            Some(mode) => { ui.label(egui::RichText::new(mode.label()).size(14.0).color(ColorTokens::GLOW)); }
+                            Some(mode) => {
+                                ui.label(
+                                    egui::RichText::new(mode.label())
+                                        .size(14.0)
+                                        .color(ColorTokens::GLOW),
+                                );
+                            }
                             None if self.activity.is_running() => {
                                 ui.label("Spielmodus wird geöffnet …");
-                                if let Some(target) = self.activity.target { ui.small(format!("Ziel: {}", target.label())); }
+                                if let Some(target) = self.activity.target {
+                                    ui.small(format!("Ziel: {}", target.label()));
+                                }
                             }
-                            None => { ui.label("Noch kein Modus gestartet"); }
+                            None => {
+                                ui.label("Noch kein Modus gestartet");
+                            }
                         }
                     });
                     for (mode, stats) in &self.activity.modes {
                         ui.add_space(SpaceTokens::MD);
-                        let active = self.activity.is_running() && self.activity.current_mode == Some(*mode);
+                        let active =
+                            self.activity.is_running() && self.activity.current_mode == Some(*mode);
                         design_system::state_card(ui, active, |ui| {
-                            ui.label(egui::RichText::new(mode.label()).color(if active { ColorTokens::GLOW } else { ColorTokens::TEXT_PRIMARY }));
+                            ui.label(egui::RichText::new(mode.label()).color(if active {
+                                ColorTokens::GLOW
+                            } else {
+                                ColorTokens::TEXT_PRIMARY
+                            }));
                             ui.add_space(SpaceTokens::SM);
                             ui.separator();
                             ui.horizontal(|ui| {
                                 progress_metric(ui, "VERSUCHE", stats.attempts);
-                                ui.add_space(SpaceTokens::XL);
-                                progress_metric(ui, "STAGES GECLEART", stats.cleared);
+                                ui.add_space(SpaceTokens::MD);
+                                progress_metric(ui, "GECLEART", stats.cleared);
+                                if *mode == GameMode::DurasTrials {
+                                    ui.add_space(SpaceTokens::SM);
+                                    progress_metric(ui, "SWEEPS", stats.sweeps);
+                                }
                             });
                         });
                     }
@@ -596,9 +829,106 @@ impl PlayerApp {
         });
     }
 
+    fn show_action_header(&mut self, ui: &mut egui::Ui, action: StageAction, active: bool) {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(action.label())
+                    .size(14.0)
+                    .color(ColorTokens::TEXT_PRIMARY),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if settings_gear(
+                    ui,
+                    action.label(),
+                    self.action_settings_dialog == Some(action),
+                )
+                .clicked()
+                {
+                    self.update_dialog_open = false;
+                    self.action_settings_dialog = Some(action);
+                }
+                if active {
+                    status_badge(ui, "LÄUFT", true);
+                }
+            });
+        });
+    }
+
+    fn show_action_settings_dialog(&mut self, context: &egui::Context) {
+        let Some(action) = self.action_settings_dialog else {
+            return;
+        };
+        let mut close = false;
+        let response = egui::Modal::new(egui::Id::unique(("action-settings-dialog", action.index())))
+            .frame(design_system::panel_frame())
+            .show(context, |ui| {
+                ui.set_width((context.content_rect().width() - 64.0).clamp(260.0, 500.0));
+                ui.heading(action.label());
+                ui.label("Aktionseinstellungen");
+                ui.add_space(SpaceTokens::SM);
+                ui.separator();
+                ui.add_space(SpaceTokens::SM);
+                if self.busy {
+                    ui.small("Während eines laufenden Vorgangs können die Einstellungen nur angesehen werden.");
+                    ui.add_space(SpaceTokens::SM);
+                }
+                egui::ScrollArea::vertical()
+                    .id_salt(("action-settings-content", action.index()))
+                    .max_height((context.content_rect().height() - 230.0).clamp(100.0, 540.0))
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(!self.busy, |ui| {
+                            match action {
+                                StageAction::AfkStages => {
+                                    ui.strong("Stage-Auswahl");
+                                    ui.horizontal(|ui| {
+                                        design_system::active_checkbox(ui, &mut self.stage_selection.season, "Season-Stages");
+                                        design_system::active_checkbox(ui, &mut self.stage_selection.normal, "Normale Stages");
+                                    });
+                                    ui.small("Bei gemeinsamer Auswahl zuerst Season, danach Normal.");
+                                }
+                                StageAction::SeasonLegendTrial => {
+                                    ui.strong("Fraktionstürme");
+                                    ui.label("Heute geschlossene Türme werden automatisch übersprungen.");
+                                    egui::Grid::new("legend-trial-towers").num_columns(2).show(ui, |ui| {
+                                        for (index, tower) in LegendTower::ALL.into_iter().enumerate() {
+                                            design_system::active_checkbox(ui, &mut self.tower_selection.enabled[index], tower.label());
+                                            if index % 2 == 1 { ui.end_row(); }
+                                        }
+                                    });
+                                    ui.small("Reihenfolge: Lightbearer, Wilder, Graveborn, Mauler.");
+                                }
+                                StageAction::DurasTrials => {
+                                    ui.strong("Tägliche Sweeps");
+                                    design_system::active_checkbox(ui, &mut self.dura_sweep_after_cap,
+                                        "Nach bestätigter Maximalstufe tägliche Sweeps ausführen");
+                                    ui.small("Nur an der eindeutig bestätigten aktuellen Maximalstufe. Bei unklarer Erkennung wird nicht gesweept. Zusätzliche Vorratstoken werden nicht verwendet.");
+                                }
+                                StageAction::UnionCampaign => {}
+                            }
+                            if action != StageAction::UnionCampaign {
+                                ui.add_space(SpaceTokens::MD);
+                                ui.separator();
+                                ui.add_space(SpaceTokens::MD);
+                            }
+                            show_battle_options(ui, &mut self.battle_options[action.index()]);
+                        });
+                    });
+                ui.add_space(SpaceTokens::MD);
+                ui.separator();
+                ui.add_space(SpaceTokens::SM);
+                ui.small("Änderungen gelten direkt für diese Aktion.");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close = ui.button("Schließen").clicked();
+                });
+            });
+        if close || response.should_close() {
+            self.action_settings_dialog = None;
+        }
+    }
+
     fn show_settings(&mut self, ui: &mut egui::Ui) {
         ui.heading(egui::RichText::new("Einstellungen").color(ColorTokens::TEXT_PRIMARY));
-        ui.label("Verbindung und Ablauf der AFK-Journey-Automationen konfigurieren.");
+        ui.label("Geräteverbindung und App-Updates verwalten.");
         ui.add_space(SpaceTokens::MD);
         card(ui, |ui| {
             ui.strong("App-Updates");
@@ -715,47 +1045,6 @@ impl PlayerApp {
                     });
                 }
             });
-        });
-        ui.add_space(SpaceTokens::GAP);
-        card(ui, |ui| {
-            ui.strong("AFK-Stages und Season-AFK-Stages");
-            ui.label("Teamwahl und Kampfversuche.");
-            ui.add_space(SpaceTokens::SM);
-            design_system::active_checkbox(
-                ui,
-                &mut self.suggested_formations,
-                "Empfohlene Teams aus den Ranglisten übernehmen",
-            );
-            design_system::active_checkbox(
-                ui,
-                &mut self.current_team_first,
-                "Aktuelles Team zuerst versuchen",
-            );
-            ui.horizontal(|ui| {
-                ui.label("Empfohlene Teams");
-                ui.add(egui::DragValue::new(&mut self.max_formations).range(1..=10));
-                ui.label("Versuche pro Team");
-                ui.add(egui::DragValue::new(&mut self.attempts_per_formation).range(1..=10));
-            });
-            design_system::active_checkbox(
-                ui,
-                &mut self.skip_manual_formations,
-                "Manuelle Teams überspringen",
-            );
-            ui.small(
-                "Ohne Haken werden manuelle Teams nach den automatischen Vorschlägen versucht.",
-            );
-            ui.small("Gesperrte Teams werden übersprungen. Gold wird nicht ausgegeben.");
-        });
-        ui.add_space(SpaceTokens::GAP);
-        card(ui, |ui| {
-            ui.strong("AFK-Belohnungen");
-            design_system::active_checkbox(
-                ui,
-                &mut self.claim_stage_rewards,
-                "Auch Stufenbelohnungen einsammeln",
-            );
-            ui.small("Gilt für die Automation „AFK-Belohnungen einsammeln“.");
         });
     }
 }
@@ -874,18 +1163,101 @@ impl eframe::App for PlayerApp {
                 ui.add_space(SpaceTokens::TIGHT);
                 ui.separator();
                 ui.add_space(SpaceTokens::GAP);
+                let dashboard_height = ui.available_height();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        let notice_top = ui.cursor().top();
                         self.show_update_notice(ui);
+                        let remaining_height = dashboard_height - (ui.cursor().top() - notice_top);
                         match self.page {
-                            Page::Automations => self.show_dashboard(ui),
+                            Page::Automations => self.show_dashboard(ui, remaining_height),
                             Page::Settings => self.show_settings(ui),
                         }
                     });
             });
-        self.show_update_dialog(ui.ctx());
+        if self.update_dialog_open {
+            self.action_settings_dialog = None;
+            self.show_update_dialog(ui.ctx());
+        } else {
+            self.show_action_settings_dialog(ui.ctx());
+        }
     }
+}
+
+fn show_battle_options(ui: &mut egui::Ui, options: &mut ActionBattleOptions) {
+    ui.strong("Teamwahl und Kampfversuche");
+    ui.add_space(SpaceTokens::SM);
+    design_system::active_checkbox(
+        ui,
+        &mut options.suggested_formations,
+        "Empfohlene Teams aus den Ranglisten übernehmen",
+    );
+    design_system::active_checkbox(
+        ui,
+        &mut options.current_team_first,
+        "Aktuelles Team zuerst versuchen",
+    );
+    design_system::active_checkbox(
+        ui,
+        &mut options.skip_manual_formations,
+        "Manuelle Teams überspringen",
+    );
+    ui.small("Ohne Haken werden manuelle Teams nach den automatischen Vorschlägen versucht.");
+    ui.add_space(SpaceTokens::MD);
+    egui::Grid::new("battle-attempt-options")
+        .num_columns(2)
+        .spacing(egui::vec2(SpaceTokens::XL, SpaceTokens::SM))
+        .show(ui, |ui| {
+            ui.label("Empfohlene Teams");
+            ui.add_enabled(
+                options.suggested_formations,
+                egui::DragValue::new(&mut options.max_formations).range(1..=10),
+            );
+            ui.end_row();
+            ui.label("Versuche pro Team");
+            ui.add(egui::DragValue::new(&mut options.attempts_per_formation).range(1..=10));
+            ui.end_row();
+        });
+    ui.add_space(SpaceTokens::SM);
+    ui.small("Gesperrte Teams werden übersprungen. Gold wird nicht ausgegeben.");
+}
+
+fn settings_gear(ui: &mut egui::Ui, action: &str, active: bool) -> egui::Response {
+    let label = format!("{action}: Einstellungen öffnen");
+    let response = ui
+        .add_sized(egui::vec2(28.0, 28.0), egui::Button::new("").frame(false))
+        .on_hover_text(&label)
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
+    if response.hovered() || response.has_focus() {
+        ui.painter()
+            .rect_filled(response.rect, 3.0, ColorTokens::BG_FIELD);
+    }
+    if active || response.has_focus() {
+        design_system::paint_active_glow(ui, response.rect, 3);
+    }
+    let color = if active || response.hovered() || response.has_focus() {
+        ColorTokens::GLOW
+    } else {
+        ColorTokens::TEXT_SECONDARY
+    };
+    let center = response.rect.center();
+    // Draw the gear as vectors so it does not depend on font glyph coverage.
+    let points = (0..32)
+        .map(|index| {
+            let angle = std::f32::consts::TAU * index as f32 / 32.0;
+            let radius = if matches!(index % 4, 1 | 2) { 8.5 } else { 6.7 };
+            center + egui::vec2(angle.cos(), angle.sin()) * radius
+        })
+        .collect();
+    ui.painter().add(egui::Shape::closed_line(
+        points,
+        egui::Stroke::new(1.3, color),
+    ));
+    ui.painter()
+        .circle_stroke(center, 2.7, egui::Stroke::new(1.3, color));
+    response
 }
 
 fn update_icon(ui: &mut egui::Ui, version: &str) -> egui::Response {
@@ -958,43 +1330,18 @@ fn nav_tab(ui: &mut egui::Ui, selected: bool, label: &str, width: f32) -> bool {
 }
 
 fn progress_metric(ui: &mut egui::Ui, label: &str, value: u64) {
-    ui.vertical(|ui| {
-        ui.label(
-            egui::RichText::new(value.to_string())
-                .size(TypeTokens::METRIC)
-                .color(ColorTokens::GLOW),
-        );
-        ui.add_space(SpaceTokens::XS);
+    ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(label)
                 .size(TypeTokens::KBD)
                 .color(MUTED),
         );
+        ui.label(
+            egui::RichText::new(value.to_string())
+                .size(18.0)
+                .color(ColorTokens::GLOW),
+        );
     });
-}
-
-fn stat_value(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.label(
-        egui::RichText::new(label)
-            .size(TypeTokens::KBD)
-            .color(MUTED),
-    );
-    ui.add_space(SpaceTokens::SM);
-    ui.label(
-        egui::RichText::new(value)
-            .size(TypeTokens::METRIC)
-            .color(ColorTokens::GLOW),
-    );
-}
-
-fn format_duration(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    format!(
-        "{:02}:{:02}:{:02}",
-        seconds / 3600,
-        seconds / 60 % 60,
-        seconds % 60
-    )
 }
 
 #[derive(Clone, Copy)]

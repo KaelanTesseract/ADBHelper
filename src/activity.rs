@@ -5,6 +5,44 @@ use std::time::{Duration, Instant};
 pub enum GameMode {
     SeasonAfkStages,
     AfkStages,
+    SeasonLegendTrial(LegendTower),
+    UnionCampaign,
+    DurasTrials,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LegendTower {
+    Lightbearer,
+    Wilder,
+    Graveborn,
+    Mauler,
+}
+
+impl LegendTower {
+    pub const ALL: [Self; 4] = [
+        Self::Lightbearer,
+        Self::Wilder,
+        Self::Graveborn,
+        Self::Mauler,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lightbearer => "Lightbearer",
+            Self::Wilder => "Wilder",
+            Self::Graveborn => "Graveborn",
+            Self::Mauler => "Mauler",
+        }
+    }
+
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Lightbearer => "lightbearer",
+            Self::Wilder => "wilder",
+            Self::Graveborn => "graveborn",
+            Self::Mauler => "mauler",
+        }
+    }
 }
 
 impl GameMode {
@@ -12,7 +50,21 @@ impl GameMode {
         match self {
             Self::SeasonAfkStages => "Season-AFK-Stages",
             Self::AfkStages => "AFK-Stages",
+            Self::SeasonLegendTrial(LegendTower::Lightbearer) => "Legend Trial · Lightbearer",
+            Self::SeasonLegendTrial(LegendTower::Wilder) => "Legend Trial · Wilder",
+            Self::SeasonLegendTrial(LegendTower::Graveborn) => "Legend Trial · Graveborn",
+            Self::SeasonLegendTrial(LegendTower::Mauler) => "Legend Trial · Mauler",
+            Self::UnionCampaign => "Union Campaign",
+            Self::DurasTrials => "Dura’s Trials",
         }
+    }
+
+    pub fn is_legend_trial(self) -> bool {
+        matches!(self, Self::SeasonLegendTrial(_))
+    }
+
+    pub fn has_external_progression(self) -> bool {
+        self.is_legend_trial() || matches!(self, Self::UnionCampaign | Self::DurasTrials)
     }
 }
 
@@ -30,6 +82,7 @@ pub enum ActivityEvent {
     BattleStarted(GameMode),
     BattleFinished(GameMode, BattleOutcome),
     StageCleared(GameMode),
+    Swept(GameMode, u32),
 }
 
 #[derive(Default, Debug)]
@@ -38,6 +91,7 @@ pub struct ModeStats {
     pub cleared: u64,
     pub wins: u64,
     pub losses: u64,
+    pub sweeps: u64,
     attempts_for_cleared: u64,
     battle_pending: bool,
     clear_pending: bool,
@@ -49,6 +103,7 @@ pub struct RunActivity {
     pub current_mode: Option<GameMode>,
     pub target: Option<GameMode>,
     pub stage_history: Vec<StagePoint>,
+    last_entered_mode: Option<GameMode>,
     started: Option<Instant>,
     finished: Option<Instant>,
 }
@@ -79,6 +134,9 @@ impl RunActivity {
     pub fn finish(&mut self, now: Instant) {
         if self.is_running() {
             self.finished = Some(now);
+            if self.current_mode.is_none() {
+                self.current_mode = self.last_entered_mode;
+            }
         }
     }
 
@@ -107,6 +165,7 @@ impl RunActivity {
         }
         if let ActivityEvent::ModeEntered(mode) = event {
             self.current_mode = Some(mode);
+            self.last_entered_mode = Some(mode);
             self.modes.entry(mode).or_default();
             return;
         }
@@ -114,11 +173,15 @@ impl RunActivity {
             ActivityEvent::BattleStarted(mode)
             | ActivityEvent::BattleFinished(mode, _)
             | ActivityEvent::StageCleared(mode) => mode,
+            ActivityEvent::Swept(mode, _) => mode,
             ActivityEvent::ModeEntered(_) | ActivityEvent::ModeOpening(_) => unreachable!(),
         };
         let stats = self.modes.entry(mode).or_default();
         let mut cleared = false;
         match event {
+            ActivityEvent::Swept(_, count) => {
+                stats.sweeps = stats.sweeps.saturating_add(u64::from(count));
+            }
             ActivityEvent::BattleStarted(_) if !stats.battle_pending => {
                 stats.attempts = stats.attempts.saturating_add(1);
                 stats.battle_pending = true;

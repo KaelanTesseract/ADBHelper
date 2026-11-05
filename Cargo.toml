@@ -1,6 +1,6 @@
 [package]
 name = "adbhelper"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2021"
 description = "ADBHelper for AFK Journey automation"
 license = "MIT"
@@ -22,6 +22,7 @@ sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows = { version = "0.62.2", features = ["Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_System_WinRT"] }
 
 [build-dependencies]
 embed-resource = "3.0.12"

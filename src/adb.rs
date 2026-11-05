@@ -244,6 +244,36 @@ pub fn tap_game_point(
     tap(serial, scaled_x, scaled_y)
 }
 
+pub fn swipe_game_points(
+    serial: &str,
+    start: (u32, u32),
+    end: (u32, u32),
+    actual_size: (u32, u32),
+    duration_ms: u32,
+) -> Result<(), AdbError> {
+    let scale = |p: (u32, u32)| {
+        (
+            p.0.saturating_mul(actual_size.0) / crate::afk_journey::BASE_RESOLUTION.0,
+            p.1.saturating_mul(actual_size.1) / crate::afk_journey::BASE_RESOLUTION.1,
+        )
+    };
+    let start = scale(start);
+    let end = scale(end);
+    shell(
+        serial,
+        &[
+            "input",
+            "swipe",
+            &start.0.to_string(),
+            &start.1.to_string(),
+            &end.0.to_string(),
+            &end.1.to_string(),
+            &duration_ms.to_string(),
+        ],
+    )
+    .map(|_| ())
+}
+
 fn run(args: &[&str]) -> Result<Output, AdbError> {
     let output = adb_command()
         .args(args)

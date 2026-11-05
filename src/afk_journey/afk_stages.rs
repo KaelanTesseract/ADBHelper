@@ -9,15 +9,15 @@ use std::time::{Duration, Instant};
 
 const MATCH_THRESHOLD: f32 = 0.78;
 #[derive(Clone, Copy)]
-struct Rect {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+pub(super) struct Rect {
+    pub(super) x: u32,
+    pub(super) y: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Match {
+pub(super) struct Match {
     x: u32,
     y: u32,
     width: u32,
@@ -26,7 +26,15 @@ struct Match {
 }
 
 impl Match {
-    fn center(self) -> (u32, u32) {
+    pub(super) fn rect(self) -> Rect {
+        Rect {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+        }
+    }
+    pub(super) fn center(self) -> (u32, u32) {
         (self.x + self.width / 2, self.y + self.height / 2)
     }
 }
@@ -40,10 +48,12 @@ enum Outcome {
     AmbiguousResult,
     NetworkError,
     FinalStage,
+    DuraNoNext,
+    DuraVictory,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StageResult {
+pub(super) enum StageResult {
     Won,
     FinalStage,
     FormationFailed,
@@ -147,6 +157,114 @@ pub fn run_selected(
 
 fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
     let bytes: &'static [u8] = match relative_path {
+        "battle_modes/duras_trials.png" => {
+            include_bytes!("../../assets/AFKJourney/battle_modes/duras_trials.png")
+        }
+        "duras_trials/battle.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/battle.png")
+        }
+        "duras_trials/cleared.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/cleared.png")
+        }
+        "duras_trials/continue_gray.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/continue_gray.png")
+        }
+        "duras_trials/end_sunrise.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/end_sunrise.png")
+        }
+        "duras_trials/first_clear_bottom_half.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/first_clear_bottom_half.png")
+        }
+        "duras_trials/no_next.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/no_next.png")
+        }
+        "duras_trials/max_badge.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/max_badge.png")
+        }
+        "duras_trials/sweep_quantity_one.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/sweep_quantity_one.png")
+        }
+        "duras_trials/socketed_charms_overview.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/socketed_charms_overview.png")
+        }
+        "duras_trials/sweep.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/sweep.png")
+        }
+        "battle_modes/union_campaign.png" => {
+            include_bytes!("../../assets/AFKJourney/battle_modes/union_campaign.png")
+        }
+        "battle_modes/guild_mode_tab.png" => {
+            include_bytes!("../../assets/AFKJourney/battle_modes/guild_mode_tab.png")
+        }
+        "union_campaign/current_label.png" => {
+            include_bytes!("../../assets/AFKJourney/union_campaign/current_label.png")
+        }
+        "union_campaign/battle.png" => {
+            include_bytes!("../../assets/AFKJourney/union_campaign/battle.png")
+        }
+        "arena/continue.png" => include_bytes!("../../assets/AFKJourney/arena/continue.png"),
+        "quests/skip.png" => include_bytes!("../../assets/AFKJourney/quests/skip.png"),
+        "battle_modes/legend_trial.png" => {
+            include_bytes!("../../assets/AFKJourney/battle_modes/legend_trial.png")
+        }
+        "battle_modes/coming_soon.png" => {
+            include_bytes!("../../assets/AFKJourney/battle_modes/coming_soon.png")
+        }
+        "tap_to_close.png" => include_bytes!("../../assets/AFKJourney/tap_to_close.png"),
+        "legend_trials/available_after.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/available_after.png")
+        }
+        "legend_trials/banner_graveborn.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/banner_graveborn.png")
+        }
+        "legend_trials/banner_lightbearer.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/banner_lightbearer.png")
+        }
+        "legend_trials/banner_mauler.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/banner_mauler.png")
+        }
+        "legend_trials/banner_wilder.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/banner_wilder.png")
+        }
+        "legend_trials/challenge_ch.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/challenge_ch.png")
+        }
+        "legend_trials/challenge_ge.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/challenge_ge.png")
+        }
+        "legend_trials/faction_icon_graveborn.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/faction_icon_graveborn.png")
+        }
+        "legend_trials/faction_icon_lightbearer.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/faction_icon_lightbearer.png")
+        }
+        "legend_trials/faction_icon_mauler.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/faction_icon_mauler.png")
+        }
+        "legend_trials/faction_icon_wilder.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/faction_icon_wilder.png")
+        }
+        "legend_trials/s_header.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/s_header.png")
+        }
+        "legend_trials/top_floor_reached.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/top_floor_reached.png")
+        }
+        "legend_trials/tower_icon_graveborn.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/tower_icon_graveborn.png")
+        }
+        "legend_trials/tower_icon_lightbearer.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/tower_icon_lightbearer.png")
+        }
+        "legend_trials/tower_icon_mauler.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/tower_icon_mauler.png")
+        }
+        "legend_trials/tower_icon_wilder.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/tower_icon_wilder.png")
+        }
+        "legend_trials/unlocks_at_season_phase.png" => {
+            include_bytes!("../../assets/AFKJourney/legend_trials/unlocks_at_season_phase.png")
+        }
         "battle_modes/afk_stage.png" => {
             include_bytes!("../../assets/AFKJourney/battle_modes/afk_stage.png")
         }
@@ -250,7 +368,7 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
     Ok(bytes)
 }
 
-fn load_template(relative_path: &str) -> Result<GrayImage, String> {
+pub(super) fn load_template(relative_path: &str) -> Result<GrayImage, String> {
     static CACHE: OnceLock<Mutex<std::collections::HashMap<String, GrayImage>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     if let Some(image) = cache
@@ -272,7 +390,7 @@ fn load_template(relative_path: &str) -> Result<GrayImage, String> {
     Ok(image)
 }
 
-fn normalize_screenshot(bytes: &[u8]) -> Result<(GrayImage, (u32, u32)), String> {
+pub(super) fn normalize_screenshot(bytes: &[u8]) -> Result<(GrayImage, (u32, u32)), String> {
     let screenshot = image::load_from_memory(bytes)
         .map_err(|error| format!("Could not decode device screenshot: {error}"))?
         .to_luma8();
@@ -346,7 +464,7 @@ fn normalized_correlation(image: &GrayImage, origin: (u32, u32), samples: &[Samp
     }
 }
 
-fn find_template(
+pub(super) fn find_template(
     screenshot: &GrayImage,
     relative_path: &str,
     roi: Rect,
@@ -364,11 +482,16 @@ fn find_template(
     }
 
     let coarse_samples = template_samples(&template, 4);
-    // This narrow two-button marker has a high-contrast edge. A four-pixel
-    // search grid can miss its true peak and choose the adjacent button edge.
-    // Search every position for this marker; retain the fast grid elsewhere.
-    let search_step = if relative_path == "afk_stages/season_battle.png" {
+    // Small high-contrast text/edges can lose their true peak on a four-pixel
+    // grid. Records must also match between grid positions after floor loading.
+    let search_step = if matches!(
+        relative_path,
+        "afk_stages/season_battle.png" | "battle/records.png"
+    ) {
         1
+    } else if template.height() <= 40 {
+        // Thin labels (including Union's orange Skip) need a finer grid.
+        2
     } else {
         4
     };
@@ -416,7 +539,7 @@ fn find_template(
     }))
 }
 
-fn full_screen() -> Rect {
+pub(super) fn full_screen() -> Rect {
     Rect {
         x: 0,
         y: 0,
@@ -425,7 +548,7 @@ fn full_screen() -> Rect {
     }
 }
 
-fn lower_screen() -> Rect {
+pub(super) fn lower_screen() -> Rect {
     Rect {
         x: 0,
         y: BASE_RESOLUTION.1 * 2 / 5,
@@ -434,7 +557,7 @@ fn lower_screen() -> Rect {
     }
 }
 
-fn get_match(
+pub(super) fn get_match(
     screenshot: &GrayImage,
     paths: &[&str],
     roi: Rect,
@@ -451,17 +574,17 @@ fn get_match(
     Ok(best.map(|(path, found)| (path.to_owned(), found)))
 }
 
-fn screenshot(serial: &str) -> Result<(GrayImage, (u32, u32)), String> {
+pub(super) fn screenshot(serial: &str) -> Result<(GrayImage, (u32, u32)), String> {
     let bytes = adb::screenshot(serial).map_err(|error| error.to_string())?;
     normalize_screenshot(&bytes)
 }
 
-fn tap_match(serial: &str, found: Match, size: (u32, u32)) -> Result<(), String> {
+pub(super) fn tap_match(serial: &str, found: Match, size: (u32, u32)) -> Result<(), String> {
     let (x, y) = found.center();
     adb::tap_game_point(serial, x, y, size).map_err(|error| error.to_string())
 }
 
-fn wait_for_match(
+pub(super) fn wait_for_match(
     serial: &str,
     paths: &[&str],
     roi: Rect,
@@ -472,7 +595,7 @@ fn wait_for_match(
         .ok_or_else(|| format!("Timed out waiting for {}.", paths.join(" or ")))
 }
 
-fn poll_for_match(
+pub(super) fn poll_for_match(
     serial: &str,
     paths: &[&str],
     roi: Rect,
@@ -492,7 +615,7 @@ fn poll_for_match(
     Ok(None)
 }
 
-fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
+pub(super) fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
     if cancelled.load(Ordering::Relaxed) {
         Err("Cancelled by user.".to_owned())
     } else {
@@ -500,7 +623,7 @@ fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
     }
 }
 
-fn settle_cancellable(cancelled: &AtomicBool) -> Result<(), String> {
+pub(super) fn settle_cancellable(cancelled: &AtomicBool) -> Result<(), String> {
     for _ in 0..9 {
         ensure_not_cancelled(cancelled)?;
         thread::sleep(Duration::from_millis(100));
@@ -765,6 +888,7 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
 
 fn start_battle(
     serial: &str,
+    mode: GameMode,
     log: &mut impl FnMut(String),
     size: (u32, u32),
     cancelled: &AtomicBool,
@@ -806,6 +930,10 @@ fn start_battle(
         full_screen(),
         0.78,
     )? {
+        if mode == GameMode::DurasTrials {
+            adb::press_back(serial).map_err(|e| e.to_string())?;
+            return Err("Dura-Bestätigungsdialog nicht eindeutig; keine zusätzlichen Token oder Käufe bestätigt.".into());
+        }
         tap_match(serial, confirm, size)?;
         settle_cancellable(cancelled)?;
     }
@@ -859,6 +987,101 @@ fn detect_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)>, String
     )
 }
 
+fn detect_outcome_for_mode(
+    screen: &GrayImage,
+    mode: GameMode,
+) -> Result<Option<(Outcome, Match)>, String> {
+    if mode == GameMode::DurasTrials {
+        let decisive = detect_decisive_outcome(screen)?;
+        if decisive
+            .as_ref()
+            .is_some_and(|(o, _)| matches!(o, Outcome::PowerUp | Outcome::NetworkError))
+        {
+            return Ok(decisive);
+        }
+        if let Some(found) = find_template(
+            screen,
+            "duras_trials/no_next.png",
+            Rect {
+                x: 648,
+                y: 1728,
+                width: 432,
+                height: 192,
+            },
+            0.85,
+        )? {
+            return Ok(Some((Outcome::DuraNoNext, found)));
+        }
+        if let Some((_, found)) = get_match(
+            screen,
+            &[
+                "duras_trials/first_clear_bottom_half.png",
+                "duras_trials/end_sunrise.png",
+            ],
+            lower_screen(),
+            0.85,
+        )? {
+            return Ok(Some((Outcome::DuraVictory, found)));
+        }
+        if decisive
+            .as_ref()
+            .is_some_and(|(o, _)| *o != Outcome::FinalStage)
+        {
+            return Ok(decisive);
+        }
+        return Ok(
+            find_template(screen, "battle/result.png", lower_screen(), MATCH_THRESHOLD)?
+                .map(|found| (Outcome::AmbiguousResult, found)),
+        );
+    }
+    if mode == GameMode::UnionCampaign {
+        // Keep defeat and network indicators ahead of the Union victory button.
+        if let Some((outcome, found)) = detect_decisive_outcome(screen)? {
+            if outcome != Outcome::FinalStage {
+                return Ok(Some((outcome, found)));
+            }
+        }
+        if let Some(continue_button) = find_template(
+            screen,
+            "arena/continue.png",
+            Rect {
+                x: 0,
+                y: 1632,
+                width: 1080,
+                height: 288,
+            },
+            0.78,
+        )? {
+            return Ok(Some((Outcome::Next, continue_button)));
+        }
+        return Ok(
+            find_template(screen, "battle/result.png", lower_screen(), MATCH_THRESHOLD)?
+                .map(|found| (Outcome::AmbiguousResult, found)),
+        );
+    }
+    if !mode.is_legend_trial() {
+        return detect_outcome(screen);
+    }
+    if let Some(available) = find_template(
+        screen,
+        "legend_trials/available_after.png",
+        lower_screen(),
+        MATCH_THRESHOLD,
+    )? {
+        return Ok(Some((Outcome::FinalStage, available)));
+    }
+    // The shared AFK close overlay is a milestone in Legend Trial.
+    if let Some((outcome, found)) = detect_decisive_outcome(screen)? {
+        if outcome != Outcome::FinalStage {
+            return Ok(Some((outcome, found)));
+        }
+    }
+    Ok(
+        find_template(screen, "battle/result.png", lower_screen(), MATCH_THRESHOLD)?
+            .map(|found| (Outcome::AmbiguousResult, found)),
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResultCheck {
     Retry,
@@ -901,6 +1124,7 @@ struct AdbResultDriver<'a> {
     cancelled: &'a AtomicBool,
     size: (u32, u32),
     retry: Option<Match>,
+    mode: GameMode,
 }
 
 impl ResultDriver for AdbResultDriver<'_> {
@@ -933,6 +1157,10 @@ impl ResultDriver for AdbResultDriver<'_> {
     }
     fn retry(&mut self) -> Result<(), String> {
         ensure_not_cancelled(self.cancelled)?;
+        if self.mode == GameMode::DurasTrials {
+            adb::press_back(self.serial).map_err(|e| e.to_string())?;
+            return settle_cancellable(self.cancelled);
+        }
         tap_match(
             self.serial,
             self.retry.ok_or("Retry wurde nicht erkannt")?,
@@ -947,9 +1175,17 @@ impl ResultDriver for AdbResultDriver<'_> {
     }
     fn continue_result(&mut self) -> Result<(), String> {
         ensure_not_cancelled(self.cancelled)?;
+        if self.mode == GameMode::DurasTrials {
+            // Dura result screens may offer a paid Repeat. Only Back is safe
+            // here; Sweep is reserved for the independently verified cap gate.
+            return adb::press_back(self.serial).map_err(|e| e.to_string());
+        }
         adb::tap_game_point(self.serial, 950, 1800, self.size).map_err(|e| e.to_string())
     }
     fn advance_optional_next(&mut self) -> Result<(), String> {
+        if self.mode.has_external_progression() {
+            return settle_cancellable(self.cancelled);
+        }
         let roi = Rect {
             x: 0,
             y: BASE_RESOLUTION.1 * 3 / 5,
@@ -970,8 +1206,22 @@ impl ResultDriver for AdbResultDriver<'_> {
     }
 }
 
+fn live_battle_skip(screen: &GrayImage, mode: GameMode) -> Result<Option<Match>, String> {
+    if mode != GameMode::UnionCampaign {
+        return Ok(None);
+    }
+    Ok(get_match(
+        screen,
+        &["battle/skip.png", "battle/skip_orange.png"],
+        full_screen(),
+        0.78,
+    )?
+    .map(|(_, found)| found))
+}
+
 fn wait_for_outcome(
     serial: &str,
+    mode: GameMode,
     log: &mut impl FnMut(String),
     cancelled: &AtomicBool,
 ) -> Result<(Outcome, Match, (u32, u32)), String> {
@@ -979,9 +1229,16 @@ fn wait_for_outcome(
     while started.elapsed() < Duration::from_secs(BATTLE_TIMEOUT_SECONDS) {
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
-        if let Some((outcome, found)) = detect_outcome(&screen)? {
+        if let Some((outcome, found)) = detect_outcome_for_mode(&screen, mode)? {
             log(format!("Battle result detected: {outcome:?}."));
             return Ok((outcome, found, size));
+        }
+        if let Some(skip) = live_battle_skip(&screen, mode)? {
+            ensure_not_cancelled(cancelled)?;
+            tap_match(serial, skip, size)?;
+            log("Union Campaign: Kampf überspringen.".into());
+            settle_cancellable(cancelled)?;
+            continue;
         }
         thread::sleep(Duration::from_millis(500));
     }
@@ -1000,34 +1257,55 @@ fn battle_with_current_team(
     for attempt in 1..=attempts {
         ensure_not_cancelled(cancelled)?;
         log(format!("Starting battle attempt {attempt}/{attempts}."));
-        start_battle(serial, log, size, cancelled)?;
+        if mode == GameMode::DurasTrials {
+            super::duras_trials::ensure_formation(serial, cancelled)?;
+        }
+        start_battle(serial, mode, log, size, cancelled)?;
         progress(ProgressEvent::BattleStarted(mode));
-        let (outcome, found, size) = wait_for_outcome(serial, log, cancelled).map_err(|error| {
-            progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
-            error
-        })?;
+        let (outcome, found, size) =
+            wait_for_outcome(serial, mode, log, cancelled).map_err(|error| {
+                progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
+                error
+            })?;
         match outcome {
             Outcome::Next => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Won));
                 progress(ProgressEvent::StageCleared(mode));
-                tap_match(serial, found, size)?;
-                settle_cancellable(cancelled)?;
+                if !mode.has_external_progression() {
+                    tap_match(serial, found, size)?;
+                    settle_cancellable(cancelled)?;
+                }
                 return Ok(StageResult::Won);
             }
             Outcome::VictoryRewards => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Won));
                 progress(ProgressEvent::StageCleared(mode));
-                adb::tap_game_point(serial, 550, 1800, size).map_err(|error| error.to_string())?;
+                if mode == GameMode::DurasTrials {
+                    adb::press_back(serial).map_err(|error| error.to_string())?;
+                } else {
+                    adb::tap_game_point(serial, 550, 1800, size)
+                        .map_err(|error| error.to_string())?;
+                }
                 settle_cancellable(cancelled)?;
                 return Ok(StageResult::Won);
             }
             Outcome::Retry => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Lost));
-                tap_match(serial, found, size)?;
+                if mode == GameMode::DurasTrials {
+                    adb::press_back(serial).map_err(|e| e.to_string())?;
+                } else {
+                    tap_match(serial, found, size)?;
+                }
                 settle_cancellable(cancelled)?;
             }
             Outcome::PowerUp => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Lost));
+                if mode == GameMode::DurasTrials {
+                    adb::press_back(serial).map_err(|e| e.to_string())?;
+                    settle_cancellable(cancelled)?;
+                    super::duras_trials::ensure_formation(serial, cancelled)?;
+                    continue;
+                }
                 let (screen, screen_size) = screenshot(serial)?;
                 if let Some(retry) = find_template(&screen, "retry.png", lower_screen(), 0.7)? {
                     tap_match(serial, retry, screen_size)?;
@@ -1044,6 +1322,7 @@ fn battle_with_current_team(
                     cancelled,
                     size,
                     retry: None,
+                    mode,
                 };
                 let won = handle_ambiguous_result(&mut driver).map_err(|error| {
                     progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
@@ -1056,9 +1335,20 @@ fn battle_with_current_team(
                 }
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Lost));
             }
+            Outcome::DuraNoNext | Outcome::DuraVictory => {
+                progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Won));
+                progress(ProgressEvent::StageCleared(mode));
+                if outcome == Outcome::DuraNoNext {
+                    adb::press_back(serial).map_err(|e| e.to_string())?;
+                    settle_cancellable(cancelled)?;
+                }
+                return Ok(StageResult::Won);
+            }
             Outcome::NetworkError => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
-                tap_match(serial, found, size)?;
+                if mode != GameMode::DurasTrials {
+                    tap_match(serial, found, size)?;
+                }
                 return Err("A confirmation popup appeared after battle. Check the game connection and screen.".into());
             }
             Outcome::FinalStage => {
@@ -1071,7 +1361,7 @@ fn battle_with_current_team(
     Ok(StageResult::FormationFailed)
 }
 
-fn play_one_stage(
+pub(super) fn play_one_stage(
     serial: &str,
     log: &mut impl FnMut(String),
     size: (u32, u32),
@@ -1082,7 +1372,7 @@ fn play_one_stage(
     let (screen, _) = screenshot(serial)?;
     let copy_is_open = find_template(&screen, "battle/copy.png", lower_screen(), 0.78)?.is_some();
 
-    if settings.current_team_first && !copy_is_open {
+    if (settings.current_team_first || !settings.use_suggested_formations) && !copy_is_open {
         log("Trying the currently selected team first.".into());
         match battle_with_current_team(
             serial,
@@ -1110,6 +1400,9 @@ fn play_one_stage(
         let mut formation_number = 1;
         while formation_number <= settings.max_formations {
             ensure_not_cancelled(cancelled)?;
+            if settings.mode == GameMode::DurasTrials {
+                super::duras_trials::ensure_formation(serial, cancelled)?;
+            }
             let choice = copy_next_formation(
                 &mut AdbFormationBrowser {
                     serial,
@@ -1229,6 +1522,9 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
         return Ok(Some(match mode {
             GameMode::SeasonAfkStages => (215, button.center().1),
             GameMode::AfkStages => button.center(),
+            GameMode::SeasonLegendTrial(_) | GameMode::UnionCampaign | GameMode::DurasTrials => {
+                return Err("Kein AFK-Stages-Modus".into())
+            }
         }));
     }
     if mode == GameMode::AfkStages {
@@ -1321,7 +1617,7 @@ fn overview_action(screen: &GrayImage) -> Result<OverviewAction, String> {
     Ok(OverviewAction::Back)
 }
 
-fn navigate_to_current_overview(
+pub(super) fn navigate_to_current_overview(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
@@ -1469,6 +1765,26 @@ impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
         }
         Ok(None)
     }
+}
+
+pub(super) fn navigate_to_battle_modes(
+    serial: &str,
+    cancelled: &AtomicBool,
+    log: &mut impl FnMut(String),
+) -> Result<(u32, u32), String> {
+    let mut navigator = AdbAfkNavigator {
+        serial,
+        cancelled,
+        log,
+        size: BASE_RESOLUTION,
+    };
+    for _ in 0..3 {
+        navigator.overview()?;
+        if navigator.battle_modes()? {
+            return Ok(navigator.size);
+        }
+    }
+    Err("Die Kampfmodus-Auswahl konnte nicht geöffnet werden.".into())
 }
 
 fn navigate_to_afk_stages(
@@ -1823,6 +2139,123 @@ mod tests {
                 OverviewAction::Tap(_)
             ));
         }
+    }
+
+    #[test]
+    fn legend_limits_and_milestones_are_not_confused_with_afk_final_stages() {
+        let mode = GameMode::SeasonLegendTrial(crate::activity::LegendTower::Wilder);
+        let screen = result_screen(&["afk_stages/tap_to_close.png"]);
+        assert_eq!(
+            detect_outcome(&screen).unwrap().unwrap().0,
+            Outcome::FinalStage
+        );
+        assert!(detect_outcome_for_mode(&screen, mode).unwrap().is_none());
+        let screen = result_screen(&["legend_trials/available_after.png"]);
+        assert_eq!(
+            detect_outcome_for_mode(&screen, mode).unwrap().unwrap().0,
+            Outcome::FinalStage
+        );
+    }
+
+    #[test]
+    fn union_victory_continue_confirms_a_win_but_defeat_indicators_take_priority() {
+        let mut screen = GrayImage::new(1080, 1920);
+        image::imageops::replace(
+            &mut screen,
+            &load_template("arena/continue.png").unwrap(),
+            430,
+            1740,
+        );
+        assert_eq!(
+            detect_outcome_for_mode(&screen, GameMode::UnionCampaign)
+                .unwrap()
+                .unwrap()
+                .0,
+            Outcome::Next
+        );
+        image::imageops::replace(&mut screen, &load_template("retry.png").unwrap(), 120, 1300);
+        assert_eq!(
+            detect_outcome_for_mode(&screen, GameMode::UnionCampaign)
+                .unwrap()
+                .unwrap()
+                .0,
+            Outcome::Retry
+        );
+    }
+
+    #[test]
+    fn live_skip_is_exclusive_to_union_campaign() {
+        for path in ["battle/skip.png", "battle/skip_orange.png"] {
+            let mut screen = GrayImage::new(1080, 1920);
+            image::imageops::replace(&mut screen, &load_template(path).unwrap(), 500, 800);
+            assert!(live_battle_skip(&screen, GameMode::UnionCampaign)
+                .unwrap()
+                .is_some());
+            for mode in [
+                GameMode::AfkStages,
+                GameMode::SeasonAfkStages,
+                GameMode::SeasonLegendTrial(crate::activity::LegendTower::Wilder),
+            ] {
+                assert!(live_battle_skip(&screen, mode).unwrap().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn records_text_is_detected_at_every_search_grid_phase() {
+        let template = load_template("battle/records.png").unwrap();
+        for offset in 0..4 {
+            let mut screen = GrayImage::new(1080, 1920);
+            image::imageops::replace(&mut screen, &template, 201 + offset, 1741 + offset);
+            let found = find_template(&screen, "battle/records.png", lower_screen(), 0.8)
+                .unwrap()
+                .expect("Records at off-grid position");
+            assert_eq!(
+                (found.x, found.y),
+                ((201 + offset) as u32, (1741 + offset) as u32)
+            );
+        }
+    }
+
+    #[test]
+    fn dura_paid_replay_does_not_override_explicit_victory_markers() {
+        let mode = GameMode::DurasTrials;
+        for (path, expected) in [
+            (
+                "duras_trials/first_clear_bottom_half.png",
+                Outcome::DuraVictory,
+            ),
+            ("duras_trials/no_next.png", Outcome::DuraNoNext),
+        ] {
+            let mut screen = result_screen(&[path, "retry.png"]);
+            if expected == Outcome::DuraNoNext {
+                screen = result_screen(&["retry.png"]);
+                image::imageops::replace(&mut screen, &load_template(path).unwrap(), 650, 1750);
+            }
+            assert_eq!(
+                detect_outcome_for_mode(&screen, mode).unwrap().unwrap().0,
+                expected
+            );
+        }
+        assert_eq!(
+            detect_outcome_for_mode(&result_screen(&["retry.png"]), mode)
+                .unwrap()
+                .unwrap()
+                .0,
+            Outcome::Retry
+        );
+    }
+
+    #[test]
+    fn dura_no_token_caption_above_result_footer_does_not_end_a_trial() {
+        let screen = result_screen(&["duras_trials/no_next.png", "retry.png"]);
+        assert_eq!(
+            detect_outcome_for_mode(&screen, GameMode::DurasTrials)
+                .unwrap()
+                .unwrap()
+                .0,
+            Outcome::Retry
+        );
     }
 
     fn result_screen(paths: &[&str]) -> GrayImage {

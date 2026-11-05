@@ -29,6 +29,66 @@ charts and the run timer persist across the transition. Team settings apply to b
 The standalone rewards card
 is hidden; that routine is reserved for integration into a combined action.
 
+Each action card has a gear button for its settings popup. Team selection,
+manual-team skipping and attempts per team are configured separately per action.
+Stage selection, Legend Trial towers and Dura's daily Sweep option are available
+in the corresponding popup. Changes apply immediately; close it with **Schließen**,
+Escape or a click outside. During a running task the controls are read-only.
+The main Settings page contains device connection and app updates.
+
+**Season Legend Trial** is a separate dashboard action, ported from AdbAutoPlayer's
+`SeasonLegendTrial` workflow. It opens Battle Modes automatically, finds the Legend
+Trial entry (scrolling when needed), then checks Lightbearer, Wilder, Graveborn and
+Mauler in that order. Today's closed towers are skipped. Choose the included towers
+via the action card's gear; all four are enabled initially. Its team settings,
+including manual-team skipping, are configured in the same popup. It pushes each available tower until no team
+clears the next floor or the current floor/season limit is reached, then proceeds to
+the next selected tower. Intermediate rewards and floor reselection are handled.
+Stop ends the entire Legend Trial action. Each played tower has its own attempt and
+clear counters and appears in the shared mode-comparison chart. No gold is spent.
+
+**Union Campaign** is another dashboard action, based on AdbAutoPlayer's
+`UnionCampaignMixin`. It navigates through Battle Modes to Guild Mode and opens
+the current campaign floor. It uses its own action settings and pushes floors
+until the configured teams run out of attempts or no next floor is recognized.
+Combat Skip is used when available. After victory, Continue is retried at most
+three times while waiting for loading to finish and the next formation's Records
+button to appear. Sweep is never selected or used, and no gold is spent. The mode
+has its own attempt/clear counters in Activity and in the shared comparison chart.
+Stop ends the entire action. Guild membership and an unlocked Union Campaign are
+required.
+
+**Dura’s Trials** is based on AdbAutoPlayer's Dura workflow, with an additional
+strict gate for daily sweeps. It reads the game's current **Daily Limit** using
+local Windows OCR and identifies the selected stage from its green card border.
+After the final first clear, **Current Limit Reached** together with **Max** on
+that selected card provides the game's explicit cap confirmation instead.
+Sweep is permitted only when two consecutive readings agree on the trial, selected
+stage, limit and remaining daily attempts, the selected stage equals the limit,
+and its enabled orange Sweep button declares a cost of exactly one daily token.
+A lower cleared stage, an exhausted team, a defeat, a disabled button, an unreadable
+number or an unknown confirmation dialog never authorizes Sweep. The state is
+checked again immediately before each Sweep. Extra stock tokens and purchases are
+excluded; the routine stops when daily attempts are gone. Sweep resources are
+counted separately and do not inflate battle attempts, clears or win rate.
+The separate Sweep dialog must show the same trial and floor, exactly one attempt,
+and a total price of one remaining daily token. It is checked twice before a
+single confirmation; quantity sliders and maximum buttons are never used.
+
+The Sweep option is enabled initially and can be disabled via the Dura card's gear. Dura result
+screens use Back rather than unverified Retry/Repeat or confirmation buttons, so a
+resource-consuming replay cannot bypass the cap gate. Windows OCR language support
+must be available locally; screenshots are not sent to an OCR service. Unknown
+dialog layouts stop the action without blind confirmation. Live resource tests
+require explicit authorization and a separate bounded test budget (zero by default).
+
+Live validation on 2026-11-05 used MuMu at 1080 × 1920 with the English game UI:
+Gale Treasure floors 21–25 were cleared during testing, then six daily sweeps were
+completed at the confirmed cap of 25. Daily attempts decreased from 6 to 0; the
+10 extra stock tokens remained unchanged. The test exposed and corrected the
+next-formation transition, final paid Retry screen, quantity dialog, last-token
+slider position and OCR omissions. Other daily class layouts still need live coverage.
+
 ## Run
 
 1. Start the emulator and enable ADB debugging. The app checks `PATH`, then
@@ -74,7 +134,7 @@ The run continues until no available team can clear another stage. It tries the
 current team first when the current screen allows it, then copies suggested
 teams from Records (default: up to 10 teams, with up to five attempts per
 team). It skips locked teams and tries manual formations after automatic
-suggestions. Enable **Manuelle Teams überspringen** in Settings to exclude
+suggestions. Enable **Manuelle Teams überspringen** in the action's settings popup to exclude
 manual suggestions in both modes. Before each mode it returns to the recognized
 world or homestead overview and navigates through Battle Modes again.
 It will not spend gold. If no result screen is detected or device
@@ -85,8 +145,11 @@ battles, and average attempts needed for completed stages. Pending and unclear
 battles do not count as losses; attempts on unfinished stages are excluded from
 the stage average. Counters survive mode switches within an action, freeze at
 completion, and reset on the next Start. The statistics include a hoverable
-step chart of confirmed stage clears over time and a shared-scale bar comparison
-of attempts and clears by mode. No sample data is shown in an idle run.
+step chart of confirmed stage clears over time and one grouped column chart
+comparing attempts and clears across all visited modes on a shared scale.
+Success rate and average attempts per completed stage sit side by side.
+The comparison chart keeps the same height as more modes are added; hover a
+group to see its full mode name and exact counts. No sample data is shown in an idle run.
 The device display must use
 portrait 9:16 output; screenshots at other 9:16 sizes are resized to the
 game's 1080 × 1920 coordinate space.
