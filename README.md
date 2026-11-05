@@ -71,8 +71,8 @@ The run continues until no available team can clear another stage. It tries the
 current team first when the current screen allows it, then copies suggested
 teams from Records (default: up to 10 teams, with up to five attempts per
 team). It skips locked teams and tries manual formations after automatic
-suggestions. It will not spend gold. If a match or battle result is unclear,
-it stops and reports the reason on the action card. Activity shows only the
+suggestions. It will not spend gold. If no result screen is detected or device
+communication fails, it stops and reports the reason on the action card. Activity shows only the
 current game mode and separate attempt/clear counters for each mode visited
 within the run. The middle column shows elapsed time, win rate over decided
 battles, and average attempts needed for completed stages. Pending and unclear
@@ -91,7 +91,8 @@ ported; this is not feature parity yet.
 The Windows build embeds the ADBHelper logo as a multi-resolution executable
 icon (16–256 px), in addition to the window/taskbar icon and header logo.
 
-Result recognition checks both Next-button styles and victory-reward styles
-before advancing. A shared statistics icon does not itself count as success;
-the recognizer waits for delayed result controls and preserves an unrecognized
-result screen for inspection rather than blindly advancing it.
+Result recognition checks both Next-button styles and victory-reward styles.
+For a shared statistics/result icon it follows the original AdbAutoPlayer
+fallback: wait two seconds, check Retry and Power Up, otherwise tap (950, 1800),
+then wait up to five seconds for an optional Next button. Missing that optional
+button does not fail the stage. Cancellation and ADB errors still propagate.

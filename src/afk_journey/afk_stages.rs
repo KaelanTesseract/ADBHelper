@@ -37,6 +37,7 @@ enum Outcome {
     VictoryRewards,
     Retry,
     PowerUp,
+    AmbiguousResult,
     NetworkError,
     FinalStage,
 }
@@ -450,16 +451,28 @@ fn wait_for_match(
     timeout: Duration,
     cancelled: &AtomicBool,
 ) -> Result<(String, Match, (u32, u32)), String> {
+    poll_for_match(serial, paths, roi, timeout, cancelled)?
+        .ok_or_else(|| format!("Timed out waiting for {}.", paths.join(" or ")))
+}
+
+fn poll_for_match(
+    serial: &str,
+    paths: &[&str],
+    roi: Rect,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Result<Option<(String, Match, (u32, u32))>, String> {
     let started = Instant::now();
     while started.elapsed() < timeout {
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
         if let Some((path, found)) = get_match(&screen, paths, roi, MATCH_THRESHOLD)? {
-            return Ok((path, found, size));
+            return Ok(Some((path, found, size)));
         }
         thread::sleep(Duration::from_millis(700));
     }
-    Err(format!("Timed out waiting for {}.", paths.join(" or ")))
+    ensure_not_cancelled(cancelled)?;
+    Ok(None)
 }
 
 fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
@@ -699,29 +712,124 @@ fn detect_decisive_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)
     Ok(None)
 }
 
-#[derive(Default)]
-struct ResultWait {
-    generic_since: Option<Duration>,
+fn detect_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)>, String> {
+    if let Some(result) = detect_decisive_outcome(screen)? {
+        return Ok(Some(result));
+    }
+    Ok(
+        find_template(screen, "battle/result.png", lower_screen(), MATCH_THRESHOLD)?
+            .map(|found| (Outcome::AmbiguousResult, found)),
+    )
 }
 
-impl ResultWait {
-    fn observe(
-        &mut self,
-        screen: &GrayImage,
-        elapsed: Duration,
-    ) -> Result<Option<(Outcome, Match)>, String> {
-        if let Some(result) = detect_decisive_outcome(screen)? {
-            return Ok(Some(result));
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResultCheck {
+    Retry,
+    PowerUp,
+    NoDefeat,
+}
+
+trait ResultDriver {
+    fn wait_for_controls(&mut self) -> Result<(), String>;
+    fn check_defeat(&mut self) -> Result<ResultCheck, String>;
+    fn retry(&mut self) -> Result<(), String>;
+    fn back(&mut self) -> Result<(), String>;
+    fn continue_result(&mut self) -> Result<(), String>;
+    fn advance_optional_next(&mut self) -> Result<(), String>;
+}
+
+/// Mirrors AFKJourneyBase._handle_ambiguous_result_screen:
+/// settle 2s, reject Retry/Power Up, continue, then optionally tap Next.
+/// The original returns success even when the optional Next wait times out.
+fn handle_ambiguous_result(driver: &mut impl ResultDriver) -> Result<bool, String> {
+    driver.wait_for_controls()?;
+    match driver.check_defeat()? {
+        ResultCheck::Retry => {
+            driver.retry()?;
+            return Ok(false);
         }
-        if find_template(screen, "battle/result.png", lower_screen(), MATCH_THRESHOLD)?.is_some() {
-            let visible = self.generic_since.get_or_insert(elapsed);
-            if elapsed.saturating_sub(*visible) >= Duration::from_secs(15) {
-                return Err("Ergebnisanzeige erkannt, aber Sieg oder Niederlage nicht bestätigt. Der Bildschirm wurde nicht weitergeklickt.".into());
-            }
-        } else {
-            self.generic_since = None;
+        ResultCheck::PowerUp => {
+            driver.back()?;
+            return Ok(false);
         }
-        Ok(None)
+        ResultCheck::NoDefeat => {}
+    }
+    driver.continue_result()?;
+    driver.advance_optional_next()?;
+    Ok(true)
+}
+
+struct AdbResultDriver<'a> {
+    serial: &'a str,
+    cancelled: &'a AtomicBool,
+    size: (u32, u32),
+    retry: Option<Match>,
+}
+
+impl ResultDriver for AdbResultDriver<'_> {
+    fn wait_for_controls(&mut self) -> Result<(), String> {
+        for _ in 0..20 {
+            ensure_not_cancelled(self.cancelled)?;
+            thread::sleep(Duration::from_millis(100));
+        }
+        ensure_not_cancelled(self.cancelled)
+    }
+    fn check_defeat(&mut self) -> Result<ResultCheck, String> {
+        ensure_not_cancelled(self.cancelled)?;
+        let (screen, size) = screenshot(self.serial)?;
+        self.size = size;
+        self.retry = find_template(&screen, "retry.png", lower_screen(), 0.70)?;
+        if self.retry.is_some() {
+            return Ok(ResultCheck::Retry);
+        }
+        if find_template(
+            &screen,
+            "battle/power_up.png",
+            lower_screen(),
+            MATCH_THRESHOLD,
+        )?
+        .is_some()
+        {
+            return Ok(ResultCheck::PowerUp);
+        }
+        Ok(ResultCheck::NoDefeat)
+    }
+    fn retry(&mut self) -> Result<(), String> {
+        ensure_not_cancelled(self.cancelled)?;
+        tap_match(
+            self.serial,
+            self.retry.ok_or("Retry wurde nicht erkannt")?,
+            self.size,
+        )?;
+        settle_cancellable(self.cancelled)
+    }
+    fn back(&mut self) -> Result<(), String> {
+        ensure_not_cancelled(self.cancelled)?;
+        adb::press_back(self.serial).map_err(|e| e.to_string())?;
+        settle_cancellable(self.cancelled)
+    }
+    fn continue_result(&mut self) -> Result<(), String> {
+        ensure_not_cancelled(self.cancelled)?;
+        adb::tap_game_point(self.serial, 950, 1800, self.size).map_err(|e| e.to_string())
+    }
+    fn advance_optional_next(&mut self) -> Result<(), String> {
+        let roi = Rect {
+            x: 0,
+            y: BASE_RESOLUTION.1 * 3 / 5,
+            width: BASE_RESOLUTION.0,
+            height: BASE_RESOLUTION.1 * 2 / 5,
+        };
+        if let Some((_, next, size)) = poll_for_match(
+            self.serial,
+            &["next.png", "battle/next.png"],
+            roi,
+            Duration::from_secs(5),
+            self.cancelled,
+        )? {
+            tap_match(self.serial, next, size)?;
+            settle_cancellable(self.cancelled)?;
+        }
+        Ok(())
     }
 }
 
@@ -731,12 +839,11 @@ fn wait_for_outcome(
     cancelled: &AtomicBool,
 ) -> Result<(Outcome, Match, (u32, u32)), String> {
     let started = Instant::now();
-    let mut result_wait = ResultWait::default();
     while started.elapsed() < Duration::from_secs(BATTLE_TIMEOUT_SECONDS) {
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
-        if let Some((outcome, found)) = result_wait.observe(&screen, started.elapsed())? {
-            log(format!("Battle result confirmed: {outcome:?}."));
+        if let Some((outcome, found)) = detect_outcome(&screen)? {
+            log(format!("Battle result detected: {outcome:?}."));
             return Ok((outcome, found, size));
         }
         thread::sleep(Duration::from_millis(500));
@@ -793,6 +900,24 @@ fn battle_with_current_team(
                 adb::press_back(serial).map_err(|error| error.to_string())?;
                 log("This team did not clear the stage; trying another suggested team.".into());
                 return Ok(StageResult::FormationFailed);
+            }
+            Outcome::AmbiguousResult => {
+                let mut driver = AdbResultDriver {
+                    serial,
+                    cancelled,
+                    size,
+                    retry: None,
+                };
+                let won = handle_ambiguous_result(&mut driver).map_err(|error| {
+                    progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
+                    error
+                })?;
+                if won {
+                    progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Won));
+                    progress(ProgressEvent::StageCleared(mode));
+                    return Ok(StageResult::Won);
+                }
+                progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Lost));
             }
             Outcome::NetworkError => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
@@ -1231,33 +1356,149 @@ mod tests {
     }
 
     #[test]
-    fn generic_statistics_icon_is_not_treated_as_a_win() {
+    fn statistics_icon_dispatches_to_original_result_handler() {
         let screen = result_screen(&["battle/result.png"]);
         assert!(detect_decisive_outcome(&screen).unwrap().is_none());
-        let mut wait = ResultWait::default();
-        assert!(wait.observe(&screen, Duration::ZERO).unwrap().is_none());
-        assert!(wait
-            .observe(&screen, Duration::from_secs(14))
-            .unwrap()
-            .is_none());
-        assert!(wait.observe(&screen, Duration::from_secs(15)).is_err());
+        assert_eq!(
+            detect_outcome(&screen).unwrap().unwrap().0,
+            Outcome::AmbiguousResult
+        );
+    }
+
+    struct FakeResultDriver {
+        check: ResultCheck,
+        next_present: bool,
+        cancelled: bool,
+        next_error: bool,
+        steps: Vec<&'static str>,
+    }
+
+    impl FakeResultDriver {
+        fn new(check: ResultCheck, next_present: bool) -> Self {
+            Self {
+                check,
+                next_present,
+                cancelled: false,
+                next_error: false,
+                steps: Vec::new(),
+            }
+        }
+    }
+
+    impl ResultDriver for FakeResultDriver {
+        fn wait_for_controls(&mut self) -> Result<(), String> {
+            self.steps.push("wait-2-seconds");
+            if self.cancelled {
+                Err("Cancelled by user.".into())
+            } else {
+                Ok(())
+            }
+        }
+        fn check_defeat(&mut self) -> Result<ResultCheck, String> {
+            self.steps.push("check-retry-and-power-up");
+            Ok(self.check)
+        }
+        fn retry(&mut self) -> Result<(), String> {
+            self.steps.push("tap-retry");
+            Ok(())
+        }
+        fn back(&mut self) -> Result<(), String> {
+            self.steps.push("back");
+            Ok(())
+        }
+        fn continue_result(&mut self) -> Result<(), String> {
+            self.steps.push("tap-950-1800");
+            Ok(())
+        }
+        fn advance_optional_next(&mut self) -> Result<(), String> {
+            self.steps.push(if self.next_present {
+                "tap-next"
+            } else {
+                "next-timeout"
+            });
+            if self.next_error {
+                Err("ADB unavailable".into())
+            } else {
+                Ok(())
+            }
+        }
     }
 
     #[test]
-    fn delayed_success_indicator_is_accepted_after_the_old_five_second_limit() {
-        let mut wait = ResultWait::default();
-        assert!(wait
-            .observe(&result_screen(&["battle/result.png"]), Duration::ZERO)
-            .unwrap()
-            .is_none());
-        let result = wait
-            .observe(
-                &result_screen(&["battle/result.png", "battle/next.png"]),
-                Duration::from_secs(7),
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(result.0, Outcome::Next);
+    fn original_fallback_accepts_result_when_optional_next_is_missing() {
+        let mut driver = FakeResultDriver::new(ResultCheck::NoDefeat, false);
+        assert!(handle_ambiguous_result(&mut driver).unwrap());
+        assert_eq!(
+            driver.steps,
+            vec![
+                "wait-2-seconds",
+                "check-retry-and-power-up",
+                "tap-950-1800",
+                "next-timeout"
+            ]
+        );
+    }
+
+    #[test]
+    fn original_fallback_taps_next_when_it_is_present() {
+        let mut driver = FakeResultDriver::new(ResultCheck::NoDefeat, true);
+        assert!(handle_ambiguous_result(&mut driver).unwrap());
+        assert_eq!(
+            driver.steps,
+            vec![
+                "wait-2-seconds",
+                "check-retry-and-power-up",
+                "tap-950-1800",
+                "tap-next"
+            ]
+        );
+    }
+
+    #[test]
+    fn delayed_retry_and_power_up_do_not_use_the_success_fallback() {
+        for (check, action) in [
+            (ResultCheck::Retry, "tap-retry"),
+            (ResultCheck::PowerUp, "back"),
+        ] {
+            let mut driver = FakeResultDriver::new(check, false);
+            assert!(!handle_ambiguous_result(&mut driver).unwrap());
+            assert_eq!(
+                driver.steps,
+                vec!["wait-2-seconds", "check-retry-and-power-up", action]
+            );
+        }
+    }
+
+    #[test]
+    fn original_fallback_does_not_swallow_cancel_or_adb_failure() {
+        let mut cancelled = FakeResultDriver::new(ResultCheck::NoDefeat, false);
+        cancelled.cancelled = true;
+        assert!(handle_ambiguous_result(&mut cancelled).is_err());
+        assert_eq!(cancelled.steps, vec!["wait-2-seconds"]);
+        let mut disconnected = FakeResultDriver::new(ResultCheck::NoDefeat, false);
+        disconnected.next_error = true;
+        assert!(handle_ambiguous_result(&mut disconnected).is_err());
+    }
+
+    #[test]
+    fn optional_match_timeout_is_not_a_cancel_error() {
+        assert!(poll_for_match(
+            "not-a-device",
+            &["next.png"],
+            lower_screen(),
+            Duration::ZERO,
+            &AtomicBool::new(false)
+        )
+        .unwrap()
+        .is_none());
+        assert!(poll_for_match(
+            "not-a-device",
+            &["next.png"],
+            lower_screen(),
+            Duration::ZERO,
+            &AtomicBool::new(true)
+        )
+        .is_err());
     }
 
     #[test]
