@@ -1,5 +1,7 @@
 # Neue ADBHelper-Version veröffentlichen
 
+**Nur nach ausdrücklicher Freigabe des Nutzers pushen oder veröffentlichen.** Das gilt auch für Quellcode-Pushes und Tags. Lokale Änderungen, Tests und Test-EXEs dürfen vorher vorbereitet werden.
+
 1. Änderungen implementieren und `version` in Cargo.toml erhöhen. Cargo.lock aktualisieren.
 2. Für **jedes** Release `releases/v<VERSION>.md` schreiben: neue Funktionen, konkrete Änderungen, behobene Fehler und relevante Voraussetzungen. Keine unveränderten alten Patchnotes wiederverwenden.
 3. `./scripts/Build-Release.ps1` ausführen. Ohne Patchnotes oder mit fehlschlagenden Tests wird kein Release gebaut.

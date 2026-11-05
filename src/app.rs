@@ -45,6 +45,7 @@ pub struct PlayerApp {
     stage_selection: StageSelection,
     suggested_formations: bool,
     current_team_first: bool,
+    skip_manual_formations: bool,
     max_formations: u32,
     attempts_per_formation: u32,
     logo: egui::TextureHandle,
@@ -94,6 +95,7 @@ impl PlayerApp {
             stage_selection: StageSelection::default(),
             suggested_formations: true,
             current_team_first: true,
+            skip_manual_formations: false,
             max_formations: 10,
             attempts_per_formation: 5,
             logo,
@@ -360,6 +362,7 @@ impl PlayerApp {
             mode,
             use_suggested_formations: self.suggested_formations,
             current_team_first: self.current_team_first,
+            skip_manual_formations: self.skip_manual_formations,
             max_formations: self.max_formations.clamp(1, 10),
             attempts_per_formation: self.attempts_per_formation.clamp(1, 10),
         };
@@ -734,6 +737,14 @@ impl PlayerApp {
                 ui.label("Versuche pro Team");
                 ui.add(egui::DragValue::new(&mut self.attempts_per_formation).range(1..=10));
             });
+            design_system::active_checkbox(
+                ui,
+                &mut self.skip_manual_formations,
+                "Manuelle Teams überspringen",
+            );
+            ui.small(
+                "Ohne Haken werden manuelle Teams nach den automatischen Vorschlägen versucht.",
+            );
             ui.small("Gesperrte Teams werden übersprungen. Gold wird nicht ausgegeben.");
         });
         ui.add_space(SpaceTokens::GAP);

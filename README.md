@@ -2,6 +2,9 @@
 
 Native Rust desktop app for AFK Journey on Windows x64.
 
+**Ideengeber und Vorlage:** [ADBAutoPlayer](https://github.com/AdbAutoPlayer/AdbAutoPlayer).
+ADBHelper überträgt dessen AFK-Journey-Abläufe in eine native Rust-App.
+
 Download stable versions and patchnotes from [GitHub Releases](https://github.com/KaelanTesseract/ADBHelper/releases).
 The app checks for updates at startup and every five minutes, including while
 minimized. A green update icon beside Settings indicates a new release. Click it
@@ -71,7 +74,10 @@ The run continues until no available team can clear another stage. It tries the
 current team first when the current screen allows it, then copies suggested
 teams from Records (default: up to 10 teams, with up to five attempts per
 team). It skips locked teams and tries manual formations after automatic
-suggestions. It will not spend gold. If no result screen is detected or device
+suggestions. Enable **Manuelle Teams überspringen** in Settings to exclude
+manual suggestions in both modes. Before each mode it returns to the recognized
+world or homestead overview and navigates through Battle Modes again.
+It will not spend gold. If no result screen is detected or device
 communication fails, it stops and reports the reason on the action card. Activity shows only the
 current game mode and separate attempt/clear counters for each mode visited
 within the run. The middle column shows elapsed time, win rate over decided

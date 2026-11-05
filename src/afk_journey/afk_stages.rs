@@ -54,6 +54,7 @@ pub struct BattleSettings {
     pub mode: GameMode,
     pub use_suggested_formations: bool,
     pub current_team_first: bool,
+    pub skip_manual_formations: bool,
     pub max_formations: u32,
     pub attempts_per_formation: u32,
 }
@@ -163,6 +164,22 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         }
         "navigation/homestead/world.png" => {
             include_bytes!("../../assets/AFKJourney/navigation/homestead/world.png")
+        }
+        "guide/next.png" => include_bytes!("../../assets/AFKJourney/guide/next.png"),
+        "popup/quick_purchase.png" => {
+            include_bytes!("../../assets/AFKJourney/popup/quick_purchase.png")
+        }
+        "navigation/dotdotdot.png" => {
+            include_bytes!("../../assets/AFKJourney/navigation/dotdotdot.png")
+        }
+        "navigation/confirm_text.png" => {
+            include_bytes!("../../assets/AFKJourney/navigation/confirm_text.png")
+        }
+        "navigation/resonating_hall_label.png" => {
+            include_bytes!("../../assets/AFKJourney/navigation/resonating_hall_label.png")
+        }
+        "arcane_labyrinth/select_a_crest.png" => {
+            include_bytes!("../../assets/AFKJourney/arcane_labyrinth/select_a_crest.png")
         }
         "navigation/notice.png" => include_bytes!("../../assets/AFKJourney/navigation/notice.png"),
         "navigation/x.png" => include_bytes!("../../assets/AFKJourney/navigation/x.png"),
@@ -491,139 +508,259 @@ fn settle_cancellable(cancelled: &AtomicBool) -> Result<(), String> {
     Ok(())
 }
 
-fn choose_suggested_formation(
-    serial: &str,
-    formation_number: u32,
-    skip_manual: bool,
-    only_manual: bool,
-    log: &mut impl FnMut(String),
-    cancelled: &AtomicBool,
-) -> Result<bool, String> {
-    let (mut screen, mut size) = screenshot(serial)?;
-    let mut copy = find_template(&screen, "battle/copy.png", lower_screen(), 0.78)?;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FormationPass {
+    Automatic,
+    Manual,
+}
 
-    if copy.is_none() {
-        let (path, records, records_size) = wait_for_match(
-            serial,
+fn formation_passes(skip_manual: bool) -> &'static [FormationPass] {
+    if skip_manual {
+        &[FormationPass::Automatic]
+    } else {
+        &[FormationPass::Automatic, FormationPass::Manual]
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FormationChoice {
+    Copied,
+    CurrentTeam,
+    Exhausted,
+}
+
+trait FormationBrowser {
+    // Opening Records from battle resets the displayed index to one.
+    fn open(&mut self) -> Result<bool, String>;
+    fn next(&mut self) -> Result<bool, String>;
+    fn is_manual(&mut self) -> Result<bool, String>;
+    fn copy(&mut self) -> Result<bool, String>;
+}
+
+fn copy_next_formation(
+    browser: &mut impl FormationBrowser,
+    target: &mut u32,
+    limit: u32,
+    pass: FormationPass,
+) -> Result<FormationChoice, String> {
+    if !browser.open()? {
+        return Ok(FormationChoice::CurrentTeam);
+    }
+    let mut displayed = 1;
+    while *target <= limit {
+        // Keep the displayed index while skipping. Do not count from one again
+        // unless Records was actually closed and reopened (as in the original).
+        while displayed < *target {
+            if !browser.next()? {
+                return Ok(FormationChoice::Exhausted);
+            }
+            displayed += 1;
+        }
+        let manual = browser.is_manual()?;
+        let eligible = manual == (pass == FormationPass::Manual);
+        if eligible && browser.copy()? {
+            return Ok(FormationChoice::Copied);
+        }
+        *target += 1;
+    }
+    Ok(FormationChoice::Exhausted)
+}
+
+fn ensure_battle_screen(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
+    for _ in 0..4 {
+        ensure_not_cancelled(cancelled)?;
+        let (screen, size) = screenshot(serial)?;
+        if let Some(retry) = find_template(&screen, "retry.png", lower_screen(), 0.7)? {
+            tap_match(serial, retry, size)?;
+        } else if find_template(&screen, "battle/copy.png", lower_screen(), 0.75)?.is_some() {
+            adb::press_back(serial).map_err(|error| error.to_string())?;
+        } else if get_match(
+            &screen,
             &["battle/records.png", "battle/battle.png"],
             lower_screen(),
-            Duration::from_secs(20),
-            cancelled,
-        )?;
-        if path != "battle/records.png" {
-            log("Suggested formations are not available on this battle screen.".into());
-            return Ok(false);
+            0.8,
+        )?
+        .is_some()
+        {
+            return Ok(());
+        } else {
+            // The battle setup may still be animating after Retry/Back.
+            if poll_for_match(
+                serial,
+                &["battle/records.png", "battle/battle.png"],
+                lower_screen(),
+                Duration::from_secs(5),
+                cancelled,
+            )?
+            .is_some()
+            {
+                return Ok(());
+            }
+            adb::press_back(serial).map_err(|error| error.to_string())?;
         }
-        tap_match(serial, records, records_size)?;
         settle_cancellable(cancelled)?;
-        let (_, found_copy, found_size) = wait_for_match(
-            serial,
-            &["battle/copy.png"],
-            lower_screen(),
-            Duration::from_secs(20),
-            cancelled,
-        )?;
-        screen = screenshot(serial)?.0;
-        size = found_size;
-        copy = Some(found_copy);
     }
+    wait_for_match(
+        serial,
+        &["battle/records.png", "battle/battle.png"],
+        lower_screen(),
+        Duration::from_secs(20),
+        cancelled,
+    )?;
+    Ok(())
+}
 
-    if formation_number > 1 {
-        for _ in 1..formation_number {
-            let (current_screen, current_size) = screenshot(serial)?;
-            let next = find_template(
-                &current_screen,
-                "battle/formation_next.png",
-                Rect {
-                    x: BASE_RESOLUTION.0 * 4 / 5,
-                    y: BASE_RESOLUTION.1 / 2,
-                    width: BASE_RESOLUTION.0 / 5,
-                    height: BASE_RESOLUTION.1 / 3,
-                },
-                0.72,
-            )?;
-            let Some(next) = next else {
-                log(format!(
-                    "No more suggested formations after #{}.",
-                    formation_number - 1
-                ));
-                return Ok(false);
-            };
-            tap_match(serial, next, current_size)?;
-            settle_cancellable(cancelled)?;
-            (screen, size) = screenshot(serial)?;
-            copy = find_template(&screen, "battle/copy.png", lower_screen(), 0.78)?;
-        }
-    }
-
-    let Some(copy) = copy else {
-        log(format!(
-            "Could not detect Copy for formation #{formation_number}."
-        ));
-        return Ok(false);
-    };
-
-    let manual = get_match(
-        &screen,
+fn manual_formation_visible(screen: &GrayImage) -> Result<bool, String> {
+    Ok(get_match(
+        screen,
         &["battle/manual_battle.png", "battle/manual_battle_old1.png"],
-        full_screen(),
-        0.74,
+        Rect {
+            x: 0,
+            y: 960,
+            width: 540,
+            height: 960,
+        },
+        0.8,
     )?
-    .is_some();
-    if (skip_manual && manual) || (only_manual && !manual) {
-        log(format!(
-            "Skipping {} formation #{formation_number}.",
-            if manual { "manual" } else { "non-manual" }
-        ));
-        return Ok(false);
+    .is_some())
+}
+
+struct AdbFormationBrowser<'a, L> {
+    serial: &'a str,
+    cancelled: &'a AtomicBool,
+    log: &'a mut L,
+}
+
+impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
+    fn open(&mut self) -> Result<bool, String> {
+        ensure_battle_screen(self.serial, self.cancelled)?;
+        // The original retries Records while its button remains visible.
+        for _ in 0..3 {
+            let (screen, size) = screenshot(self.serial)?;
+            if find_template(&screen, "battle/copy.png", lower_screen(), 0.75)?.is_some() {
+                settle_cancellable(self.cancelled)?;
+                return Ok(true);
+            }
+            if let Some(records) =
+                find_template(&screen, "battle/records.png", lower_screen(), 0.8)?
+            {
+                tap_match(self.serial, records, size)?;
+                if poll_for_match(
+                    self.serial,
+                    &["battle/copy.png"],
+                    lower_screen(),
+                    Duration::from_secs(5),
+                    self.cancelled,
+                )?
+                .is_some()
+                {
+                    settle_cancellable(self.cancelled)?;
+                    return Ok(true);
+                }
+            } else {
+                (self.log)("Keine Ranglisten-Teams verfügbar; aktuelles Team verwenden.".into());
+                return Ok(false);
+            }
+        }
+        (self.log)("Keine weiteren Ranglisten-Teams verfügbar.".into());
+        Ok(false)
     }
 
-    log(format!(
-        "Copying suggested formation #{formation_number}{}.",
-        if manual { " (manual)" } else { "" }
-    ));
-    tap_match(serial, copy, size)?;
-    settle_cancellable(cancelled)?;
-
-    let popup_roi = Rect {
-        x: BASE_RESOLUTION.0 / 10,
-        y: BASE_RESOLUTION.1 * 3 / 5,
-        width: BASE_RESOLUTION.0 * 4 / 10,
-        height: BASE_RESOLUTION.1 * 3 / 10,
-    };
-    let copy_deadline = Instant::now() + Duration::from_secs(8);
-    let screen;
-    let size;
-    loop {
-        ensure_not_cancelled(cancelled)?;
-        let (current_screen, current_size) = screenshot(serial)?;
-        if let Some(cancel) = find_template(&current_screen, "cancel.png", popup_roi, 0.72)? {
-            log("That formation contains locked content; moving to the next suggestion.".into());
-            tap_match(serial, cancel, current_size)?;
-            settle_cancellable(cancelled)?;
+    fn next(&mut self) -> Result<bool, String> {
+        ensure_not_cancelled(self.cancelled)?;
+        let (before, size) = screenshot(self.serial)?;
+        let Some(next) = find_template(
+            &before,
+            "battle/formation_next.png",
+            Rect {
+                x: BASE_RESOLUTION.0 * 4 / 5,
+                y: BASE_RESOLUTION.1 / 2,
+                width: BASE_RESOLUTION.0 / 5,
+                height: BASE_RESOLUTION.1 / 10,
+            },
+            0.78,
+        )?
+        else {
             return Ok(false);
+        };
+        tap_match(self.serial, next, size)?;
+        settle_cancellable(self.cancelled)?;
+        // Do not advance the index until the central formation actually changes.
+        let roi = Rect {
+            x: 216,
+            y: 288,
+            width: 648,
+            height: 1248,
+        };
+        let previous =
+            image::imageops::crop_imm(&before, roi.x, roi.y, roi.width, roi.height).to_image();
+        let samples = template_samples(&previous, 6);
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(5) {
+            ensure_not_cancelled(self.cancelled)?;
+            let (screen, _) = screenshot(self.serial)?;
+            if normalized_correlation(&screen, (roi.x, roi.y), &samples) < 0.95 {
+                settle_cancellable(self.cancelled)?;
+                return Ok(true);
+            }
+            thread::sleep(Duration::from_millis(300));
         }
-        if find_template(&current_screen, "battle/copy.png", lower_screen(), 0.78)?.is_none() {
-            screen = current_screen;
-            size = current_size;
-            break;
-        }
-        if Instant::now() >= copy_deadline {
-            return Err("Copy button did not close after selecting the suggested team.".into());
-        }
-        thread::sleep(Duration::from_millis(400));
+        Ok(false)
     }
 
-    if let Some((_, confirm)) = get_match(
-        &screen,
-        &["navigation/confirm.png", "confirm_text.png"],
-        full_screen(),
-        0.76,
-    )? {
-        tap_match(serial, confirm, size)?;
-        settle_cancellable(cancelled)?;
+    fn is_manual(&mut self) -> Result<bool, String> {
+        // Original: poll the lower-left manual label for 1.5 seconds at 80%.
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(1500) {
+            ensure_not_cancelled(self.cancelled)?;
+            if manual_formation_visible(&screenshot(self.serial)?.0)? {
+                return Ok(true);
+            }
+            thread::sleep(Duration::from_millis(300));
+        }
+        ensure_not_cancelled(self.cancelled)?;
+        Ok(false)
     }
-    Ok(true)
+
+    fn copy(&mut self) -> Result<bool, String> {
+        let popup_roi = Rect {
+            x: 108,
+            y: 1152,
+            width: 432,
+            height: 576,
+        };
+        let deadline = Instant::now() + Duration::from_secs(12);
+        loop {
+            ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = screenshot(self.serial)?;
+            if let Some(cancel) = find_template(&screen, "cancel.png", popup_roi, 0.72)? {
+                (self.log)(
+                    "Team enthält gesperrte Helden oder Artefakte und wird übersprungen.".into(),
+                );
+                tap_match(self.serial, cancel, size)?;
+                settle_cancellable(self.cancelled)?;
+                return Ok(false);
+            }
+            if let Some(copy) = find_template(&screen, "battle/copy.png", lower_screen(), 0.75)? {
+                if Instant::now() >= deadline {
+                    return Err("Das vorgeschlagene Team konnte nicht übernommen werden.".into());
+                }
+                tap_match(self.serial, copy, size)?;
+                settle_cancellable(self.cancelled)?;
+                continue;
+            }
+            if let Some((_, confirm)) = get_match(
+                &screen,
+                &["navigation/confirm.png", "confirm_text.png"],
+                full_screen(),
+                0.76,
+            )? {
+                tap_match(self.serial, confirm, size)?;
+                settle_cancellable(self.cancelled)?;
+            }
+            return Ok(true);
+        }
+    }
 }
 
 fn start_battle(
@@ -966,30 +1103,29 @@ fn play_one_stage(
         return Ok(StageResult::FormationFailed);
     }
 
-    for (pass_index, (skip_manual, only_manual)) in
-        [(true, false), (false, true)].into_iter().enumerate()
-    {
-        if pass_index == 1 {
-            let (screen, _) = screenshot(serial)?;
-            if find_template(&screen, "battle/copy.png", lower_screen(), 0.78)?.is_some() {
-                adb::press_back(serial).map_err(|error| error.to_string())?;
-                settle_cancellable(cancelled)?;
-            }
-            log("No automatic suggestion cleared the stage; trying manual formations last.".into());
+    for &pass in formation_passes(settings.skip_manual_formations) {
+        if pass == FormationPass::Manual {
+            log("Automatische Teams ausgeschöpft; manuelle Teams werden zuletzt versucht.".into());
         }
-        for formation_number in 1..=settings.max_formations {
+        let mut formation_number = 1;
+        while formation_number <= settings.max_formations {
             ensure_not_cancelled(cancelled)?;
-            let selected = choose_suggested_formation(
-                serial,
-                formation_number,
-                skip_manual,
-                only_manual,
-                log,
-                cancelled,
+            let choice = copy_next_formation(
+                &mut AdbFormationBrowser {
+                    serial,
+                    cancelled,
+                    log,
+                },
+                &mut formation_number,
+                settings.max_formations,
+                pass,
             )?;
-            if !selected {
-                continue;
+            if choice == FormationChoice::Exhausted {
+                break;
             }
+            log(format!(
+                "Team #{formation_number} ({pass:?}) wird versucht."
+            ));
             match battle_with_current_team(
                 serial,
                 settings.mode,
@@ -1001,8 +1137,12 @@ fn play_one_stage(
             )? {
                 StageResult::Won => return Ok(StageResult::Won),
                 StageResult::FinalStage => return Ok(StageResult::FinalStage),
-                StageResult::FormationFailed => continue,
+                StageResult::FormationFailed => {}
             }
+            if choice == FormationChoice::CurrentTeam {
+                return Ok(StageResult::FormationFailed);
+            }
+            formation_number += 1;
         }
     }
     Ok(StageResult::FormationFailed)
@@ -1102,127 +1242,253 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
     ))
 }
 
-fn navigate_to_afk_stages(
+#[derive(Debug)]
+enum OverviewAction {
+    Reached,
+    Back,
+    Tap(Match),
+    EnterGame,
+    SelectCrest(Match),
+}
+
+fn overview_action(screen: &GrayImage) -> Result<OverviewAction, String> {
+    // Handle overlays before looking for overview controls behind them.
+    if get_match(
+        screen,
+        &[
+            "battle/copy.png",
+            "navigation/dotdotdot.png",
+            "popup/quick_purchase.png",
+            "battle/spend.png",
+            "battle/gold.png",
+        ],
+        full_screen(),
+        0.8,
+    )?
+    .is_some()
+    {
+        return Ok(OverviewAction::Back);
+    }
+    if let Some((_, close)) = get_match(
+        screen,
+        &[
+            "cancel.png",
+            "guide/close.png",
+            "guide/next.png",
+            "navigation/x.png",
+            "login/claim.png",
+            "arcane_labyrinth/back_arrow.png",
+            "navigation/resonating_hall_back.png",
+            "battle/exit_door.png",
+            "battle/skip.png",
+            "battle/skip_orange.png",
+            "navigation/confirm.png",
+            "navigation/confirm_text.png",
+            "confirm_text.png",
+        ],
+        full_screen(),
+        0.8,
+    )? {
+        return Ok(OverviewAction::Tap(close));
+    }
+    if let Some(crest) = find_template(
+        screen,
+        "arcane_labyrinth/select_a_crest.png",
+        full_screen(),
+        0.8,
+    )? {
+        return Ok(OverviewAction::SelectCrest(crest));
+    }
+    if find_template(screen, "navigation/notice.png", full_screen(), 0.8)?.is_some() {
+        return Ok(OverviewAction::EnterGame);
+    }
+    if get_match(
+        screen,
+        &[
+            "navigation/homestead/homestead_enter.png",
+            "navigation/homestead/homestead_invaded.png",
+            "navigation/homestead/world.png",
+            "navigation/time_of_day.png",
+            "navigation/resonating_hall_shortcut.png",
+        ],
+        full_screen(),
+        0.8,
+    )?
+    .is_some()
+    {
+        return Ok(OverviewAction::Reached);
+    }
+    Ok(OverviewAction::Back)
+}
+
+fn navigate_to_current_overview(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(GrayImage, (u32, u32)), String> {
-    ensure_not_cancelled(cancelled)?;
-    adb::launch_afk_journey(serial).map_err(|error| error.to_string())?;
-    for _ in 0..3 {
-        settle_cancellable(cancelled)?;
-    }
+) -> Result<(u32, u32), String> {
     let started = Instant::now();
-    let mut confirm_exit = false;
-    let mut opened_afk = false;
     for attempt in 0..40 {
         ensure_not_cancelled(cancelled)?;
         if started.elapsed() > Duration::from_secs(240) {
             break;
         }
-        // Recover once if Back cannot leave a particular submenu or battle.
         if attempt == 20 {
-            log("Navigation wird nach einem Spielneustart erneut versucht.".into());
+            log(
+                "Navigation zur Hauptansicht wird nach einem Spielneustart erneut versucht.".into(),
+            );
             adb::stop_afk_journey(serial).map_err(|error| error.to_string())?;
             adb::launch_afk_journey(serial).map_err(|error| error.to_string())?;
-            confirm_exit = false;
-            opened_afk = false;
             for _ in 0..5 {
                 settle_cancellable(cancelled)?;
             }
         }
         let (screen, size) = screenshot(serial)?;
-        if afk_stages_visible(&screen)? {
-            if opened_afk {
-                // The AFK entry can open the idle-rewards overlay before the stage selector.
-                adb::tap_game_point(serial, 550, 1080, size).map_err(|error| error.to_string())?;
+        match overview_action(&screen)? {
+            OverviewAction::Reached => return Ok(size),
+            OverviewAction::Back => adb::press_back(serial).map_err(|error| error.to_string())?,
+            OverviewAction::Tap(found) => tap_match(serial, found, size)?,
+            OverviewAction::EnterGame => {
+                adb::tap_game_point(serial, 540, 960, size).map_err(|error| error.to_string())?;
+                for _ in 0..3 {
+                    settle_cancellable(cancelled)?;
+                }
+            }
+            OverviewAction::SelectCrest(crest) => {
+                adb::tap_game_point(serial, 550, 1460, size).map_err(|error| error.to_string())?;
                 settle_cancellable(cancelled)?;
-                opened_afk = false;
-                continue;
+                tap_match(serial, crest, size)?;
             }
-            return Ok((screen, size));
-        }
-        if let Some((_, entry)) = get_match(
-            &screen,
-            &["battle_modes/afk_stage.png"],
-            full_screen(),
-            0.75,
-        )? {
-            tap_match(serial, entry, size)?;
-            opened_afk = true;
-        } else if get_match(
-            &screen,
-            &["battle/spend.png", "battle/gold.png"],
-            full_screen(),
-            0.78,
-        )?
-        .is_some()
-        {
-            adb::press_back(serial).map_err(|error| error.to_string())?;
-            confirm_exit = false;
-        } else if confirm_exit {
-            if let Some((_, confirm)) = get_match(
-                &screen,
-                &["navigation/confirm.png", "confirm_text.png"],
-                full_screen(),
-                0.8,
-            )? {
-                tap_match(serial, confirm, size)?;
-            } else {
-                adb::press_back(serial).map_err(|error| error.to_string())?;
-            }
-            confirm_exit = false;
-        } else if let Some((path, close)) = get_match(
-            &screen,
-            &[
-                "cancel.png",
-                "guide/close.png",
-                "navigation/x.png",
-                "login/claim.png",
-                "arcane_labyrinth/back_arrow.png",
-                "navigation/resonating_hall_back.png",
-                "battle/exit_door.png",
-                "battle/skip.png",
-                "battle/skip_orange.png",
-            ],
-            full_screen(),
-            0.8,
-        )? {
-            tap_match(serial, close, size)?;
-            confirm_exit = path == "battle/exit_door.png";
-        } else if get_match(
-            &screen,
-            &[
-                "navigation/time_of_day.png",
-                "navigation/resonating_hall_shortcut.png",
-                "navigation/homestead/homestead_enter.png",
-                "navigation/homestead/homestead_invaded.png",
-                "navigation/homestead/world.png",
-            ],
-            full_screen(),
-            0.8,
-        )?
-        .is_some()
-        {
-            // Shared bottom navigation in the world and homestead overview.
-            adb::tap_game_point(serial, 460, 1830, size).map_err(|error| error.to_string())?;
-        } else if find_template(&screen, "navigation/notice.png", full_screen(), 0.8)?.is_some() {
-            adb::tap_game_point(serial, 540, 960, size).map_err(|error| error.to_string())?;
-            for _ in 0..3 {
-                settle_cancellable(cancelled)?;
-            }
-        } else {
-            adb::press_back(serial).map_err(|error| error.to_string())?;
         }
         settle_cancellable(cancelled)?;
+    }
+    Err("Die Hauptansicht konnte nicht erreicht werden. Bitte Spielverbindung prüfen.".into())
+}
+
+type GameScreen = (GrayImage, (u32, u32));
+
+trait AfkNavigator {
+    fn overview(&mut self) -> Result<(), String>;
+    fn battle_modes(&mut self) -> Result<bool, String>;
+    fn afk_page(&mut self) -> Result<Option<GameScreen>, String>;
+}
+
+fn enter_afk_page(navigator: &mut impl AfkNavigator) -> Result<GameScreen, String> {
+    // Every mode, including Season -> normal, starts from a verified overview.
+    // A battle/Records/result screen must never be accepted as the AFK selector.
+    for _ in 0..3 {
+        navigator.overview()?;
+        if navigator.battle_modes()? {
+            if let Some(screen) = navigator.afk_page()? {
+                return Ok(screen);
+            }
+        }
     }
     Err("Die AFK-Seite konnte nicht automatisch geöffnet werden. Bitte Spielverbindung und freigeschaltete Spielmodi prüfen.".into())
 }
 
-/// Navigates from the current game menu to the selected normal or Season AFK Stages.
-///
-/// Continues until the final stage is reached or no available team can clear
-/// the next stage. The caller receives progress log messages and the final count.
+struct AdbAfkNavigator<'a, L> {
+    serial: &'a str,
+    cancelled: &'a AtomicBool,
+    log: &'a mut L,
+    size: (u32, u32),
+}
+
+impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
+    fn overview(&mut self) -> Result<(), String> {
+        self.size = navigate_to_current_overview(self.serial, self.cancelled, self.log)?;
+        settle_cancellable(self.cancelled)
+    }
+
+    fn battle_modes(&mut self) -> Result<bool, String> {
+        ensure_not_cancelled(self.cancelled)?;
+        adb::tap_game_point(self.serial, 460, 1830, self.size)
+            .map_err(|error| error.to_string())?;
+        for _ in 0..2 {
+            let Some((path, _, _)) = poll_for_match(
+                self.serial,
+                &["battle_modes/afk_stage.png", "popup/quick_purchase.png"],
+                full_screen(),
+                Duration::from_secs(20),
+                self.cancelled,
+            )?
+            else {
+                return Ok(false);
+            };
+            if path == "battle_modes/afk_stage.png" {
+                return Ok(true);
+            }
+            adb::press_back(self.serial).map_err(|error| error.to_string())?;
+            settle_cancellable(self.cancelled)?;
+        }
+        Ok(false)
+    }
+
+    fn afk_page(&mut self) -> Result<Option<GameScreen>, String> {
+        // Retry the tile while visible, then confirm the destination label as
+        // AdbAutoPlayer does before dismissing the idle-reward overlay.
+        for _ in 0..3 {
+            ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = screenshot(self.serial)?;
+            if let Some(entry) =
+                find_template(&screen, "battle_modes/afk_stage.png", full_screen(), 0.75)?
+            {
+                tap_match(self.serial, entry, size)?;
+                settle_cancellable(self.cancelled)?;
+            } else {
+                break;
+            }
+        }
+        let label_roi = Rect {
+            x: 324,
+            y: 1728,
+            width: 432,
+            height: 192,
+        };
+        if poll_for_match(
+            self.serial,
+            &["navigation/resonating_hall_label.png"],
+            label_roi,
+            Duration::from_secs(20),
+            self.cancelled,
+        )?
+        .is_none()
+        {
+            return Ok(None);
+        }
+        let (_, size) = screenshot(self.serial)?;
+        adb::tap_game_point(self.serial, 550, 1080, size).map_err(|error| error.to_string())?;
+        settle_cancellable(self.cancelled)?;
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(20) {
+            ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = screenshot(self.serial)?;
+            if afk_stages_visible(&screen)? {
+                return Ok(Some((screen, size)));
+            }
+            thread::sleep(Duration::from_millis(400));
+        }
+        Ok(None)
+    }
+}
+
+fn navigate_to_afk_stages(
+    serial: &str,
+    cancelled: &AtomicBool,
+    log: &mut impl FnMut(String),
+) -> Result<GameScreen, String> {
+    ensure_not_cancelled(cancelled)?;
+    adb::launch_afk_journey(serial).map_err(|error| error.to_string())?;
+    for _ in 0..3 {
+        settle_cancellable(cancelled)?;
+    }
+    enter_afk_page(&mut AdbAfkNavigator {
+        serial,
+        cancelled,
+        log,
+        size: BASE_RESOLUTION,
+    })
+}
+
 pub fn run<F, P>(
     serial: &str,
     battle_settings: BattleSettings,
@@ -1313,6 +1579,251 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FakeFormations {
+        // (manual, can_copy)
+        teams: Vec<(bool, bool)>,
+        displayed: usize,
+        copied: Vec<usize>,
+        visited: Vec<usize>,
+        next_error: bool,
+    }
+
+    impl FormationBrowser for FakeFormations {
+        fn open(&mut self) -> Result<bool, String> {
+            self.displayed = 1;
+            self.visited.push(1);
+            Ok(true)
+        }
+        fn next(&mut self) -> Result<bool, String> {
+            if self.next_error {
+                return Err("ADB getrennt".into());
+            }
+            if self.displayed == self.teams.len() {
+                return Ok(false);
+            }
+            self.displayed += 1;
+            self.visited.push(self.displayed);
+            Ok(true)
+        }
+        fn is_manual(&mut self) -> Result<bool, String> {
+            Ok(self.teams[self.displayed - 1].0)
+        }
+        fn copy(&mut self) -> Result<bool, String> {
+            if !self.teams[self.displayed - 1].1 {
+                return Ok(false);
+            }
+            self.copied.push(self.displayed);
+            Ok(true)
+        }
+    }
+
+    fn formations(teams: &[(bool, bool)]) -> FakeFormations {
+        FakeFormations {
+            teams: teams.to_vec(),
+            displayed: 1,
+            copied: vec![],
+            visited: vec![],
+            next_error: false,
+        }
+    }
+
+    fn exhaust_teams(browser: &mut FakeFormations, skip_manual: bool) -> Result<(), String> {
+        for &pass in formation_passes(skip_manual) {
+            let mut target = 1;
+            while target <= browser.teams.len() as u32 {
+                let limit = browser.teams.len() as u32;
+                if copy_next_formation(browser, &mut target, limit, pass)?
+                    == FormationChoice::Exhausted
+                {
+                    break;
+                }
+                target += 1;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn manual_and_locked_skips_do_not_jump_over_the_next_team() {
+        let mut browser = formations(&[(true, true), (false, false), (false, true)]);
+        let mut target = 1;
+        assert_eq!(
+            copy_next_formation(&mut browser, &mut target, 3, FormationPass::Automatic).unwrap(),
+            FormationChoice::Copied
+        );
+        assert_eq!(target, 3);
+        assert_eq!(browser.visited, vec![1, 2, 3]);
+        assert_eq!(browser.copied, vec![3]);
+    }
+
+    #[test]
+    fn all_automatic_teams_run_before_manual_teams_with_a_fresh_list_each_pass() {
+        let mut browser = formations(&[(true, true), (false, true), (true, true), (false, true)]);
+        exhaust_teams(&mut browser, false).unwrap();
+        assert_eq!(browser.copied, vec![2, 4, 1, 3]);
+    }
+
+    #[test]
+    fn skip_manual_option_excludes_every_manual_team() {
+        let mut browser = formations(&[(true, true), (false, true), (true, true)]);
+        exhaust_teams(&mut browser, true).unwrap();
+        assert_eq!(browser.copied, vec![2]);
+        let mut only_manual = formations(&[(true, true), (true, true)]);
+        exhaust_teams(&mut only_manual, true).unwrap();
+        assert!(only_manual.copied.is_empty());
+        exhaust_teams(&mut only_manual, false).unwrap();
+        assert_eq!(only_manual.copied, vec![1, 2]);
+    }
+
+    #[test]
+    fn no_next_arrow_ends_the_pass_and_adb_errors_are_not_swallowed() {
+        let mut browser = formations(&[(true, true)]);
+        let mut target = 1;
+        assert_eq!(
+            copy_next_formation(&mut browser, &mut target, 10, FormationPass::Automatic).unwrap(),
+            FormationChoice::Exhausted
+        );
+        browser.next_error = true;
+        assert_eq!(
+            copy_next_formation(&mut browser, &mut target, 10, FormationPass::Automatic)
+                .unwrap_err(),
+            "ADB getrennt"
+        );
+    }
+
+    #[test]
+    fn manual_labels_are_recognized_only_in_the_original_lower_left_region() {
+        for path in ["battle/manual_battle.png", "battle/manual_battle_old1.png"] {
+            let template = load_template(path).unwrap();
+            let mut screen = GrayImage::new(1080, 1920);
+            image::imageops::replace(&mut screen, &template, 30, 1100);
+            assert!(manual_formation_visible(&screen).unwrap(), "{path}");
+            let mut wrong_region = GrayImage::new(1080, 1920);
+            image::imageops::replace(&mut wrong_region, &template, 600, 300);
+            assert!(!manual_formation_visible(&wrong_region).unwrap(), "{path}");
+        }
+    }
+
+    struct FakeNavigation {
+        trace: Vec<&'static str>,
+        failures: u32,
+        fail_overview: bool,
+    }
+
+    impl AfkNavigator for FakeNavigation {
+        fn overview(&mut self) -> Result<(), String> {
+            self.trace.push("overview");
+            if self.fail_overview {
+                return Err("Stop".into());
+            }
+            Ok(())
+        }
+        fn battle_modes(&mut self) -> Result<bool, String> {
+            self.trace.push("battle_modes");
+            if self.failures > 0 {
+                self.failures -= 1;
+                return Ok(false);
+            }
+            Ok(true)
+        }
+        fn afk_page(&mut self) -> Result<Option<GameScreen>, String> {
+            self.trace.push("afk_page");
+            Ok(Some((GrayImage::new(1, 1), BASE_RESOLUTION)))
+        }
+    }
+
+    #[test]
+    fn season_to_normal_returns_to_overview_before_opening_battle_modes_again() {
+        let mut navigator = FakeNavigation {
+            trace: vec![],
+            failures: 0,
+            fail_overview: false,
+        };
+        run_sequence(StageSelection::default(), &AtomicBool::new(false), |_| {
+            enter_afk_page(&mut navigator)?;
+            Ok(ModeSummary {
+                cleared: 0,
+                end: ModeEnd::AttemptsExhausted,
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            navigator.trace,
+            vec![
+                "overview",
+                "battle_modes",
+                "afk_page",
+                "overview",
+                "battle_modes",
+                "afk_page"
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_battle_mode_navigation_retries_from_overview_and_stop_propagates() {
+        let mut navigator = FakeNavigation {
+            trace: vec![],
+            failures: 1,
+            fail_overview: false,
+        };
+        enter_afk_page(&mut navigator).unwrap();
+        assert_eq!(
+            navigator.trace,
+            vec![
+                "overview",
+                "battle_modes",
+                "overview",
+                "battle_modes",
+                "afk_page"
+            ]
+        );
+        navigator.trace.clear();
+        navigator.fail_overview = true;
+        assert_eq!(enter_afk_page(&mut navigator).unwrap_err(), "Stop");
+        assert_eq!(navigator.trace, vec!["overview"]);
+    }
+
+    #[test]
+    fn formation_and_stage_pages_are_not_accepted_as_overview() {
+        for (path, x, y) in [
+            ("battle/copy.png", 400, 1500),
+            ("afk_stages/season_battle.png", 700, 1700),
+        ] {
+            let mut screen = GrayImage::new(1080, 1920);
+            image::imageops::replace(&mut screen, &load_template(path).unwrap(), x, y);
+            assert!(
+                matches!(overview_action(&screen).unwrap(), OverviewAction::Back),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn overview_recognizes_world_and_homestead_and_dismisses_overlays_first() {
+        for path in [
+            "navigation/homestead/homestead_enter.png",
+            "navigation/homestead/world.png",
+        ] {
+            let mut screen = GrayImage::new(1080, 1920);
+            image::imageops::replace(&mut screen, &load_template(path).unwrap(), 800, 1100);
+            assert!(
+                matches!(overview_action(&screen).unwrap(), OverviewAction::Reached),
+                "{path}"
+            );
+            image::imageops::replace(
+                &mut screen,
+                &load_template("navigation/confirm.png").unwrap(),
+                350,
+                1400,
+            );
+            assert!(matches!(
+                overview_action(&screen).unwrap(),
+                OverviewAction::Tap(_)
+            ));
+        }
+    }
 
     fn result_screen(paths: &[&str]) -> GrayImage {
         let mut screen = GrayImage::new(BASE_RESOLUTION.0, BASE_RESOLUTION.1);
@@ -1683,6 +2194,7 @@ mod tests {
                     mode,
                     use_suggested_formations: true,
                     current_team_first: true,
+                    skip_manual_formations: false,
                     max_formations: 10,
                     attempts_per_formation: 5,
                 },
