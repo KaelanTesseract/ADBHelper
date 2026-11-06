@@ -160,6 +160,9 @@ pub fn devices() -> Result<Vec<Device>, AdbError> {
 }
 
 pub fn shell(serial: &str, args: &[&str]) -> Result<Output, AdbError> {
+    if args.first() == Some(&"input") {
+        crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
+    }
     let mut command_args = vec!["-s", serial, "shell"];
     command_args.extend_from_slice(args);
     run(&command_args)
@@ -185,6 +188,7 @@ pub fn press_back(serial: &str) -> Result<(), AdbError> {
 }
 
 pub fn launch_afk_journey(serial: &str) -> Result<String, AdbError> {
+    crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
     let packages = installed_packages(serial)?;
     let package = packages
         .iter()
@@ -201,22 +205,79 @@ pub fn launch_afk_journey(serial: &str) -> Result<String, AdbError> {
             "1",
         ],
     )?;
+    crate::afk_journey::recovery::expect_running(serial);
     Ok(package.clone())
 }
 
 pub fn stop_afk_journey(serial: &str) -> Result<String, AdbError> {
+    crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
     let packages = installed_packages(serial)?;
     let package = packages
         .iter()
         .find(|package| crate::afk_journey::is_supported_package(package))
         .ok_or_else(|| AdbError::Failed("AFK Journey is not installed on this device".into()))?;
+    crate::afk_journey::recovery::intentional_stop(serial);
     shell(serial, &["am", "force-stop", package])?;
     Ok(package.clone())
 }
 
 pub fn screenshot(serial: &str) -> Result<Vec<u8>, AdbError> {
+    crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
     let output = run(&["-s", serial, "exec-out", "screencap", "-p"])?;
     Ok(output.stdout)
+}
+
+pub fn afk_journey_running(serial: &str) -> Result<bool, AdbError> {
+    // Older emulator ADB clients report a remote nonzero exit as "error: closed".
+    // A fixed Android shell command returns the pidof status as explicit data,
+    // leaving transport failures distinguishable from a missing game process.
+    let command = format!(
+        "pidof {}; echo ADBHELPER_PID_EXIT:$?",
+        crate::afk_journey::PACKAGE_NAMES.join(" ")
+    );
+    let output = run(&["-s", serial, "shell", &command])?;
+    parse_game_process(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
+    let Some((pids, status)) = stdout.rsplit_once("ADBHELPER_PID_EXIT:") else {
+        return Err(AdbError::InvalidOutput(
+            "Prozessprüfung ohne Statusmarker".into(),
+        ));
+    };
+    let pids = pids.trim();
+    match status.trim() {
+        "0" if !pids.is_empty()
+            && pids
+                .split_whitespace()
+                .all(|s| s.parse::<u32>().is_ok_and(|pid| pid > 0)) =>
+        {
+            Ok(true)
+        }
+        "1" if pids.is_empty() => Ok(false),
+        _ => Err(AdbError::InvalidOutput(
+            "Prozessprüfung nicht eindeutig; kein Spielabsturz bestätigt".into(),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::*;
+    #[test]
+    fn missing_process_is_distinct_from_unsupported_or_failed_adb_commands() {
+        assert!(parse_game_process("30257\r\r\nADBHELPER_PID_EXIT:0\r\n").unwrap());
+        assert!(!parse_game_process("ADBHELPER_PID_EXIT:1\r\n").unwrap());
+        for response in [
+            "error: closed",
+            "device offline",
+            "ADBHELPER_PID_EXIT:127",
+            "ADBHELPER_PID_EXIT:0",
+            "0\nADBHELPER_PID_EXIT:0",
+        ] {
+            assert!(parse_game_process(response).is_err(), "{response}");
+        }
+    }
 }
 
 pub fn display_size(serial: &str) -> Result<(u32, u32), AdbError> {

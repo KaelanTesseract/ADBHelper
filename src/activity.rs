@@ -8,6 +8,8 @@ pub enum GameMode {
     SeasonLegendTrial(LegendTower),
     UnionCampaign,
     DurasTrials,
+    Arena,
+    SupremeArena,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -56,11 +58,17 @@ impl GameMode {
             Self::SeasonLegendTrial(LegendTower::Mauler) => "Legend Trial · Mauler",
             Self::UnionCampaign => "Union Campaign",
             Self::DurasTrials => "Dura’s Trials",
+            Self::Arena => "Arena",
+            Self::SupremeArena => "Supreme Arena",
         }
     }
 
     pub fn is_legend_trial(self) -> bool {
         matches!(self, Self::SeasonLegendTrial(_))
+    }
+
+    pub fn is_pvp(self) -> bool {
+        matches!(self, Self::Arena | Self::SupremeArena)
     }
 
     pub fn has_external_progression(self) -> bool {
@@ -192,7 +200,8 @@ impl RunActivity {
                 match outcome {
                     BattleOutcome::Won => {
                         stats.wins = stats.wins.saturating_add(1);
-                        stats.clear_pending = true;
+                        stats.clear_pending = !mode.is_pvp();
+                        cleared = mode.is_pvp();
                     }
                     BattleOutcome::Lost => stats.losses = stats.losses.saturating_add(1),
                     BattleOutcome::Unclear => {}
@@ -207,7 +216,11 @@ impl RunActivity {
             _ => {}
         }
         if cleared {
-            let total = self.modes.values().map(|s| s.cleared).sum();
+            let total = self
+                .modes
+                .iter()
+                .map(|(mode, s)| if mode.is_pvp() { s.wins } else { s.cleared })
+                .sum();
             let elapsed = self.elapsed(now).max(
                 self.stage_history
                     .last()
@@ -227,6 +240,10 @@ impl RunActivity {
         })
     }
 
+    pub fn is_pvp_run(&self) -> bool {
+        self.target.is_some_and(GameMode::is_pvp) || self.modes.keys().any(|mode| mode.is_pvp())
+    }
+
     pub fn success_rate(&self) -> Option<f64> {
         let (wins, losses) = self.outcomes();
         (wins + losses > 0).then(|| 100.0 * wins as f64 / (wins + losses) as f64)
@@ -243,6 +260,25 @@ impl RunActivity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pvp_victories_feed_graphs_without_creating_stage_clears() {
+        for mode in [GameMode::Arena, GameMode::SupremeArena] {
+            let mut run = RunActivity::default();
+            run.start(mode, Instant::now());
+            run.apply(ActivityEvent::ModeEntered(mode));
+            run.apply(ActivityEvent::BattleStarted(mode));
+            run.apply(ActivityEvent::BattleFinished(mode, BattleOutcome::Won));
+            run.apply(ActivityEvent::StageCleared(mode));
+            run.apply(ActivityEvent::BattleStarted(mode));
+            run.apply(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
+            assert_eq!(run.modes[&mode].attempts, 2);
+            assert_eq!(run.modes[&mode].wins, 1);
+            assert_eq!(run.modes[&mode].cleared, 0);
+            assert_eq!(run.stage_history.last().unwrap().cleared, 1);
+            assert!(run.is_pvp_run());
+            assert_eq!(run.attempts_per_clear(), None);
+        }
+    }
     const SEASON: GameMode = GameMode::SeasonAfkStages;
 
     #[test]

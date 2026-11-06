@@ -84,13 +84,15 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
         Ok(lines)
     }
     read(image).map_err(|error| {
-        format!("Windows-OCR nicht verfügbar: {error}. Automatischer Sweep bleibt gesperrt.")
+        format!(
+            "Lokale Windows-Texterkennung nicht verfügbar: {error}. Die Aktion wurde angehalten."
+        )
     })
 }
 
 #[cfg(not(windows))]
 pub(super) fn recognize(_: &GrayImage) -> Result<Vec<TextLine>, String> {
-    Err("Für den sicheren Sweep wird die lokale Windows-OCR benötigt.".into())
+    Err("Für diese Aktion wird die lokale Windows-Texterkennung benötigt.".into())
 }
 
 #[cfg(test)]

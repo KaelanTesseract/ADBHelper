@@ -157,6 +157,51 @@ pub fn run_selected(
 
 fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
     let bytes: &'static [u8] = match relative_path {
+        "arena/free_price_zero.png" => {
+            include_bytes!("../../assets/AFKJourney/arena/free_price_zero.png")
+        }
+        "arena/battle.png" => include_bytes!("../../assets/AFKJourney/arena/battle.png"),
+        "arena/buy.png" => include_bytes!("../../assets/AFKJourney/arena/buy.png"),
+        "arena/buy_free.png" => include_bytes!("../../assets/AFKJourney/arena/buy_free.png"),
+        "arena/cancel_purchase.png" => {
+            include_bytes!("../../assets/AFKJourney/arena/cancel_purchase.png")
+        }
+        "arena/challenge.png" => include_bytes!("../../assets/AFKJourney/arena/challenge.png"),
+        "arena/done.png" => include_bytes!("../../assets/AFKJourney/arena/done.png"),
+        "arena/label.png" => include_bytes!("../../assets/AFKJourney/arena/label.png"),
+        "arena/no_attempts.png" => include_bytes!("../../assets/AFKJourney/arena/no_attempts.png"),
+        "arena/opponent.png" => include_bytes!("../../assets/AFKJourney/arena/opponent.png"),
+        "arena/skip.png" => include_bytes!("../../assets/AFKJourney/arena/skip.png"),
+        "arena/weekly_notice.png" => {
+            include_bytes!("../../assets/AFKJourney/arena/weekly_notice.png")
+        }
+        "arena/weekly_rewards.png" => {
+            include_bytes!("../../assets/AFKJourney/arena/weekly_rewards.png")
+        }
+        "supreme_arena/challenge.png" => {
+            include_bytes!("../../assets/AFKJourney/supreme_arena/challenge.png")
+        }
+        "supreme_arena/challenge_detail.png" => {
+            include_bytes!("../../assets/AFKJourney/supreme_arena/challenge_detail.png")
+        }
+        "supreme_arena/daily_rewards.png" => {
+            include_bytes!("../../assets/AFKJourney/supreme_arena/daily_rewards.png")
+        }
+        "supreme_arena/label.png" => {
+            include_bytes!("../../assets/AFKJourney/supreme_arena/label.png")
+        }
+        "supreme_arena/no_attempts_popup.png" => {
+            include_bytes!("../../assets/AFKJourney/supreme_arena/no_attempts_popup.png")
+        }
+        "supreme_arena/rankings.png" => {
+            include_bytes!("../../assets/AFKJourney/supreme_arena/rankings.png")
+        }
+        "supreme_arena/select_opponent.png" => {
+            include_bytes!("../../assets/AFKJourney/supreme_arena/select_opponent.png")
+        }
+        "battle_modes/supreme_arena.png" => {
+            include_bytes!("../../assets/AFKJourney/battle_modes/supreme_arena.png")
+        }
         "battle_modes/duras_trials.png" => {
             include_bytes!("../../assets/AFKJourney/battle_modes/duras_trials.png")
         }
@@ -631,10 +676,51 @@ pub(super) fn settle_cancellable(cancelled: &AtomicBool) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum FormationPass {
     Automatic,
     Manual,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TeamSlot {
+    Current,
+    Ranked(FormationPass, u32),
+    Fallback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TeamCursor {
+    slot: TeamSlot,
+    used: u32,
+}
+
+impl TeamCursor {
+    fn can_resume(self, settings: BattleSettings) -> bool {
+        if self.used < settings.attempts_per_formation {
+            return true;
+        }
+        if !settings.use_suggested_formations || settings.max_formations == 0 {
+            return false;
+        }
+        match self.slot {
+            TeamSlot::Current => true,
+            TeamSlot::Ranked(pass, number) => {
+                number < settings.max_formations
+                    || (pass == FormationPass::Automatic && !settings.skip_manual_formations)
+            }
+            TeamSlot::Fallback => false,
+        }
+    }
+
+    fn first_rank(self, pass: FormationPass, attempts: u32) -> u32 {
+        match self.slot {
+            TeamSlot::Ranked(saved_pass, number) if saved_pass == pass => {
+                number + u32::from(self.used >= attempts)
+            }
+            _ => 1,
+        }
+    }
 }
 
 fn formation_passes(skip_manual: bool) -> &'static [FormationPass] {
@@ -1242,19 +1328,21 @@ fn wait_for_outcome(
         }
         thread::sleep(Duration::from_millis(500));
     }
-    Err("Battle result was not detected within four minutes.".to_owned())
+    Err(super::BATTLE_RESULT_TIMEOUT.into())
 }
 
 fn battle_with_current_team(
     serial: &str,
-    mode: GameMode,
+    settings: BattleSettings,
     log: &mut impl FnMut(String),
     size: (u32, u32),
     cancelled: &AtomicBool,
-    attempts: u32,
+    cursor: TeamCursor,
     progress: &mut impl FnMut(ProgressEvent),
 ) -> Result<StageResult, String> {
-    for attempt in 1..=attempts {
+    let mode = settings.mode;
+    let attempts = settings.attempts_per_formation;
+    for attempt in (cursor.used + 1)..=attempts {
         ensure_not_cancelled(cancelled)?;
         log(format!("Starting battle attempt {attempt}/{attempts}."));
         if mode == GameMode::DurasTrials {
@@ -1262,11 +1350,24 @@ fn battle_with_current_team(
         }
         start_battle(serial, mode, log, size, cancelled)?;
         progress(ProgressEvent::BattleStarted(mode));
-        let (outcome, found, size) =
-            wait_for_outcome(serial, mode, log, cancelled).map_err(|error| {
+        let (outcome, found, size) = match wait_for_outcome(serial, mode, log, cancelled) {
+            Ok(result) => result,
+            Err(error) => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
-                error
-            })?;
+                if error == super::BATTLE_RESULT_TIMEOUT {
+                    let cursor = TeamCursor {
+                        used: attempt,
+                        ..cursor
+                    };
+                    if !cursor.can_resume(settings) {
+                        log(error);
+                        return Ok(StageResult::FormationFailed);
+                    }
+                    super::recovery::save_team_cursor(mode, cursor);
+                }
+                return Err(error);
+            }
+        };
         match outcome {
             Outcome::Next => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Won));
@@ -1371,18 +1472,26 @@ pub(super) fn play_one_stage(
 ) -> Result<StageResult, String> {
     let (screen, _) = screenshot(serial)?;
     let copy_is_open = find_template(&screen, "battle/copy.png", lower_screen(), 0.78)?.is_some();
+    let resume = super::recovery::take_team_cursor(settings.mode);
 
-    if (settings.current_team_first || !settings.use_suggested_formations) && !copy_is_open {
+    let current = TeamCursor {
+        slot: TeamSlot::Current,
+        used: 0,
+    };
+    let first = resume.unwrap_or(current);
+    if first.slot == TeamSlot::Fallback {
+        return battle_with_current_team(serial, settings, log, size, cancelled, first, progress);
+    }
+    if first.slot == TeamSlot::Current
+        && (settings.current_team_first || !settings.use_suggested_formations)
+        && first.used < settings.attempts_per_formation
+        && (!copy_is_open || resume.is_some())
+    {
+        if copy_is_open {
+            ensure_battle_screen(serial, cancelled)?;
+        }
         log("Trying the currently selected team first.".into());
-        match battle_with_current_team(
-            serial,
-            settings.mode,
-            log,
-            size,
-            cancelled,
-            settings.attempts_per_formation,
-            progress,
-        )? {
+        match battle_with_current_team(serial, settings, log, size, cancelled, first, progress)? {
             StageResult::Won => return Ok(StageResult::Won),
             StageResult::FinalStage => return Ok(StageResult::FinalStage),
             StageResult::FormationFailed => {}
@@ -1394,10 +1503,13 @@ pub(super) fn play_one_stage(
     }
 
     for &pass in formation_passes(settings.skip_manual_formations) {
+        if matches!(first.slot, TeamSlot::Ranked(saved_pass, _) if pass < saved_pass) {
+            continue;
+        }
         if pass == FormationPass::Manual {
             log("Automatische Teams ausgeschöpft; manuelle Teams werden zuletzt versucht.".into());
         }
-        let mut formation_number = 1;
+        let mut formation_number = first.first_rank(pass, settings.attempts_per_formation);
         while formation_number <= settings.max_formations {
             ensure_not_cancelled(cancelled)?;
             if settings.mode == GameMode::DurasTrials {
@@ -1413,19 +1525,25 @@ pub(super) fn play_one_stage(
                 settings.max_formations,
                 pass,
             )?;
-            if choice == FormationChoice::Exhausted {
-                break;
-            }
+            let slot = match choice {
+                FormationChoice::Copied => TeamSlot::Ranked(pass, formation_number),
+                FormationChoice::CurrentTeam if resume.is_none() => TeamSlot::Fallback,
+                FormationChoice::CurrentTeam => return Ok(StageResult::FormationFailed),
+                FormationChoice::Exhausted => break,
+            };
+            let used = resume
+                .filter(|cursor| cursor.slot == slot)
+                .map_or(0, |cursor| cursor.used);
             log(format!(
                 "Team #{formation_number} ({pass:?}) wird versucht."
             ));
             match battle_with_current_team(
                 serial,
-                settings.mode,
+                settings,
                 log,
                 size,
                 cancelled,
-                settings.attempts_per_formation,
+                TeamCursor { slot, used },
                 progress,
             )? {
                 StageResult::Won => return Ok(StageResult::Won),
@@ -1522,9 +1640,11 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
         return Ok(Some(match mode {
             GameMode::SeasonAfkStages => (215, button.center().1),
             GameMode::AfkStages => button.center(),
-            GameMode::SeasonLegendTrial(_) | GameMode::UnionCampaign | GameMode::DurasTrials => {
-                return Err("Kein AFK-Stages-Modus".into())
-            }
+            GameMode::SeasonLegendTrial(_)
+            | GameMode::UnionCampaign
+            | GameMode::DurasTrials
+            | GameMode::Arena
+            | GameMode::SupremeArena => return Err("Kein AFK-Stages-Modus".into()),
         }));
     }
     if mode == GameMode::AfkStages {
@@ -1895,6 +2015,40 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeout_cursor_keeps_the_remaining_attempts_and_rank_order() {
+        let settings = BattleSettings {
+            mode: GameMode::SeasonAfkStages,
+            use_suggested_formations: true,
+            current_team_first: true,
+            skip_manual_formations: false,
+            max_formations: 3,
+            attempts_per_formation: 2,
+        };
+        let pass = FormationPass::Automatic;
+        let mut cursor = TeamCursor {
+            slot: TeamSlot::Ranked(pass, 3),
+            used: 1,
+        };
+        assert!(cursor.can_resume(settings));
+        assert_eq!(cursor.first_rank(pass, settings.attempts_per_formation), 3);
+
+        cursor.used = 2;
+        assert!(cursor.can_resume(settings));
+        assert_eq!(cursor.first_rank(pass, settings.attempts_per_formation), 4);
+        assert_eq!(
+            cursor.first_rank(FormationPass::Manual, settings.attempts_per_formation),
+            1
+        );
+        assert!(!cursor.can_resume(BattleSettings {
+            skip_manual_formations: true,
+            ..settings
+        }));
+
+        cursor.slot = TeamSlot::Ranked(FormationPass::Manual, 3);
+        assert!(!cursor.can_resume(settings));
+    }
 
     struct FakeFormations {
         // (manual, can_copy)

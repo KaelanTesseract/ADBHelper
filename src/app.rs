@@ -1,6 +1,9 @@
 use crate::activity::{ActivityEvent, GameMode, LegendTower, RunActivity};
 use crate::adb::{self, Device};
 use crate::afk_journey::afk_stages::StageSelection;
+use crate::afk_journey::arena::{
+    ArenaSettings, OpponentPosition, Settings as PvpSettings, SupremeSettings,
+};
 use crate::afk_journey::legend_trial::TowerSelection;
 use crate::design_system::{
     self, card, primary_button, status_badge, ColorTokens, GeometryTokens, SpaceTokens, TypeTokens,
@@ -19,6 +22,7 @@ enum Event {
     Log(String),
     Busy(bool),
     Activity(ActivityEvent),
+    RecoveryStatus(String),
     StagesFinished(StageAction, Option<String>),
     UpdateChecked(Result<Option<updater::Release>, String>),
     UpdateCheckStarted,
@@ -38,6 +42,8 @@ enum StageAction {
     SeasonLegendTrial,
     UnionCampaign,
     DurasTrials,
+    Arena,
+    SupremeArena,
 }
 
 impl StageAction {
@@ -47,6 +53,8 @@ impl StageAction {
             Self::SeasonLegendTrial => 1,
             Self::UnionCampaign => 2,
             Self::DurasTrials => 3,
+            Self::Arena => 4,
+            Self::SupremeArena => 5,
         }
     }
 
@@ -56,6 +64,8 @@ impl StageAction {
             Self::SeasonLegendTrial => "Season Legend Trial",
             Self::UnionCampaign => "Union Campaign",
             Self::DurasTrials => "Dura’s Trials",
+            Self::Arena => "Arena",
+            Self::SupremeArena => "Supreme Arena",
         }
     }
 }
@@ -109,8 +119,11 @@ pub struct PlayerApp {
     tower_selection: TowerSelection,
     dura_sweep_after_cap: bool,
     active_action: Option<StageAction>,
-    battle_options: [ActionBattleOptions; 4],
+    battle_options: [ActionBattleOptions; 6],
+    arena_settings: ArenaSettings,
+    supreme_settings: SupremeSettings,
     action_settings_dialog: Option<StageAction>,
+    recovery_notice: Option<String>,
     logo: egui::TextureHandle,
     activity: RunActivity,
     action_error: Option<(StageAction, String)>,
@@ -159,8 +172,11 @@ impl PlayerApp {
             tower_selection: TowerSelection::default(),
             dura_sweep_after_cap: true,
             active_action: None,
-            battle_options: [ActionBattleOptions::default(); 4],
+            battle_options: [ActionBattleOptions::default(); 6],
+            arena_settings: ArenaSettings::default(),
+            supreme_settings: SupremeSettings::default(),
             action_settings_dialog: None,
+            recovery_notice: None,
             logo,
             activity: RunActivity::default(),
             action_error: None,
@@ -413,9 +429,12 @@ impl PlayerApp {
             return;
         }
         self.action_error = None;
+        self.recovery_notice = None;
         let selection = self.stage_selection;
         let towers = self.tower_selection;
         let dura_sweep_after_cap = self.dura_sweep_after_cap;
+        let arena_settings = self.arena_settings;
+        let supreme_settings = self.supreme_settings;
         let mode = match action {
             StageAction::AfkStages => selection.modes().first().copied(),
             StageAction::SeasonLegendTrial => towers
@@ -425,6 +444,8 @@ impl PlayerApp {
                 .map(GameMode::SeasonLegendTrial),
             StageAction::UnionCampaign => Some(GameMode::UnionCampaign),
             StageAction::DurasTrials => Some(GameMode::DurasTrials),
+            StageAction::Arena => Some(GameMode::Arena),
+            StageAction::SupremeArena => Some(GameMode::SupremeArena),
         };
         let Some(mode) = mode else {
             self.action_error = Some((
@@ -436,6 +457,7 @@ impl PlayerApp {
                     }
                     StageAction::UnionCampaign => "Union Campaign ist nicht verfügbar.",
                     StageAction::DurasTrials => "Dura’s Trials sind nicht verfügbar.",
+                    StageAction::Arena | StageAction::SupremeArena => "Arena ist nicht verfügbar.",
                 }
                 .into(),
             ));
@@ -463,39 +485,61 @@ impl PlayerApp {
             let progress = |progress| {
                 let _ = sender.send(Event::Activity(progress));
             };
-            let result = match action {
-                StageAction::AfkStages => crate::afk_journey::afk_stages::run_selected(
-                    &serial,
-                    battle_settings,
-                    selection,
-                    &cancelled,
-                    log,
-                    progress,
-                ),
-                StageAction::SeasonLegendTrial => crate::afk_journey::legend_trial::run(
-                    &serial,
-                    battle_settings,
-                    towers,
-                    &cancelled,
-                    log,
-                    progress,
-                ),
-                StageAction::UnionCampaign => crate::afk_journey::union_campaign::run(
-                    &serial,
-                    battle_settings,
-                    &cancelled,
-                    log,
-                    progress,
-                ),
-                StageAction::DurasTrials => crate::afk_journey::duras_trials::run(
-                    &serial,
-                    battle_settings,
-                    dura_sweep_after_cap,
-                    &cancelled,
-                    log,
-                    progress,
-                ),
-            };
+            let result = crate::afk_journey::recovery::run(
+                &serial,
+                &cancelled,
+                |checkpoint, report| match action {
+                    StageAction::AfkStages => crate::afk_journey::afk_stages::run_selected(
+                        &serial,
+                        battle_settings,
+                        checkpoint.stages(selection),
+                        &cancelled,
+                        log,
+                        |event| report(event),
+                    ),
+                    StageAction::SeasonLegendTrial => crate::afk_journey::legend_trial::run(
+                        &serial,
+                        battle_settings,
+                        checkpoint.towers(towers),
+                        &cancelled,
+                        log,
+                        |event| report(event),
+                    ),
+                    StageAction::UnionCampaign => crate::afk_journey::union_campaign::run(
+                        &serial,
+                        battle_settings,
+                        &cancelled,
+                        log,
+                        |event| report(event),
+                    ),
+                    StageAction::DurasTrials => crate::afk_journey::duras_trials::run(
+                        &serial,
+                        battle_settings,
+                        dura_sweep_after_cap,
+                        &cancelled,
+                        log,
+                        |event| report(event),
+                    ),
+                    StageAction::Arena => crate::afk_journey::arena::run(
+                        &serial,
+                        PvpSettings::Arena(arena_settings),
+                        &cancelled,
+                        log,
+                        |event| report(event),
+                    ),
+                    StageAction::SupremeArena => crate::afk_journey::arena::run(
+                        &serial,
+                        PvpSettings::Supreme(supreme_settings),
+                        &cancelled,
+                        log,
+                        |event| report(event),
+                    ),
+                },
+                |message| {
+                    let _ = sender.send(Event::RecoveryStatus(message));
+                },
+                progress,
+            );
             let message = match &result {
                 Ok(cleared) => format!("{} abgeschlossen · {cleared} geschafft.", action.label()),
                 Err(error) => format!("{} beendet: {error}", action.label()),
@@ -536,8 +580,18 @@ impl PlayerApp {
                     self.log(format!("ADB-Suche fehlgeschlagen: {error}"))
                 }
                 Event::Log(message) => self.log(message),
-                Event::Activity(event) => self.activity.apply(event),
+                Event::RecoveryStatus(message) => {
+                    self.log(&message);
+                    self.recovery_notice = Some(message);
+                }
+                Event::Activity(event) => {
+                    if matches!(event, ActivityEvent::ModeEntered(_)) {
+                        self.recovery_notice = None;
+                    }
+                    self.activity.apply(event);
+                }
                 Event::StagesFinished(action, error) => {
+                    self.recovery_notice = None;
                     self.action_error = error.map(|error| (action, error))
                 }
                 Event::UpdateChecked(result) => {
@@ -585,39 +639,46 @@ impl PlayerApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.allocate_ui_with_layout(
-                egui::vec2(left_width, ui.available_height()),
+                // Use the dashboard viewport height measured before the outer scroll area.
+                // The horizontal row can report too little height before its children are laid out.
+                egui::vec2(left_width, dashboard_height.max(0.0)),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = SpaceTokens::SM;
                     ui.heading(egui::RichText::new("Aktionen").color(ColorTokens::TEXT_PRIMARY));
                     ui.add_space(SpaceTokens::SM);
-                    let active = self.active_action == Some(StageAction::AfkStages)
-                        && self.stage_cancel.is_some();
-                    design_system::state_card(ui, active, |ui| {
-                        self.show_action_header(ui, StageAction::AfkStages, active);
-                        ui.label("Ausgewählte Stages pushen");
-                        ui.add_space(SpaceTokens::SM);
-                        ui.add_enabled_ui(!self.busy, |ui| {
-                            ui.spacing_mut().interact_size.y = 20.0;
-                            ui.horizontal(|ui| {
-                                design_system::active_checkbox(
-                                    ui,
-                                    &mut self.stage_selection.season,
-                                    "Season-Stages",
-                                );
-                                design_system::active_checkbox(
-                                    ui,
-                                    &mut self.stage_selection.normal,
-                                    "Normale Stages",
-                                );
-                            });
-                        });
-                        if self.stage_selection.season && self.stage_selection.normal {
-                            ui.small("Zuerst Season, dann Normal");
-                        }
-                        ui.add_space(SpaceTokens::SM);
-                        ui.separator();
-                        ui.horizontal(|ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("dashboard-actions")
+                        .max_height(ui.available_height())
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            let active = self.active_action == Some(StageAction::AfkStages)
+                                && self.stage_cancel.is_some();
+                            design_system::state_card(ui, active, |ui| {
+                                self.show_action_header(ui, StageAction::AfkStages, active);
+                                ui.label("Ausgewählte Stages pushen");
+                                ui.add_space(SpaceTokens::SM);
+                                ui.add_enabled_ui(!self.busy, |ui| {
+                                    ui.spacing_mut().interact_size.y = 20.0;
+                                    ui.horizontal(|ui| {
+                                        design_system::active_checkbox(
+                                            ui,
+                                            &mut self.stage_selection.season,
+                                            "Season-Stages",
+                                        );
+                                        design_system::active_checkbox(
+                                            ui,
+                                            &mut self.stage_selection.normal,
+                                            "Normale Stages",
+                                        );
+                                    });
+                                });
+                                if self.stage_selection.season && self.stage_selection.normal {
+                                    ui.small("Zuerst Season, dann Normal");
+                                }
+                                ui.add_space(SpaceTokens::SM);
+                                ui.separator();
+                                ui.horizontal(|ui| {
                             if ui
                                 .add_enabled(
                                     !self.busy
@@ -637,125 +698,153 @@ impl PlayerApp {
                                 }
                             }
                         });
-                        if let Some((StageAction::AfkStages, error)) = self.action_error.as_ref() {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(error).color(ColorTokens::DANGER_HOVER),
-                                )
-                                .wrap(),
-                            );
-                        }
-                    });
-                    ui.add_space(SpaceTokens::MD);
-                    let legend_active = self.active_action == Some(StageAction::SeasonLegendTrial)
-                        && self.stage_cancel.is_some();
-                    design_system::state_card(ui, legend_active, |ui| {
-                        self.show_action_header(ui, StageAction::SeasonLegendTrial, legend_active);
-                        ui.label("Verfügbare Fraktionstürme pushen");
-                        ui.small(format!(
-                            "{} Türme ausgewählt",
-                            self.tower_selection.selected().len()
-                        ));
-                        ui.add_space(SpaceTokens::SM);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(
-                                    !self.busy && !self.tower_selection.selected().is_empty(),
-                                    primary_button("Starten"),
-                                )
-                                .clicked()
-                            {
-                                self.start_action(StageAction::SeasonLegendTrial);
-                            }
-                            if legend_active {
-                                if let Some(cancel) = self.stage_cancel.clone() {
-                                    if ui.add(design_system::stop_button("Stop")).clicked() {
-                                        cancel.store(true, Ordering::Relaxed);
-                                        self.log(
+                                if let Some((StageAction::AfkStages, error)) =
+                                    self.action_error.as_ref()
+                                {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(error)
+                                                .color(ColorTokens::DANGER_HOVER),
+                                        )
+                                        .wrap(),
+                                    );
+                                }
+                            });
+                            ui.add_space(SpaceTokens::MD);
+                            let legend_active = self.active_action
+                                == Some(StageAction::SeasonLegendTrial)
+                                && self.stage_cancel.is_some();
+                            design_system::state_card(ui, legend_active, |ui| {
+                                self.show_action_header(
+                                    ui,
+                                    StageAction::SeasonLegendTrial,
+                                    legend_active,
+                                );
+                                ui.label("Verfügbare Fraktionstürme pushen");
+                                ui.small(format!(
+                                    "{} Türme ausgewählt",
+                                    self.tower_selection.selected().len()
+                                ));
+                                ui.add_space(SpaceTokens::SM);
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add_enabled(
+                                            !self.busy
+                                                && !self.tower_selection.selected().is_empty(),
+                                            primary_button("Starten"),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.start_action(StageAction::SeasonLegendTrial);
+                                    }
+                                    if legend_active {
+                                        if let Some(cancel) = self.stage_cancel.clone() {
+                                            if ui.add(design_system::stop_button("Stop")).clicked()
+                                            {
+                                                cancel.store(true, Ordering::Relaxed);
+                                                self.log(
                                             "Stop für den gesamten Legend-Trial-Lauf angefordert.",
                                         );
+                                            }
+                                        }
                                     }
+                                });
+                                if let Some((StageAction::SeasonLegendTrial, error)) =
+                                    self.action_error.as_ref()
+                                {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(error)
+                                                .color(ColorTokens::DANGER_HOVER),
+                                        )
+                                        .wrap(),
+                                    );
                                 }
-                            }
-                        });
-                        if let Some((StageAction::SeasonLegendTrial, error)) =
-                            self.action_error.as_ref()
-                        {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(error).color(ColorTokens::DANGER_HOVER),
-                                )
-                                .wrap(),
-                            );
-                        }
-                    });
-                    ui.add_space(SpaceTokens::MD);
-                    let union_active = self.active_action == Some(StageAction::UnionCampaign)
-                        && self.stage_cancel.is_some();
-                    design_system::state_card(ui, union_active, |ui| {
-                        self.show_action_header(ui, StageAction::UnionCampaign, union_active);
-                        ui.label("Gilden-Etagen pushen");
-                        ui.add_space(SpaceTokens::SM);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(!self.busy, primary_button("Starten"))
-                                .clicked()
-                            {
-                                self.start_action(StageAction::UnionCampaign);
-                            }
-                            if union_active {
-                                if let Some(cancel) = self.stage_cancel.clone() {
-                                    if ui.add(design_system::stop_button("Stop")).clicked() {
-                                        cancel.store(true, Ordering::Relaxed);
-                                        self.log("Stop für die Union Campaign angefordert.");
+                            });
+                            ui.add_space(SpaceTokens::MD);
+                            let union_active = self.active_action
+                                == Some(StageAction::UnionCampaign)
+                                && self.stage_cancel.is_some();
+                            design_system::state_card(ui, union_active, |ui| {
+                                self.show_action_header(
+                                    ui,
+                                    StageAction::UnionCampaign,
+                                    union_active,
+                                );
+                                ui.label("Gilden-Etagen pushen");
+                                ui.add_space(SpaceTokens::SM);
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add_enabled(!self.busy, primary_button("Starten"))
+                                        .clicked()
+                                    {
+                                        self.start_action(StageAction::UnionCampaign);
                                     }
-                                }
-                            }
-                        });
-                        if let Some((StageAction::UnionCampaign, error)) =
-                            self.action_error.as_ref()
-                        {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(error).color(ColorTokens::DANGER_HOVER),
-                                )
-                                .wrap(),
-                            );
-                        }
-                    });
-                    ui.add_space(SpaceTokens::MD);
-                    let dura_active = self.active_action == Some(StageAction::DurasTrials)
-                        && self.stage_cancel.is_some();
-                    design_system::state_card(ui, dura_active, |ui| {
-                        self.show_action_header(ui, StageAction::DurasTrials, dura_active);
-                        ui.label("Stufen pushen · Sweep nur am bestätigten Maximum");
-                        ui.add_space(SpaceTokens::SM);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(!self.busy, primary_button("Starten"))
-                                .clicked()
-                            {
-                                self.start_action(StageAction::DurasTrials);
-                            }
-                            if dura_active {
-                                if let Some(cancel) = self.stage_cancel.clone() {
-                                    if ui.add(design_system::stop_button("Stop")).clicked() {
-                                        cancel.store(true, Ordering::Relaxed);
-                                        self.log("Stop für Dura’s Trials angefordert.");
+                                    if union_active {
+                                        if let Some(cancel) = self.stage_cancel.clone() {
+                                            if ui.add(design_system::stop_button("Stop")).clicked()
+                                            {
+                                                cancel.store(true, Ordering::Relaxed);
+                                                self.log(
+                                                    "Stop für die Union Campaign angefordert.",
+                                                );
+                                            }
+                                        }
                                     }
+                                });
+                                if let Some((StageAction::UnionCampaign, error)) =
+                                    self.action_error.as_ref()
+                                {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(error)
+                                                .color(ColorTokens::DANGER_HOVER),
+                                        )
+                                        .wrap(),
+                                    );
                                 }
-                            }
+                            });
+                            ui.add_space(SpaceTokens::MD);
+                            let dura_active = self.active_action == Some(StageAction::DurasTrials)
+                                && self.stage_cancel.is_some();
+                            design_system::state_card(ui, dura_active, |ui| {
+                                self.show_action_header(ui, StageAction::DurasTrials, dura_active);
+                                ui.label("Stufen pushen · Sweep nur am bestätigten Maximum");
+                                ui.add_space(SpaceTokens::SM);
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add_enabled(!self.busy, primary_button("Starten"))
+                                        .clicked()
+                                    {
+                                        self.start_action(StageAction::DurasTrials);
+                                    }
+                                    if dura_active {
+                                        if let Some(cancel) = self.stage_cancel.clone() {
+                                            if ui.add(design_system::stop_button("Stop")).clicked()
+                                            {
+                                                cancel.store(true, Ordering::Relaxed);
+                                                self.log("Stop für Dura’s Trials angefordert.");
+                                            }
+                                        }
+                                    }
+                                });
+                                if let Some((StageAction::DurasTrials, error)) =
+                                    self.action_error.as_ref()
+                                {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(error)
+                                                .color(ColorTokens::DANGER_HOVER),
+                                        )
+                                        .wrap(),
+                                    );
+                                }
+                            });
+                            ui.add_space(SpaceTokens::MD);
+                            self.show_pvp_card(ui, StageAction::Arena);
+                            ui.add_space(SpaceTokens::MD);
+                            self.show_pvp_card(ui, StageAction::SupremeArena);
                         });
-                        if let Some((StageAction::DurasTrials, error)) = self.action_error.as_ref()
-                        {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(error).color(ColorTokens::DANGER_HOVER),
-                                )
-                                .wrap(),
-                            );
-                        }
-                    });
                 },
             );
 
@@ -816,7 +905,15 @@ impl PlayerApp {
                             ui.horizontal(|ui| {
                                 progress_metric(ui, "VERSUCHE", stats.attempts);
                                 ui.add_space(SpaceTokens::MD);
-                                progress_metric(ui, "GECLEART", stats.cleared);
+                                progress_metric(
+                                    ui,
+                                    if mode.is_pvp() { "SIEGE" } else { "GECLEART" },
+                                    if mode.is_pvp() {
+                                        stats.wins
+                                    } else {
+                                        stats.cleared
+                                    },
+                                );
                                 if *mode == GameMode::DurasTrials {
                                     ui.add_space(SpaceTokens::SM);
                                     progress_metric(ui, "SWEEPS", stats.sweeps);
@@ -826,6 +923,46 @@ impl PlayerApp {
                     }
                 },
             );
+        });
+    }
+
+    fn show_pvp_card(&mut self, ui: &mut egui::Ui, action: StageAction) {
+        let active = self.active_action == Some(action) && self.stage_cancel.is_some();
+        design_system::state_card(ui, active, |ui| {
+            self.show_action_header(ui, action, active);
+            ui.label(if action == StageAction::Arena {
+                "Tägliche Arena-Kämpfe spielen"
+            } else {
+                "Tägliche Supreme-Arena-Kämpfe spielen"
+            });
+            ui.add_space(SpaceTokens::SM);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!self.busy, primary_button("Starten"))
+                    .clicked()
+                {
+                    self.start_action(action);
+                }
+                if active {
+                    if let Some(cancel) = self.stage_cancel.clone() {
+                        if ui.add(design_system::stop_button("Stop")).clicked() {
+                            cancel.store(true, Ordering::Relaxed);
+                            self.log(format!("Stop für {} angefordert.", action.label()));
+                        }
+                    }
+                }
+            });
+            if let Some((failed, error)) = self
+                .action_error
+                .as_ref()
+                .filter(|(failed, _)| *failed == action)
+            {
+                let _ = failed;
+                ui.add(
+                    egui::Label::new(egui::RichText::new(error).color(ColorTokens::DANGER_HOVER))
+                        .wrap(),
+                );
+            }
         });
     }
 
@@ -848,7 +985,15 @@ impl PlayerApp {
                     self.action_settings_dialog = Some(action);
                 }
                 if active {
-                    status_badge(ui, "LÄUFT", true);
+                    status_badge(
+                        ui,
+                        if self.recovery_notice.is_some() {
+                            "NEUSTART"
+                        } else {
+                            "LÄUFT"
+                        },
+                        true,
+                    );
                 }
             });
         });
@@ -904,13 +1049,43 @@ impl PlayerApp {
                                     ui.small("Nur an der eindeutig bestätigten aktuellen Maximalstufe. Bei unklarer Erkennung wird nicht gesweept. Zusätzliche Vorratstoken werden nicht verwendet.");
                                 }
                                 StageAction::UnionCampaign => {}
+                                StageAction::Arena => {
+                                    ui.strong("Tägliche Versuche");
+                                    ui.horizontal(|ui| {
+                                        ui.label("Vorhandene Versuche");
+                                        ui.add(egui::DragValue::new(&mut self.arena_settings.attempts).range(1..=5));
+                                    });
+                                    design_system::active_checkbox(ui,&mut self.arena_settings.claim_free_attempts,"Bis zu zwei zusätzliche kostenlose Versuche abholen");
+                                    ui.small("Zusätzliche Versuche nur bei eindeutig bestätigten Kosten von null Diamanten. Keine kostenpflichtigen Käufe.");
+                                    ui.add_space(SpaceTokens::MD);
+                                    ui.strong("Gegner und Team");
+                                    ui.label("Wie im ADBAutoPlayer wird der linke Gegner gewählt. Es wird dein im Spiel eingestelltes Arena-Team verwendet.");
+                                }
+                                StageAction::SupremeArena => {
+                                    ui.strong("Tägliche Versuche");
+                                    ui.horizontal(|ui| {
+                                        ui.label("Maximale Kämpfe");
+                                        ui.add(egui::DragValue::new(&mut self.supreme_settings.attempts).range(1..=10));
+                                    });
+                                    ui.small("Endet vorher, wenn keine vorhandenen Versuche mehr verfügbar sind. Es werden keine Versuche gekauft.");
+                                    ui.add_space(SpaceTokens::MD);
+                                    ui.strong("Gegnerauswahl");
+                                    ui.horizontal(|ui| {
+                                        for position in OpponentPosition::ALL {
+                                            ui.selectable_value(&mut self.supreme_settings.opponent,position,position.label());
+                                        }
+                                    });
+                                    ui.label("Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf.");
+                                }
                             }
-                            if action != StageAction::UnionCampaign {
+                            if !matches!(action,StageAction::Arena|StageAction::SupremeArena) && action != StageAction::UnionCampaign {
                                 ui.add_space(SpaceTokens::MD);
                                 ui.separator();
                                 ui.add_space(SpaceTokens::MD);
                             }
-                            show_battle_options(ui, &mut self.battle_options[action.index()]);
+                            if !matches!(action,StageAction::Arena|StageAction::SupremeArena) {
+                                show_battle_options(ui, &mut self.battle_options[action.index()]);
+                            }
                         });
                     });
                 ui.add_space(SpaceTokens::MD);

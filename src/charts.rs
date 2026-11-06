@@ -20,11 +20,19 @@ fn clock(seconds: f64) -> String {
 /// Confirmed clears are discrete: the curve stays flat between successes.
 pub fn stage_history(ui: &mut egui::Ui, run: &RunActivity, height: f32) {
     ui.label(
-        egui::RichText::new("STAGE-VERLAUF")
-            .size(TypeTokens::KBD)
-            .color(C::TEXT_SECONDARY),
+        egui::RichText::new(if run.is_pvp_run() {
+            "SIEG-VERLAUF"
+        } else {
+            "STAGE-VERLAUF"
+        })
+        .size(TypeTokens::KBD)
+        .color(C::TEXT_SECONDARY),
     );
-    ui.small("Geschaffte Stages über die Laufzeit");
+    ui.small(if run.is_pvp_run() {
+        "Bestätigte Siege über die Laufzeit"
+    } else {
+        "Geschaffte Stages über die Laufzeit"
+    });
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let plot = Rect::from_min_max(rect.min + vec2(29.0, 12.0), rect.max - vec2(5.0, 22.0));
@@ -117,7 +125,16 @@ pub fn stage_history(ui: &mut egui::Ui, run: &RunActivity, height: f32) {
                 [pos2(pointer.x, plot.top()), pos2(pointer.x, plot.bottom())],
                 Stroke::new(0.7, C::TEXT_SECONDARY),
             );
-            response.on_hover_text(format!("{} · {} Stages gecleart", clock(time), value));
+            response.on_hover_text(format!(
+                "{} · {} {}",
+                clock(time),
+                value,
+                if run.is_pvp_run() {
+                    "Siege"
+                } else {
+                    "Stages gecleart"
+                }
+            ));
         }
     }
 }
@@ -130,7 +147,12 @@ pub fn mode_comparison(ui: &mut egui::Ui, run: &RunActivity, height: f32) {
         .map(|(mode, stats)| ComparisonPoint {
             label: mode.label().to_owned(),
             attempts: stats.attempts,
-            cleared: stats.cleared,
+            cleared: if mode.is_pvp() {
+                stats.wins
+            } else {
+                stats.cleared
+            },
+            pvp: mode.is_pvp(),
         })
         .collect();
     comparison_plot(ui, &data, height);
@@ -140,6 +162,7 @@ pub(crate) struct ComparisonPoint {
     pub label: String,
     pub attempts: u64,
     pub cleared: u64,
+    pub pvp: bool,
 }
 
 const ATTEMPTS_COLOR: Color32 = Color32::from_rgb(154, 161, 184);
@@ -151,7 +174,17 @@ pub(crate) fn comparison_plot(ui: &mut egui::Ui, data: &[ComparisonPoint], heigh
             .color(C::TEXT_SECONDARY),
     );
     ui.horizontal(|ui| {
-        for (label, color) in [("Versuche", ATTEMPTS_COLOR), ("Gecleart", C::GLOW)] {
+        for (label, color) in [
+            ("Versuche", ATTEMPTS_COLOR),
+            (
+                if data.iter().any(|p| p.pvp) {
+                    "Clears / Siege"
+                } else {
+                    "Gecleart"
+                },
+                C::GLOW,
+            ),
+        ] {
             let (mark, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
             ui.painter().rect_filled(mark, 1, color);
             ui.small(label);
@@ -276,8 +309,15 @@ pub(crate) fn comparison_plot(ui: &mut egui::Ui, data: &[ComparisonPoint], heigh
     if let Some(index) = hovered {
         let point = &data[index];
         response.show_tooltip_text(format!(
-            "{}\nVersuche: {}\nStages gecleart: {}",
-            point.label, point.attempts, point.cleared
+            "{}\nVersuche: {}\n{}: {}",
+            point.label,
+            point.attempts,
+            if point.pvp {
+                "Siege"
+            } else {
+                "Stages gecleart"
+            },
+            point.cleared
         ));
     }
     ui.small("Modus und genaue Werte per Mauszeiger");
@@ -336,10 +376,11 @@ pub fn statistics(ui: &mut egui::Ui, run: &RunActivity, available_height: f32) {
             let (wins, losses) = run.outcomes();
             columns[0].small(format!("{wins} Siege · {losses} Niederlagen"))
                 .on_hover_text("Siege / entschiedene Kämpfe. Laufende und unklare Kämpfe werden nicht eingerechnet.");
-            let average = run.attempts_per_clear().map(|a| format!("{a:.1}").replace('.', ",")).unwrap_or_else(|| "—".into());
-            stat_value(&mut columns[1], "Ø VERSUCHE / STAGE", &average);
-            columns[1].small("Abgeschlossene Stufen")
-                .on_hover_text("Versuche bis zur letzten geschafften Stufe / geschaffte Stufen. Versuche an einer noch offenen Stufe werden ausgeschlossen.");
+            let ratio = if run.is_pvp_run() { (wins>0).then(|| (wins+losses) as f64 / wins as f64) } else { run.attempts_per_clear() };
+            let average = ratio.map(|a| format!("{a:.1}").replace('.', ",")).unwrap_or_else(|| "—".into());
+            stat_value(&mut columns[1], if run.is_pvp_run() {"Ø VERSUCHE / SIEG"} else {"Ø VERSUCHE / STAGE"}, &average);
+            columns[1].small(if run.is_pvp_run() {"Nur entschiedene Kämpfe"} else {"Abgeschlossene Stufen"})
+                .on_hover_text(if run.is_pvp_run() {"Entschiedene Kämpfe / bestätigte Siege. Laufende und unklare Kämpfe werden ausgeschlossen."} else {"Versuche bis zur letzten geschafften Stufe / geschaffte Stufen. Versuche an einer noch offenen Stufe werden ausgeschlossen."});
         });
     });
     ui.add_space(SpaceTokens::MD);

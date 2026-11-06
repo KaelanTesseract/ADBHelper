@@ -29,12 +29,44 @@ charts and the run timer persist across the transition. Team settings apply to b
 The standalone rewards card
 is hidden; that routine is reserved for integration into a combined action.
 
-Each action card has a gear button for its settings popup. Team selection,
+Each action card has a gear button for its settings popup. PvE team selection,
 manual-team skipping and attempts per team are configured separately per action.
 Stage selection, Legend Trial towers and Dura's daily Sweep option are available
 in the corresponding popup. Changes apply immediately; close it with **Schließen**,
 Escape or a click outside. During a running task the controls are read-only.
 The main Settings page contains device connection and app updates.
+
+**Arena** and **Supreme Arena** follow the original AdbAutoPlayer PvP workflows.
+They use the formations already configured in the game, not copied PvE teams.
+Arena selects the left opponent, uses up to five existing attempts and optionally
+claims up to two additional attempts only when their zero-diamond price is proven.
+Supreme Arena defaults to five attempts and the left opponent; its popup also
+offers the middle/right opponent and a configurable battle limit. It advances
+through the three formations with Next, Next, Battle. Available combat Skip is
+used; Supreme Arena never purchases extra attempts. Paid or unknown purchase
+prompts are declined. PvP victories appear as wins in counters and graphs and
+never create stage clears. Local Windows OCR support is checked before starting.
+
+During an active action, an unexpectedly missing AFK Journey process triggers
+automatic restart and navigation back to the last mode. Normal AFK stages do not
+restart the completed Season phase; Legend Trial skips previously finished towers.
+The game provides its saved stage/floor after navigation. Confirmed counters and
+run duration survive recovery; an interrupted undecided fight remains unclear.
+Arena request/claim checkpoints prevent a restart from resetting the attempt
+budget. The current card shows **NEUSTART** until its mode is re-entered. Stop
+prevents further restarts. Device/ADB connection failures are not treated as game
+crashes. Recovery is limited to three restarts per run and lives in the running
+ADBHelper process.
+
+If no battle result appears within 100 seconds, ADBHelper returns to the active
+mode when attempts remain. The interrupted fight is recorded as unclear and
+the remaining attempt budget carries over.
+
+Live validation of these additions covered both PvP overview navigations, reading
+and cancelling the Arena zero-price offer, and one induced game process exit from
+the Arena overview followed by automatic restart and return to Arena. No opponent
+was selected, no extra attempt claimed, and no PvP battle was started. Combat and
+PvP outcome recognition still require a live battle test.
 
 **Season Legend Trial** is a separate dashboard action, ported from AdbAutoPlayer's
 `SeasonLegendTrial` workflow. It opens Battle Modes automatically, finds the Legend

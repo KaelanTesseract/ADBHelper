@@ -1,0 +1,1082 @@
+//! Daily PvP workflows ported from AdbAutoPlayer's arena and supreme_arena mixins.
+//! These use the player's existing formations, never PvE team-copy/retry logic.
+use super::afk_stages::{self as common, Match, Rect};
+use super::ocr::{self, TextLine};
+use crate::activity::{ActivityEvent, BattleOutcome, GameMode};
+use crate::adb;
+use image::GrayImage;
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Arena,
+    Supreme,
+}
+
+impl Kind {
+    pub fn mode(self) -> GameMode {
+        match self {
+            Self::Arena => GameMode::Arena,
+            Self::Supreme => GameMode::SupremeArena,
+        }
+    }
+    fn challenge(self) -> &'static str {
+        match self {
+            Self::Arena => "arena/challenge.png",
+            Self::Supreme => "supreme_arena/challenge.png",
+        }
+    }
+    fn entry(self) -> &'static str {
+        match self {
+            Self::Arena => "arena/label.png",
+            Self::Supreme => "battle_modes/supreme_arena.png",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpponentPosition {
+    Left,
+    Middle,
+    Right,
+}
+impl OpponentPosition {
+    pub const ALL: [Self; 3] = [Self::Left, Self::Middle, Self::Right];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Left => "Links",
+            Self::Middle => "Mitte",
+            Self::Right => "Rechts",
+        }
+    }
+    fn point(self) -> (u32, u32) {
+        (
+            match self {
+                Self::Left => 165,
+                Self::Middle => 540,
+                Self::Right => 915,
+            },
+            950,
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ArenaSettings {
+    pub attempts: u32,
+    pub claim_free_attempts: bool,
+}
+impl Default for ArenaSettings {
+    fn default() -> Self {
+        Self {
+            attempts: 5,
+            claim_free_attempts: true,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+pub struct SupremeSettings {
+    pub attempts: u32,
+    pub opponent: OpponentPosition,
+}
+impl Default for SupremeSettings {
+    fn default() -> Self {
+        Self {
+            attempts: 5,
+            opponent: OpponentPosition::Left,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+pub enum Settings {
+    Arena(ArenaSettings),
+    Supreme(SupremeSettings),
+}
+impl Settings {
+    fn kind(self) -> Kind {
+        match self {
+            Self::Arena(_) => Kind::Arena,
+            Self::Supreme(_) => Kind::Supreme,
+        }
+    }
+    fn attempts(self) -> u32 {
+        match self {
+            Self::Arena(s) => s.attempts.clamp(1, 5),
+            Self::Supreme(s) => s.attempts.clamp(1, 10),
+        }
+    }
+    fn free_claims(self) -> u32 {
+        match self {
+            Self::Arena(s) if s.claim_free_attempts => 2,
+            _ => 0,
+        }
+    }
+    fn opponent(self) -> OpponentPosition {
+        match self {
+            Self::Arena(_) => OpponentPosition::Left,
+            Self::Supreme(s) => s.opponent,
+        }
+    }
+}
+
+fn footer() -> Rect {
+    Rect {
+        x: 0,
+        y: 1440,
+        width: 1080,
+        height: 480,
+    }
+}
+fn popup() -> Rect {
+    Rect {
+        x: 0,
+        y: 380,
+        width: 1080,
+        height: 1120,
+    }
+}
+fn find(screen: &GrayImage, path: &str, roi: Rect) -> Result<Option<Match>, String> {
+    common::find_template(screen, path, roi, 0.85)
+}
+fn purchase_popup(screen: &GrayImage) -> Result<bool, String> {
+    Ok(find(screen, "supreme_arena/no_attempts_popup.png", popup())?.is_some())
+}
+fn confirmation(screen: &GrayImage) -> Result<bool, String> {
+    Ok(common::get_match(
+        screen,
+        &["navigation/confirm.png", "confirm_text.png", "cancel.png"],
+        common::lower_screen(),
+        0.85,
+    )?
+    .is_some())
+}
+
+fn navigate(
+    serial: &str,
+    kind: Kind,
+    cancelled: &AtomicBool,
+    log: &mut impl FnMut(String),
+) -> Result<(), String> {
+    common::ensure_not_cancelled(cancelled)?;
+    common::navigate_to_battle_modes(serial, cancelled, log)?;
+    for swipe in 0..=4 {
+        let (screen, size) = common::screenshot(serial)?;
+        // The regular Arena is the upper-right mode card. Restrict its short
+        // "Arena" label so it cannot select the Supreme Arena card below it.
+        let region = if kind == Kind::Arena {
+            Rect {
+                x: 648,
+                y: 0,
+                width: 432,
+                height: 1100,
+            }
+        } else {
+            common::full_screen()
+        };
+        if let Some(entry) = find(&screen, kind.entry(), region)? {
+            common::ensure_not_cancelled(cancelled)?;
+            common::tap_match(serial, entry, size)?;
+            common::settle_cancellable(cancelled)?;
+            return wait_home(serial, kind, cancelled);
+        }
+        if swipe < 4 && kind == Kind::Supreme {
+            adb::swipe_game_points(serial, (540, 1200), (540, 700), size, 1500)
+                .map_err(|e| e.to_string())?;
+            common::settle_cancellable(cancelled)?;
+        } else {
+            break;
+        }
+    }
+    Err(format!(
+        "{} ist in den Kampfmodi nicht verfügbar.",
+        kind.mode().label()
+    ))
+}
+
+fn dismiss_notice(
+    serial: &str,
+    kind: Kind,
+    screen: &GrayImage,
+    size: (u32, u32),
+) -> Result<bool, String> {
+    if let Some(close) = find(screen, "tap_to_close.png", common::lower_screen())? {
+        common::tap_match(serial, close, size)?;
+        return Ok(true);
+    }
+    if kind == Kind::Arena
+        && common::get_match(
+            screen,
+            &["arena/weekly_rewards.png", "arena/weekly_notice.png"],
+            common::full_screen(),
+            0.85,
+        )?
+        .is_some()
+    {
+        adb::press_back(serial).map_err(|e| e.to_string())?;
+        return Ok(true);
+    }
+    if kind == Kind::Supreme {
+        if let Some(rewards) = find(
+            screen,
+            "supreme_arena/daily_rewards.png",
+            common::lower_screen(),
+        )? {
+            common::tap_match(serial, rewards, size)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn wait_home(serial: &str, kind: Kind, cancelled: &AtomicBool) -> Result<(), String> {
+    for _ in 0..12 {
+        common::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = common::screenshot(serial)?;
+        if purchase_popup(&screen)? || confirmation(&screen)? {
+            adb::press_back(serial).map_err(|e| e.to_string())?;
+            return Err("Arena-Dialog nicht eindeutig bestätigt; kein Kauf ausgeführt.".into());
+        }
+        if common::get_match(
+            &screen,
+            &[kind.challenge(), "arena/continue.png"],
+            common::lower_screen(),
+            0.85,
+        )?
+        .is_some()
+        {
+            return Ok(());
+        }
+        dismiss_notice(serial, kind, &screen, size)?;
+        common::settle_cancellable(cancelled)?;
+    }
+    Err(format!("{}-Übersicht nicht erkannt.", kind.mode().label()))
+}
+
+/// Mirrors the original Spend + diamond + 0 prompt without treating 10/20 as 0.
+fn zero_cost(lines: &[TextLine]) -> bool {
+    let costs = lines
+        .iter()
+        .filter(|line| {
+            line.y > 380.0 && line.y < 1500.0 && line.text.to_lowercase().contains("spend")
+        })
+        .map(|line| {
+            line.text
+                .split(|c: char| !c.is_ascii_digit())
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    costs.len() == 1 && costs[0] == ["0"]
+}
+
+fn verified_free_offer(screen: &GrayImage) -> Result<bool, String> {
+    let Some(price) = common::find_template(screen, "arena/buy_free.png", popup(), 0.95)? else {
+        return Ok(false);
+    };
+    let lines = ocr::recognize(screen)?;
+    if zero_cost(&lines) {
+        return Ok(true);
+    }
+    // Windows OCR can read the isolated cost digit 0 as O. Do not substitute
+    // characters: require an exact, independent match of the zero glyph itself.
+    // Any explicit numeric nonzero/ambiguous cost in the caption still blocks it.
+    let captions = lines
+        .iter()
+        .filter(|line| {
+            line.y > 380.0
+                && line.y < 1500.0
+                && line.text.to_lowercase().contains("spend")
+                && line.text.to_lowercase().contains("purchase")
+        })
+        .collect::<Vec<_>>();
+    if captions.len() != 1 || captions[0].text.bytes().any(|b| b.is_ascii_digit()) {
+        return Ok(false);
+    }
+    let rect = price.rect();
+    Ok(common::find_template(
+        screen,
+        "arena/free_price_zero.png",
+        Rect {
+            x: rect.x + 195,
+            y: rect.y,
+            width: 29,
+            height: 36,
+        },
+        0.98,
+    )?
+    .is_some())
+}
+
+fn result_outcome(lines: &[TextLine]) -> BattleOutcome {
+    let headings = lines
+        .iter()
+        .filter(|line| line.y < 1050.0 && line.height >= 45.0)
+        .filter_map(|line| {
+            let text = line
+                .text
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphabetic())
+                .collect::<String>();
+            match text.as_str() {
+                "victory" | "win" | "youwin" | "sieg" => Some(true),
+                "defeat" | "defeated" | "youlose" | "niederlage" => Some(false),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    match (headings.contains(&true), headings.contains(&false)) {
+        (true, false) => BattleOutcome::Won,
+        (false, true) => BattleOutcome::Lost,
+        _ => BattleOutcome::Unclear,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Choice {
+    Ready,
+    Exhausted,
+}
+trait Driver {
+    fn choose(&mut self) -> Result<Choice, String>;
+    fn battle(&mut self) -> Result<BattleOutcome, String>;
+    fn free_attempt(&mut self) -> Result<bool, String>;
+    fn checkpoint(&mut self, _: Cursor) {}
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cursor {
+    pub initial: u32,
+    pub initial_done: bool,
+    pub claims: u32,
+    pub extra: u32,
+    pub pending_extra: bool,
+}
+
+#[cfg(test)]
+fn attempts(
+    driver: &mut impl Driver,
+    settings: Settings,
+    cancelled: &AtomicBool,
+) -> Result<u32, String> {
+    attempts_from(driver, settings, &mut Cursor::default(), cancelled)
+}
+
+fn attempts_from(
+    driver: &mut impl Driver,
+    settings: Settings,
+    cursor: &mut Cursor,
+    cancelled: &AtomicBool,
+) -> Result<u32, String> {
+    let mut wins = 0;
+    while !cursor.initial_done && cursor.initial < settings.attempts() {
+        common::ensure_not_cancelled(cancelled)?;
+        // Reserve before opponent selection as well: a crash at any challenge
+        // transition must never reset the attempt budget and request an extra.
+        cursor.initial += 1;
+        driver.checkpoint(*cursor);
+        if driver.choose()? == Choice::Exhausted {
+            cursor.initial -= 1;
+            driver.checkpoint(*cursor);
+            break;
+        }
+        common::ensure_not_cancelled(cancelled)?;
+        match driver.battle() {
+            Ok(BattleOutcome::Won) => wins += 1,
+            Err(error)
+                if error == super::BATTLE_RESULT_TIMEOUT
+                    && cursor.initial == settings.attempts()
+                    && cursor.claims >= settings.free_claims() =>
+            {
+                return Ok(wins);
+            }
+            result => {
+                result?;
+            }
+        }
+    }
+    cursor.initial_done = true;
+    driver.checkpoint(*cursor);
+    while cursor.pending_extra || cursor.claims < settings.free_claims() {
+        common::ensure_not_cancelled(cancelled)?;
+        if !cursor.pending_extra {
+            cursor.claims += 1;
+            cursor.pending_extra = true;
+            driver.checkpoint(*cursor);
+            if !driver.free_attempt()? {
+                cursor.pending_extra = false;
+                driver.checkpoint(*cursor);
+                break;
+            }
+        }
+        common::ensure_not_cancelled(cancelled)?;
+        cursor.pending_extra = false;
+        cursor.extra += 1;
+        driver.checkpoint(*cursor);
+        if driver.choose()? == Choice::Exhausted {
+            cursor.extra -= 1;
+            driver.checkpoint(*cursor);
+            continue;
+        }
+        common::ensure_not_cancelled(cancelled)?;
+        match driver.battle() {
+            Ok(BattleOutcome::Won) => wins += 1,
+            Err(error)
+                if error == super::BATTLE_RESULT_TIMEOUT
+                    && cursor.claims >= settings.free_claims() =>
+            {
+                return Ok(wins);
+            }
+            result => {
+                result?;
+            }
+        }
+    }
+    Ok(wins)
+}
+
+struct AdbDriver<'a, P> {
+    serial: &'a str,
+    settings: Settings,
+    cancelled: &'a AtomicBool,
+    progress: &'a mut P,
+}
+
+impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
+    fn wait_control(&self, path: &str, roi: Rect) -> Result<(Match, (u32, u32)), String> {
+        for _ in 0..14 {
+            common::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = common::screenshot(self.serial)?;
+            if purchase_popup(&screen)? || confirmation(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                return Err(
+                    "Unerwarteter Arena-Dialog; keine Bestätigung oder zusätzlicher Kauf.".into(),
+                );
+            }
+            if let Some(control) = find(&screen, path, roi)? {
+                return Ok((control, size));
+            }
+            common::settle_cancellable(self.cancelled)?;
+        }
+        Err(format!("Arena-Steuerelement {path} nicht erkannt."))
+    }
+
+    fn finish_result(&self) -> Result<(), String> {
+        for _ in 0..8 {
+            common::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = common::screenshot(self.serial)?;
+            if purchase_popup(&screen)? || confirmation(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                return Err("Unerwarteter Arena-Dialog nach dem Kampf; Lauf beendet.".into());
+            }
+            if common::get_match(
+                &screen,
+                &[self.settings.kind().challenge(), "arena/continue.png"],
+                common::lower_screen(),
+                0.85,
+            )?
+            .is_some()
+            {
+                return Ok(());
+            }
+            dismiss_notice(self.serial, self.settings.kind(), &screen, size)?;
+            common::settle_cancellable(self.cancelled)?;
+        }
+        Err("Arena-Ergebnis nicht geschlossen; kein weiterer Kampf gestartet.".into())
+    }
+}
+
+impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
+    fn checkpoint(&mut self, cursor: Cursor) {
+        super::recovery::save_arena_cursor(self.serial, cursor);
+    }
+    fn choose(&mut self) -> Result<Choice, String> {
+        common::ensure_not_cancelled(self.cancelled)?;
+        let (screen, _) = common::screenshot(self.serial)?;
+        if find(&screen, "arena/no_attempts.png", common::lower_screen())?.is_some() {
+            return Ok(Choice::Exhausted);
+        }
+        let kind = self.settings.kind();
+        wait_home(self.serial, kind, self.cancelled)?;
+        let (screen, size) = common::screenshot(self.serial)?;
+        let (_, challenge) = common::get_match(
+            &screen,
+            &[kind.challenge(), "arena/continue.png"],
+            common::lower_screen(),
+            0.85,
+        )?
+        .ok_or("Arena-Challenge nicht erkannt")?;
+        common::ensure_not_cancelled(self.cancelled)?;
+        common::tap_match(self.serial, challenge, size)?;
+        common::settle_cancellable(self.cancelled)?;
+        for _ in 0..12 {
+            common::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = common::screenshot(self.serial)?;
+            if purchase_popup(&screen)?
+                || find(&screen, "arena/no_attempts.png", common::lower_screen())?.is_some()
+            {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                return Ok(Choice::Exhausted);
+            }
+            if confirmation(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                return Err("Arena-Bestätigung ist nicht eindeutig; kein Kauf.".into());
+            }
+            if kind == Kind::Arena {
+                if let Some(opponent) = find(
+                    &screen,
+                    "arena/opponent.png",
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: 432,
+                        height: 1920,
+                    },
+                )? {
+                    common::tap_match(self.serial, opponent, size)?;
+                    common::settle_cancellable(self.cancelled)?;
+                    return Ok(Choice::Ready);
+                }
+            } else if find(
+                &screen,
+                "supreme_arena/select_opponent.png",
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1080,
+                    height: 700,
+                },
+            )?
+            .is_some()
+            {
+                let (x, y) = self.settings.opponent().point();
+                adb::tap_game_point(self.serial, x, y, size).map_err(|e| e.to_string())?;
+                common::settle_cancellable(self.cancelled)?;
+                let (detail, size) =
+                    self.wait_control("supreme_arena/challenge_detail.png", footer())?;
+                common::ensure_not_cancelled(self.cancelled)?;
+                common::tap_match(self.serial, detail, size)?;
+                common::settle_cancellable(self.cancelled)?;
+                return Ok(Choice::Ready);
+            }
+            dismiss_notice(self.serial, kind, &screen, size)?;
+            common::settle_cancellable(self.cancelled)?;
+        }
+        Err("Arena-Gegnerauswahl nicht erkannt.".into())
+    }
+
+    fn battle(&mut self) -> Result<BattleOutcome, String> {
+        let kind = self.settings.kind();
+        // Supreme Arena has exactly three existing formations: Next, Next, Battle.
+        if kind == Kind::Supreme {
+            for _ in 0..2 {
+                let (next, size) = self.wait_control("next.png", footer())?;
+                common::ensure_not_cancelled(self.cancelled)?;
+                common::tap_match(self.serial, next, size)?;
+                common::settle_cancellable(self.cancelled)?;
+            }
+        }
+        let (battle, size) = self.wait_control("arena/battle.png", footer())?;
+        common::ensure_not_cancelled(self.cancelled)?;
+        let mode = kind.mode();
+        (self.progress)(ActivityEvent::BattleStarted(mode));
+        common::tap_match(self.serial, battle, size)?;
+        common::settle_cancellable(self.cancelled)?;
+        let started = Instant::now();
+        let (mut seen_battle, mut skipped) = (false, false);
+        while started.elapsed() < Duration::from_secs(super::BATTLE_TIMEOUT_SECONDS) {
+            common::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = common::screenshot(self.serial)?;
+            if purchase_popup(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                return Err("Keine Arena-Versuche verfügbar; Kauf abgebrochen.".into());
+            }
+            let close =
+                common::get_match(&screen, &["arena/done.png", "next.png"], footer(), 0.85)?;
+            let skip = find(&screen, "arena/skip.png", common::full_screen())?;
+            // OCR is only needed once an end control is visible, never to infer
+            // a victory from a generic Done/Next button or from an opponent name.
+            let outcome = if close.is_some() {
+                result_outcome(&ocr::recognize(&screen)?)
+            } else {
+                BattleOutcome::Unclear
+            };
+            let decisive = !matches!(outcome, BattleOutcome::Unclear);
+            if !seen_battle && (skip.is_some() || (close.is_some() && decisive)) {
+                seen_battle = true;
+            }
+            if let Some((_, close)) = close.filter(|_| seen_battle) {
+                (self.progress)(ActivityEvent::BattleFinished(mode, outcome));
+                common::ensure_not_cancelled(self.cancelled)?;
+                common::tap_match(self.serial, close, size)?;
+                common::settle_cancellable(self.cancelled)?;
+                self.finish_result()?;
+                return Ok(outcome);
+            }
+            if confirmation(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                if seen_battle {
+                    (self.progress)(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
+                }
+                return Err("Unbekannte Arena-Bestätigung; Lauf beendet.".into());
+            }
+            if let Some(skip) = skip.filter(|_| !skipped) {
+                common::ensure_not_cancelled(self.cancelled)?;
+                common::tap_match(self.serial, skip, size)?;
+                skipped = true;
+            }
+            common::settle_cancellable(self.cancelled)?;
+        }
+        (self.progress)(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
+        Err(super::BATTLE_RESULT_TIMEOUT.into())
+    }
+
+    fn free_attempt(&mut self) -> Result<bool, String> {
+        if self.settings.kind() != Kind::Arena {
+            return Ok(false);
+        }
+        wait_home(self.serial, Kind::Arena, self.cancelled)?;
+        let (screen, size) = common::screenshot(self.serial)?;
+        let Some(buy) = find(
+            &screen,
+            "arena/buy.png",
+            Rect {
+                x: 972,
+                y: 0,
+                width: 108,
+                height: 120,
+            },
+        )?
+        else {
+            return Ok(false);
+        };
+        common::ensure_not_cancelled(self.cancelled)?;
+        common::tap_match(self.serial, buy, size)?;
+        common::settle_cancellable(self.cancelled)?;
+        // Verify both the original exact zero-diamond template and the price
+        // text twice. Unknown/nonzero offers are declined with Back, never a tap.
+        for _ in 0..2 {
+            common::ensure_not_cancelled(self.cancelled)?;
+            let (screen, _) = common::screenshot(self.serial)?;
+            if !verified_free_offer(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                common::settle_cancellable(self.cancelled)?;
+                return Ok(false);
+            }
+            common::settle_cancellable(self.cancelled)?;
+        }
+        let (screen, size) = common::screenshot(self.serial)?;
+        if !verified_free_offer(&screen)? {
+            adb::press_back(self.serial).map_err(|e| e.to_string())?;
+            return Ok(false);
+        }
+        let Some((_, confirm)) = common::get_match(
+            &screen,
+            &["navigation/confirm.png", "confirm_text.png"],
+            common::lower_screen(),
+            0.85,
+        )?
+        else {
+            adb::press_back(self.serial).map_err(|e| e.to_string())?;
+            return Ok(false);
+        };
+        common::ensure_not_cancelled(self.cancelled)?;
+        common::tap_match(self.serial, confirm, size)?;
+        common::settle_cancellable(self.cancelled)?;
+        wait_home(self.serial, Kind::Arena, self.cancelled)?;
+        Ok(true)
+    }
+}
+
+pub fn run(
+    serial: &str,
+    settings: Settings,
+    cancelled: &AtomicBool,
+    mut log: impl FnMut(String),
+    mut progress: impl FnMut(ActivityEvent),
+) -> Result<u32, String> {
+    common::ensure_not_cancelled(cancelled)?;
+    // Fail before any ticket can be used if local OCR support is unavailable.
+    ocr::recognize(&GrayImage::new(128, 64))?;
+    let kind = settings.kind();
+    progress(ActivityEvent::ModeOpening(kind.mode()));
+    adb::launch_afk_journey(serial).map_err(|e| e.to_string())?;
+    for _ in 0..3 {
+        common::settle_cancellable(cancelled)?;
+    }
+    navigate(serial, kind, cancelled, &mut log)?;
+    progress(ActivityEvent::ModeEntered(kind.mode()));
+    let mut cursor = super::recovery::arena_cursor(serial);
+    let wins = attempts_from(
+        &mut AdbDriver {
+            serial,
+            settings,
+            cancelled,
+            progress: &mut progress,
+        },
+        settings,
+        &mut cursor,
+        cancelled,
+    )?;
+    log(format!(
+        "{} abgeschlossen: {wins} bestätigte Siege.",
+        kind.mode().label()
+    ));
+    Ok(wins)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Fake {
+        battles: u32,
+        claims: u32,
+        available: u32,
+        free: u32,
+        failed: bool,
+        choose_failed: bool,
+        timed_out: bool,
+    }
+    impl Driver for Fake {
+        fn choose(&mut self) -> Result<Choice, String> {
+            if self.choose_failed {
+                return Err("crashed during opponent selection".into());
+            }
+            Ok(if self.available > 0 {
+                Choice::Ready
+            } else {
+                Choice::Exhausted
+            })
+        }
+        fn battle(&mut self) -> Result<BattleOutcome, String> {
+            if self.failed {
+                return Err("unrecognized result".into());
+            }
+            self.available -= 1;
+            self.battles += 1;
+            if self.timed_out {
+                return Err(super::super::BATTLE_RESULT_TIMEOUT.into());
+            }
+            Ok(BattleOutcome::Won)
+        }
+        fn free_attempt(&mut self) -> Result<bool, String> {
+            self.claims += 1;
+            if self.free == 0 {
+                return Ok(false);
+            }
+            self.free -= 1;
+            self.available += 1;
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn timeout_spends_one_attempt_and_only_recovers_with_budget_remaining() {
+        let settings = Settings::Supreme(SupremeSettings::default());
+        let mut cursor = Cursor {
+            initial: settings.attempts() - 2,
+            ..Cursor::default()
+        };
+        let mut driver = Fake {
+            available: 2,
+            timed_out: true,
+            ..Fake::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        assert_eq!(
+            attempts_from(&mut driver, settings, &mut cursor, &cancelled).unwrap_err(),
+            super::super::BATTLE_RESULT_TIMEOUT
+        );
+        assert_eq!(cursor.initial, settings.attempts() - 1);
+        assert_eq!(
+            attempts_from(&mut driver, settings, &mut cursor, &cancelled).unwrap(),
+            0
+        );
+        assert_eq!(cursor.initial, settings.attempts());
+        assert_eq!(driver.battles, 2);
+    }
+
+    #[test]
+    #[ignore = "opens and reads the Arena extra-attempt offer, then cancels without claiming or buying"]
+    fn connected_emulator_arena_offer_read_only() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
+        let cancelled = AtomicBool::new(false);
+        navigate(&serial, Kind::Arena, &cancelled, &mut |m| println!("{m}")).unwrap();
+        let (screen, size) = common::screenshot(&serial).unwrap();
+        let buy = find(
+            &screen,
+            "arena/buy.png",
+            Rect {
+                x: 972,
+                y: 0,
+                width: 108,
+                height: 120,
+            },
+        )
+        .unwrap()
+        .expect("extra attempt plus");
+        common::tap_match(&serial, buy, size).unwrap();
+        common::settle_cancellable(&cancelled).unwrap();
+        let bytes = adb::screenshot(&serial).unwrap();
+        let screen = common::normalize_screenshot(&bytes).unwrap().0;
+        let lines = ocr::recognize(&screen);
+        let template = common::find_template(&screen, "arena/buy_free.png", popup(), 0.95);
+        let verified = verified_free_offer(&screen);
+        // Close the offer before asserting or printing any diagnostic result.
+        adb::press_back(&serial).unwrap();
+        common::settle_cancellable(&cancelled).unwrap();
+        std::fs::write(".update-test/arena-offer-read-only.png", bytes).unwrap();
+        let lines = lines.unwrap();
+        for line in &lines {
+            println!("OCR: {line:?}");
+        }
+        println!(
+            "Offer: zero-cost text={}, zero-price template={}",
+            zero_cost(&lines),
+            template.unwrap().is_some()
+        );
+        println!("Offer closed; no attempt claimed or battle started.");
+        println!("Verified free offer: {}", verified.unwrap());
+    }
+    #[test]
+    fn crash_resume_keeps_requested_battles_and_the_free_claim_phase() {
+        let settings = Settings::Supreme(SupremeSettings::default());
+        for fail_at_selection in [false, true] {
+            let mut cursor = Cursor::default();
+            let mut d = Fake {
+                available: 5,
+                failed: !fail_at_selection,
+                choose_failed: fail_at_selection,
+                ..Fake::default()
+            };
+            assert!(attempts_from(&mut d, settings, &mut cursor, &AtomicBool::new(false)).is_err());
+            assert_eq!(cursor.initial, 1);
+            d.failed = false;
+            d.choose_failed = false;
+            attempts_from(&mut d, settings, &mut cursor, &AtomicBool::new(false)).unwrap();
+            assert_eq!(d.battles, 4);
+            assert_eq!(cursor.initial, 5);
+        }
+        let mut cursor = Cursor {
+            initial: 0,
+            initial_done: true,
+            claims: 1,
+            pending_extra: true,
+            ..Cursor::default()
+        };
+        let mut d = Fake {
+            available: 1,
+            ..Fake::default()
+        };
+        attempts_from(
+            &mut d,
+            Settings::Arena(ArenaSettings::default()),
+            &mut cursor,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!((d.battles, cursor.initial, cursor.extra), (1, 0, 1));
+        assert_eq!(cursor.claims, 2);
+    }
+    #[test]
+    fn arena_matches_original_five_attempts_and_at_most_two_free_claims() {
+        let mut d = Fake {
+            available: 20,
+            free: 20,
+            ..Fake::default()
+        };
+        assert_eq!(
+            attempts(
+                &mut d,
+                Settings::Arena(ArenaSettings::default()),
+                &AtomicBool::new(false)
+            )
+            .unwrap(),
+            7
+        );
+        assert_eq!((d.battles, d.claims), (7, 2));
+    }
+    #[test]
+    fn supreme_never_claims_extra_attempts_and_stops_at_actual_availability() {
+        let mut d = Fake {
+            available: 3,
+            free: 20,
+            ..Fake::default()
+        };
+        assert_eq!(
+            attempts(
+                &mut d,
+                Settings::Supreme(SupremeSettings::default()),
+                &AtomicBool::new(false)
+            )
+            .unwrap(),
+            3
+        );
+        assert_eq!((d.battles, d.claims), (3, 0));
+    }
+    #[test]
+    fn disabled_free_claims_and_paid_offers_cannot_add_more_battles() {
+        let mut d = Fake {
+            available: 5,
+            free: 2,
+            ..Fake::default()
+        };
+        attempts(
+            &mut d,
+            Settings::Arena(ArenaSettings {
+                attempts: 2,
+                claim_free_attempts: false,
+            }),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!((d.battles, d.claims), (2, 0));
+        let mut d = Fake {
+            available: 0,
+            free: 0,
+            ..Fake::default()
+        };
+        attempts(
+            &mut d,
+            Settings::Arena(ArenaSettings::default()),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!((d.battles, d.claims), (0, 1));
+    }
+    #[test]
+    fn errors_and_stop_prevent_any_later_free_claim_or_battle() {
+        let mut d = Fake {
+            available: 5,
+            free: 2,
+            failed: true,
+            ..Fake::default()
+        };
+        assert!(attempts(
+            &mut d,
+            Settings::Arena(ArenaSettings::default()),
+            &AtomicBool::new(false)
+        )
+        .is_err());
+        assert_eq!((d.battles, d.claims), (0, 0));
+        assert!(attempts(
+            &mut d,
+            Settings::Arena(ArenaSettings::default()),
+            &AtomicBool::new(true)
+        )
+        .is_err());
+        assert_eq!((d.battles, d.claims), (0, 0));
+    }
+    fn line(text: &str, y: f32, height: f32) -> TextLine {
+        TextLine {
+            text: text.into(),
+            x: 100.0,
+            y,
+            width: 500.0,
+            height,
+        }
+    }
+    #[test]
+    fn free_price_requires_explicit_single_zero_not_twenty_or_unknown_text() {
+        assert!(zero_cost(&[line("Spend @ 0", 800.0, 30.0)]));
+        for text in ["Spend @20", "Spend 10", "Spend 0/2", "Spend O", "Confirm 0"] {
+            assert!(!zero_cost(&[line(text, 800.0, 30.0)]));
+        }
+        assert!(!zero_cost(&[line("Spend 0", 100.0, 30.0)]));
+    }
+    #[test]
+    fn only_explicit_large_result_headlines_decide_pvp_victories() {
+        assert!(matches!(
+            result_outcome(&[line("VICTORY", 200.0, 120.0)]),
+            BattleOutcome::Won
+        ));
+        assert!(matches!(
+            result_outcome(&[line("DEFEAT", 200.0, 120.0)]),
+            BattleOutcome::Lost
+        ));
+        for lines in [
+            vec![line("Victory", 900.0, 22.0)],
+            vec![line("Tap to Close", 1800.0, 50.0)],
+            vec![line("Victory", 200.0, 80.0), line("Defeat", 400.0, 80.0)],
+        ] {
+            assert!(matches!(result_outcome(&lines), BattleOutcome::Unclear));
+        }
+    }
+    #[test]
+    fn supreme_opponent_positions_are_the_original_three_card_centres() {
+        assert_eq!(
+            OpponentPosition::ALL.map(OpponentPosition::point),
+            [(165, 950), (540, 950), (915, 950)]
+        );
+    }
+    #[test]
+    #[ignore = "restarts the game once from the Arena overview; no PvP battle, opponent selection, or purchase"]
+    fn connected_emulator_crash_recovery_without_combat() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
+        let cancelled = AtomicBool::new(false);
+        let mut calls = 0;
+        let result = super::super::recovery::run(
+            &serial,
+            &cancelled,
+            |checkpoint, report| {
+                calls += 1;
+                if calls > 1 {
+                    assert_eq!(checkpoint.mode, Some(GameMode::Arena));
+                }
+                let package = adb::launch_afk_journey(&serial).map_err(|e| e.to_string())?;
+                report(ActivityEvent::ModeOpening(GameMode::Arena));
+                navigate(&serial, Kind::Arena, &cancelled, &mut |m| println!("{m}"))?;
+                report(ActivityEvent::ModeEntered(GameMode::Arena));
+                if calls == 1 {
+                    assert!(adb::afk_journey_running(&serial).unwrap());
+                    // Intentionally bypass intentional_stop ONLY in this ignored
+                    // integration probe to simulate an actual process crash.
+                    adb::shell(&serial, &["am", "force-stop", &package])
+                        .map_err(|e| e.to_string())?;
+                    for _ in 0..2 {
+                        common::settle_cancellable(&cancelled)?;
+                    }
+                    common::screenshot(&serial)?;
+                    panic!("crash was not detected");
+                }
+                Ok(0)
+            },
+            |m| println!("{m}"),
+            |e| println!("{e:?}"),
+        );
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(calls, 2);
+        std::fs::write(
+            ".update-test/pvp-after-crash-recovery.png",
+            adb::screenshot(&serial).unwrap(),
+        )
+        .unwrap();
+    }
+    #[test]
+    #[ignore = "navigation only; does not choose opponents, claim attempts, or start battles"]
+    fn connected_emulator_pvp_navigation() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
+        let kind = match std::env::var("ADBHELPER_TEST_PVP_MODE").as_deref() {
+            Ok("arena") => Kind::Arena,
+            Ok("supreme") => Kind::Supreme,
+            _ => panic!("set ADBHELPER_TEST_PVP_MODE to arena or supreme"),
+        };
+        navigate(&serial, kind, &AtomicBool::new(false), &mut |m| {
+            println!("{m}")
+        })
+        .unwrap();
+        std::fs::write(
+            format!(".update-test/pvp-{:?}-overview.png", kind),
+            adb::screenshot(&serial).unwrap(),
+        )
+        .unwrap();
+        println!(
+            "{:?} overview reached without a battle or attempt claim",
+            kind
+        );
+    }
+}
