@@ -1,4 +1,8 @@
 //! Local Windows OCR; no server, Python runtime or downloaded model is used.
+#[cfg(windows)]
+use crate::localization::format_text;
+#[cfg(not(windows))]
+use crate::localization::text;
 use image::GrayImage;
 
 #[derive(Clone, Debug)]
@@ -84,7 +88,8 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
         Ok(lines)
     }
     read(image).map_err(|error| {
-        format!(
+        format_text!(
+            "The action stopped because local Windows OCR is unavailable: {error}.",
             "Lokale Windows-Texterkennung nicht verfügbar: {error}. Die Aktion wurde angehalten."
         )
     })
@@ -92,7 +97,11 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
 
 #[cfg(not(windows))]
 pub(super) fn recognize(_: &GrayImage) -> Result<Vec<TextLine>, String> {
-    Err("Für diese Aktion wird die lokale Windows-Texterkennung benötigt.".into())
+    Err(text(
+        "This action requires local Windows OCR.",
+        "Für diese Aktion wird die lokale Windows-Texterkennung benötigt.",
+    )
+    .into())
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ use super::{
     arena::Cursor,
     legend_trial::TowerSelection,
 };
+use crate::localization::{format_text, text};
 use crate::{
     activity::{ActivityEvent, BattleOutcome, GameMode, LegendTower},
     adb,
@@ -14,7 +15,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const CRASH: &str = "AFK Journey wurde unerwartet beendet.";
 const MAX_RESTARTS: u32 = 3;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Checkpoint {
@@ -136,7 +136,7 @@ pub fn check_process(serial: &str) -> Result<(), String> {
             return Ok(false);
         };
         if s.crashed {
-            return Err(CRASH.into());
+            return Err(game_crashed().into());
         }
         if s.suspended
             || !s.expected_running
@@ -154,9 +154,16 @@ pub fn check_process(serial: &str) -> Result<(), String> {
                 s.crashed = true;
             }
         });
-        return Err(CRASH.into());
+        return Err(game_crashed().into());
     }
     Ok(())
+}
+
+fn game_crashed() -> &'static str {
+    text(
+        "AFK Journey exited unexpectedly.",
+        "AFK Journey wurde unerwartet beendet.",
+    )
 }
 
 fn state() -> (bool, Checkpoint) {
@@ -183,7 +190,11 @@ fn restart(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
         common::settle_cancellable(cancelled)?;
     }
     if !adb::afk_journey_running(serial).map_err(|e| e.to_string())? {
-        return Err("AFK Journey konnte nach dem Absturz nicht gestartet werden.".into());
+        return Err(text(
+            "AFK Journey could not restart after the crash.",
+            "AFK Journey konnte nach dem Absturz nicht gestartet werden.",
+        )
+        .into());
     }
     expect_running(serial);
     Ok(())
@@ -252,8 +263,9 @@ fn supervised(
                 let mode = checkpoint
                     .mode
                     .map(GameMode::label)
-                    .unwrap_or("der ausgewählten Aktion");
-                log(format!(
+                    .unwrap_or(text("the selected action", "der ausgewählten Aktion"));
+                log(format_text!(
+                    "No battle result after 100 seconds. Reopening {mode}.",
                     "Kein Kampfergebnis nach 100 Sekunden. {mode} wird erneut geöffnet."
                 ));
                 continue;
@@ -264,17 +276,18 @@ fn supervised(
             report(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
         }
         if restart_count == MAX_RESTARTS {
-            return Err("AFK Journey ist wiederholt abgestürzt. Nach drei Neustarts wurde der Lauf beendet.".into());
+            return Err(text("AFK Journey kept crashing. The run stopped after three restarts.", "AFK Journey ist wiederholt abgestürzt. Nach drei Neustarts wurde der Lauf beendet.").into());
         }
         restart_count += 1;
-        log(format!(
+        log(format_text!(
+            "Game crash detected. Restart {}/{}. Resuming {}.",
             "Spielabsturz erkannt. Neustart {}/{}; fortsetzen bei {}.",
             restart_count,
             MAX_RESTARTS,
             checkpoint
                 .mode
                 .map(GameMode::label)
-                .unwrap_or("der ausgewählten Aktion")
+                .unwrap_or(text("the selected action", "der ausgewählten Aktion"))
         ));
         restart()?;
     }
@@ -360,7 +373,7 @@ mod tests {
                     report(ActivityEvent::ModeEntered(GameMode::AfkStages));
                     report(ActivityEvent::BattleStarted(GameMode::AfkStages));
                     crash();
-                    Err(CRASH.into())
+                    Err(game_crashed().into())
                 } else {
                     assert_eq!(checkpoint.mode, Some(GameMode::AfkStages));
                     assert!(!checkpoint.stages(StageSelection::default()).season);
@@ -409,7 +422,7 @@ mod tests {
             &AtomicBool::new(false),
             |_, _| {
                 crash();
-                Err(CRASH.into())
+                Err(game_crashed().into())
             },
             || {
                 restarts += 1;
@@ -432,7 +445,7 @@ mod tests {
             |_, _| {
                 cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
                 crash();
-                Err(CRASH.into())
+                Err(game_crashed().into())
             },
             || {
                 calls += 1;
@@ -458,7 +471,7 @@ mod tests {
                 if calls == 1 {
                     save_arena_cursor("test", cursor);
                     crash();
-                    Err(CRASH.into())
+                    Err(game_crashed().into())
                 } else {
                     assert_eq!(checkpoint.arena, cursor);
                     Ok(0)

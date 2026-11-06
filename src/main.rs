@@ -6,12 +6,14 @@ mod afk_journey;
 mod app;
 mod charts;
 pub mod design_system;
+mod localization;
 mod updater;
 
 use std::env;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    localization::Language::load();
     let mut args = env::args().skip(1);
     let command = args.next();
     if command.as_deref() == Some("--apply-update") {
@@ -37,7 +39,13 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Ok(None) => {
-                println!("Kein neueres Release verfügbar.");
+                println!(
+                    "{}",
+                    localization::text(
+                        "No newer release is available.",
+                        "Kein neueres Release verfügbar."
+                    )
+                );
                 ExitCode::SUCCESS
             }
             Err(error) => {

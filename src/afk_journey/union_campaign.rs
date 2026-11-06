@@ -3,6 +3,7 @@
 use super::afk_stages::{self as common, BattleSettings, Match, Rect, StageResult};
 use crate::activity::{ActivityEvent, GameMode};
 use crate::adb;
+use crate::localization::text;
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
@@ -142,9 +143,11 @@ pub(super) fn navigate(
                     0.78,
                 )? {
                     if coming_soon.center().1 < entry.center().1 {
-                        return Err(
-                            "Union Campaign ist noch nicht freigeschaltet (Coming Soon).".into(),
-                        );
+                        return Err(text(
+                            "Union Campaign is not unlocked yet (Coming Soon).",
+                            "Union Campaign ist noch nicht freigeschaltet (Coming Soon).",
+                        )
+                        .into());
                     }
                 }
                 for _ in 0..3 {
@@ -181,7 +184,7 @@ pub(super) fn navigate(
             }
         }
     }
-    Err("Union Campaign konnte nicht geöffnet werden. Bitte Gildenmitgliedschaft, Freischaltung und Spielverbindung prüfen.".into())
+    Err(text("Could not open Union Campaign. Check guild membership, game access, and connection.", "Union Campaign konnte nicht geöffnet werden. Bitte Gildenmitgliedschaft, Freischaltung und Spielverbindung prüfen.").into())
 }
 
 fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
@@ -198,7 +201,11 @@ fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
             None => std::thread::sleep(Duration::from_millis(400)),
         }
     }
-    Err("Die Union-Campaign-Teamaufstellung wurde nicht erkannt.".into())
+    Err(text(
+        "The Union Campaign formation screen was not detected.",
+        "Die Union-Campaign-Teamaufstellung wurde nicht erkannt.",
+    )
+    .into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,7 +280,10 @@ impl PostBattleDriver for AdbPostBattle<'_> {
         common::ensure_not_cancelled(self.cancelled)?;
         common::tap_match(
             self.serial,
-            self.found.take().ok_or("Continue wurde nicht erkannt")?,
+            self.found.take().ok_or(text(
+                "Continue button not detected",
+                "Continue wurde nicht erkannt",
+            ))?,
             self.size,
         )
     }

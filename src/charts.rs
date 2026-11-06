@@ -1,5 +1,6 @@
 use crate::activity::RunActivity;
 use crate::design_system::{card, ColorTokens as C, SpaceTokens, TypeTokens};
+use crate::localization::{format_text, text};
 use eframe::egui::{self, pos2, vec2, Align2, Color32, FontId, Rect, Sense, Shape, Stroke};
 use std::time::Instant;
 
@@ -21,17 +22,23 @@ fn clock(seconds: f64) -> String {
 pub fn stage_history(ui: &mut egui::Ui, run: &RunActivity, height: f32) {
     ui.label(
         egui::RichText::new(if run.is_pvp_run() {
-            "SIEG-VERLAUF"
+            text("WIN HISTORY", "SIEG-VERLAUF")
         } else {
-            "STAGE-VERLAUF"
+            text("STAGE HISTORY", "STAGE-VERLAUF")
         })
         .size(TypeTokens::KBD)
         .color(C::TEXT_SECONDARY),
     );
     ui.small(if run.is_pvp_run() {
-        "Bestätigte Siege über die Laufzeit"
+        text(
+            "Confirmed wins over time",
+            "Bestätigte Siege über die Laufzeit",
+        )
     } else {
-        "Geschaffte Stages über die Laufzeit"
+        text(
+            "Stages cleared over time",
+            "Geschaffte Stages über die Laufzeit",
+        )
     });
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
@@ -81,7 +88,10 @@ pub fn stage_history(ui: &mut egui::Ui, run: &RunActivity, height: f32) {
         painter.text(
             plot.center(),
             Align2::CENTER_CENTER,
-            "Verlauf beginnt mit dem Lauf",
+            text(
+                "History appears when a run starts",
+                "Verlauf beginnt mit dem Lauf",
+            ),
             font,
             C::TEXT_SECONDARY,
         );
@@ -130,9 +140,9 @@ pub fn stage_history(ui: &mut egui::Ui, run: &RunActivity, height: f32) {
                 clock(time),
                 value,
                 if run.is_pvp_run() {
-                    "Siege"
+                    text("Wins", "Siege")
                 } else {
-                    "Stages gecleart"
+                    text("Stages cleared", "Stages gecleart")
                 }
             ));
         }
@@ -169,18 +179,18 @@ const ATTEMPTS_COLOR: Color32 = Color32::from_rgb(154, 161, 184);
 
 pub(crate) fn comparison_plot(ui: &mut egui::Ui, data: &[ComparisonPoint], height: f32) {
     ui.label(
-        egui::RichText::new("VERGLEICH DER SPIELMODI")
+        egui::RichText::new(text("GAME MODE COMPARISON", "VERGLEICH DER SPIELMODI"))
             .size(TypeTokens::KBD)
             .color(C::TEXT_SECONDARY),
     );
     ui.horizontal(|ui| {
         for (label, color) in [
-            ("Versuche", ATTEMPTS_COLOR),
+            (text("Attempts", "Versuche"), ATTEMPTS_COLOR),
             (
                 if data.iter().any(|p| p.pvp) {
-                    "Clears / Siege"
+                    text("Clears / wins", "Clears / Siege")
                 } else {
-                    "Gecleart"
+                    text("Cleared", "Gecleart")
                 },
                 C::GLOW,
             ),
@@ -231,7 +241,7 @@ pub(crate) fn comparison_plot(ui: &mut egui::Ui, data: &[ComparisonPoint], heigh
         painter.text(
             plot.center(),
             Align2::CENTER_CENTER,
-            "Noch keine Modusdaten",
+            text("No mode data yet", "Noch keine Modusdaten"),
             font,
             C::TEXT_SECONDARY,
         );
@@ -290,7 +300,10 @@ pub(crate) fn comparison_plot(ui: &mut egui::Ui, data: &[ComparisonPoint], heigh
             }
         }
         if index % label_stride == 0 {
-            let name = point.label.strip_suffix("-Stages").unwrap_or(&point.label);
+            let name = point
+                .label
+                .strip_suffix(text(" Stages", "-Stages"))
+                .unwrap_or(&point.label);
             let galley = painter.layout_no_wrap(name.to_owned(), font.clone(), C::TEXT_SECONDARY);
             let name = if galley.size().x <= slot - 6.0 {
                 name.to_owned()
@@ -308,19 +321,23 @@ pub(crate) fn comparison_plot(ui: &mut egui::Ui, data: &[ComparisonPoint], heigh
     }
     if let Some(index) = hovered {
         let point = &data[index];
-        response.show_tooltip_text(format!(
+        response.show_tooltip_text(format_text!(
+            "{}\nAttempts: {}\n{}: {}",
             "{}\nVersuche: {}\n{}: {}",
             point.label,
             point.attempts,
             if point.pvp {
-                "Siege"
+                text("Wins", "Siege")
             } else {
-                "Stages gecleart"
+                text("Stages cleared", "Stages gecleart")
             },
             point.cleared
         ));
     }
-    ui.small("Modus und genaue Werte per Mauszeiger");
+    ui.small(text(
+        "Hover for the game mode and exact values",
+        "Modus und genaue Werte per Mauszeiger",
+    ));
 }
 
 fn compact_count(value: u64) -> String {
@@ -335,7 +352,7 @@ fn compact_count(value: u64) -> String {
 
 pub fn statistics(ui: &mut egui::Ui, run: &RunActivity, available_height: f32) {
     ui.spacing_mut().item_spacing.x = SpaceTokens::SM;
-    ui.heading(egui::RichText::new("Statistiken").color(C::TEXT_PRIMARY));
+    ui.heading(egui::RichText::new(text("Statistics", "Statistiken")).color(C::TEXT_PRIMARY));
     ui.add_space(SpaceTokens::SM);
     // Both charts share the remaining viewport budget; adding modes adds no rows.
     let chart_budget = (available_height - 390.0).max(144.0);
@@ -345,7 +362,7 @@ pub fn statistics(ui: &mut egui::Ui, run: &RunActivity, available_height: f32) {
         let seconds = run.elapsed(Instant::now()).as_secs();
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("LAUFZEIT")
+                egui::RichText::new(text("ELAPSED TIME", "LAUFZEIT"))
                     .size(TypeTokens::KBD)
                     .color(C::TEXT_SECONDARY),
             );
@@ -362,7 +379,10 @@ pub fn statistics(ui: &mut egui::Ui, run: &RunActivity, available_height: f32) {
                 );
             });
         });
-        ui.small("Aktueller Lauf inkl. Navigation");
+        ui.small(text(
+            "Current run including navigation",
+            "Aktueller Lauf inkl. Navigation",
+        ));
         ui.add_space(SpaceTokens::SM);
         stage_history(ui, run, history_height);
     });
@@ -371,16 +391,16 @@ pub fn statistics(ui: &mut egui::Ui, run: &RunActivity, available_height: f32) {
         ui.columns(2, |columns| {
             columns[0].set_min_height(82.0);
             columns[1].set_min_height(82.0);
-            let rate = run.success_rate().map(|r| format!("{r:.0} %")).unwrap_or_else(|| "—".into());
-            stat_value(&mut columns[0], "ERFOLGSQUOTE", &rate);
+            let rate = run.success_rate().map(|r| format_text!("{r:.0}%", "{r:.0} %")).unwrap_or_else(|| "—".into());
+            stat_value(&mut columns[0], text("SUCCESS RATE", "ERFOLGSQUOTE"), &rate);
             let (wins, losses) = run.outcomes();
-            columns[0].small(format!("{wins} Siege · {losses} Niederlagen"))
-                .on_hover_text("Siege / entschiedene Kämpfe. Laufende und unklare Kämpfe werden nicht eingerechnet.");
+            columns[0].small(format_text!("{wins} wins · {losses} losses", "{wins} Siege · {losses} Niederlagen"))
+                .on_hover_text(text("Wins divided by battles with a confirmed result. Ongoing battles and unclear results are excluded.", "Siege / entschiedene Kämpfe. Laufende und unklare Kämpfe werden nicht eingerechnet."));
             let ratio = if run.is_pvp_run() { (wins>0).then(|| (wins+losses) as f64 / wins as f64) } else { run.attempts_per_clear() };
-            let average = ratio.map(|a| format!("{a:.1}").replace('.', ",")).unwrap_or_else(|| "—".into());
-            stat_value(&mut columns[1], if run.is_pvp_run() {"Ø VERSUCHE / SIEG"} else {"Ø VERSUCHE / STAGE"}, &average);
-            columns[1].small(if run.is_pvp_run() {"Nur entschiedene Kämpfe"} else {"Abgeschlossene Stufen"})
-                .on_hover_text(if run.is_pvp_run() {"Entschiedene Kämpfe / bestätigte Siege. Laufende und unklare Kämpfe werden ausgeschlossen."} else {"Versuche bis zur letzten geschafften Stufe / geschaffte Stufen. Versuche an einer noch offenen Stufe werden ausgeschlossen."});
+            let average = ratio.map(|a| format!("{a:.1}").replace('.', text(".", ","))).unwrap_or_else(|| "—".into());
+            stat_value(&mut columns[1], if run.is_pvp_run() {text("AVG. ATTEMPTS / WIN", "Ø VERSUCHE / SIEG")} else {text("AVG. ATTEMPTS / STAGE", "Ø VERSUCHE / STAGE")}, &average);
+            columns[1].small(if run.is_pvp_run() {text("Battles with confirmed results", "Nur entschiedene Kämpfe")} else {text("Cleared stages", "Abgeschlossene Stufen")})
+                .on_hover_text(if run.is_pvp_run() {text("Battles with a confirmed result divided by wins.", "Entschiedene Kämpfe / bestätigte Siege. Laufende und unklare Kämpfe werden ausgeschlossen.")} else {text("Attempts through the last clear divided by stages cleared.", "Versuche bis zur letzten geschafften Stufe / geschaffte Stufen. Versuche an einer noch offenen Stufe werden ausgeschlossen.")});
         });
     });
     ui.add_space(SpaceTokens::MD);

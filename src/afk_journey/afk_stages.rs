@@ -1,6 +1,7 @@
 use crate::activity::{ActivityEvent as ProgressEvent, BattleOutcome, GameMode};
 use crate::adb;
 use crate::afk_journey::{BASE_RESOLUTION, BATTLE_TIMEOUT_SECONDS};
+use crate::localization::{format_text, text};
 use image::{imageops::FilterType, GrayImage};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -117,7 +118,11 @@ fn run_sequence(
 ) -> Result<Vec<ModeSummary>, String> {
     let modes = selection.modes();
     if modes.is_empty() {
-        return Err("Bitte mindestens eine Stage-Art auswählen.".into());
+        return Err(text(
+            "Select at least one stage type.",
+            "Bitte mindestens eine Stage-Art auswählen.",
+        )
+        .into());
     }
     let mut summaries = Vec::new();
     for mode in modes {
@@ -143,7 +148,7 @@ pub fn run_selected(
 ) -> Result<u32, String> {
     let summaries = run_sequence(selection, cancelled, |mode| {
         progress(ProgressEvent::ModeOpening(mode));
-        log(format!("{} öffnen.", mode.label()));
+        log(format_text!("Opening {}.", "{} öffnen.", mode.label()));
         run(
             serial,
             BattleSettings { mode, ..settings },
@@ -228,6 +233,12 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         }
         "duras_trials/sweep_quantity_one.png" => {
             include_bytes!("../../assets/AFKJourney/duras_trials/sweep_quantity_one.png")
+        }
+        "duras_trials/sweep_plus.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/sweep_plus.png")
+        }
+        "duras_trials/sweep_daily_token.png" => {
+            include_bytes!("../../assets/AFKJourney/duras_trials/sweep_daily_token.png")
         }
         "duras_trials/socketed_charms_overview.png" => {
             include_bytes!("../../assets/AFKJourney/duras_trials/socketed_charms_overview.png")
@@ -405,8 +416,9 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         "next.png" => &include_bytes!("../../assets/AFKJourney/next.png")[..],
         "retry.png" => &include_bytes!("../../assets/AFKJourney/retry.png")[..],
         _ => {
-            return Err(format!(
-                "Template is not embedded in this build: {relative_path}"
+            return Err(format_text!(
+                "Template is not embedded in this build: {relative_path}",
+                "Die Vorlage fehlt in dieser Version: {relative_path}"
             ))
         }
     };
@@ -418,7 +430,13 @@ pub(super) fn load_template(relative_path: &str) -> Result<GrayImage, String> {
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     if let Some(image) = cache
         .lock()
-        .map_err(|_| "template cache is unavailable".to_owned())?
+        .map_err(|_| {
+            text(
+                "template cache is unavailable",
+                "Der Vorlagenspeicher ist nicht verfügbar",
+            )
+            .to_owned()
+        })?
         .get(relative_path)
         .cloned()
     {
@@ -426,28 +444,47 @@ pub(super) fn load_template(relative_path: &str) -> Result<GrayImage, String> {
     }
 
     let image = image::load_from_memory(embedded_template(relative_path)?)
-        .map_err(|error| format!("Could not decode template {relative_path}: {error}"))?
+        .map_err(|error| {
+            format_text!(
+                "Could not decode template {relative_path}: {error}",
+                "Die Vorlage {relative_path} konnte nicht gelesen werden: {error}"
+            )
+        })?
         .to_luma8();
     cache
         .lock()
-        .map_err(|_| "template cache is unavailable".to_owned())?
+        .map_err(|_| {
+            text(
+                "template cache is unavailable",
+                "Der Vorlagenspeicher ist nicht verfügbar",
+            )
+            .to_owned()
+        })?
         .insert(relative_path.to_owned(), image.clone());
     Ok(image)
 }
 
 pub(super) fn normalize_screenshot(bytes: &[u8]) -> Result<(GrayImage, (u32, u32)), String> {
     let screenshot = image::load_from_memory(bytes)
-        .map_err(|error| format!("Could not decode device screenshot: {error}"))?
+        .map_err(|error| {
+            format_text!(
+                "Could not decode device screenshot: {error}",
+                "Der Screenshot des Geräts konnte nicht gelesen werden: {error}"
+            )
+        })?
         .to_luma8();
     let actual_size = screenshot.dimensions();
     if actual_size.0 == 0 || actual_size.1 == 0 {
-        return Err("Device returned an empty screenshot".to_owned());
+        return Err(text(
+            "Device returned an empty screenshot",
+            "Das Gerät hat einen leeren Screenshot geliefert",
+        )
+        .to_owned());
     }
     let expected_ratio = BASE_RESOLUTION.0 as f32 / BASE_RESOLUTION.1 as f32;
     let actual_ratio = actual_size.0 as f32 / actual_size.1 as f32;
     if (actual_ratio - expected_ratio).abs() > 0.04 {
-        return Err(format!(
-            "AFK Journey automation expects portrait 9:16 display output; device screenshot is {} × {}. Rotate the emulator to portrait.",
+        return Err(format_text!("ADBHelper expects a 9:16 portrait display. The device screenshot is {} × {}. Rotate the emulator to portrait.", "ADBHelper erwartet das Hochformat 9:16. Der Screenshot misst {} × {}. Drehe den Emulator ins Hochformat.",
             actual_size.0, actual_size.1
         ));
     }
@@ -636,8 +673,13 @@ pub(super) fn wait_for_match(
     timeout: Duration,
     cancelled: &AtomicBool,
 ) -> Result<(String, Match, (u32, u32)), String> {
-    poll_for_match(serial, paths, roi, timeout, cancelled)?
-        .ok_or_else(|| format!("Timed out waiting for {}.", paths.join(" or ")))
+    poll_for_match(serial, paths, roi, timeout, cancelled)?.ok_or_else(|| {
+        format_text!(
+            "Timed out waiting for {}.",
+            "Zeitlimit beim Warten auf {} erreicht.",
+            paths.join(text(" or ", " oder "))
+        )
+    })
 }
 
 pub(super) fn poll_for_match(
@@ -662,7 +704,7 @@ pub(super) fn poll_for_match(
 
 pub(super) fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
     if cancelled.load(Ordering::Relaxed) {
-        Err("Cancelled by user.".to_owned())
+        Err(text("Cancelled by user.", "Vom Benutzer abgebrochen.").to_owned())
     } else {
         Ok(())
     }
@@ -867,11 +909,23 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
                     return Ok(true);
                 }
             } else {
-                (self.log)("Keine Ranglisten-Teams verfügbar; aktuelles Team verwenden.".into());
+                (self.log)(
+                    text(
+                        "No leaderboard teams are available. Using the current team.",
+                        "Keine Ranglisten-Teams verfügbar; aktuelles Team verwenden.",
+                    )
+                    .into(),
+                );
                 return Ok(false);
             }
         }
-        (self.log)("Keine weiteren Ranglisten-Teams verfügbar.".into());
+        (self.log)(
+            text(
+                "No more leaderboard teams are available.",
+                "Keine weiteren Ranglisten-Teams verfügbar.",
+            )
+            .into(),
+        );
         Ok(false)
     }
 
@@ -944,7 +998,11 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
             let (screen, size) = screenshot(self.serial)?;
             if let Some(cancel) = find_template(&screen, "cancel.png", popup_roi, 0.72)? {
                 (self.log)(
-                    "Team enthält gesperrte Helden oder Artefakte und wird übersprungen.".into(),
+                    text(
+                        "Skipping a team with locked heroes or artifacts.",
+                        "Team enthält gesperrte Helden oder Artefakte und wird übersprungen.",
+                    )
+                    .into(),
                 );
                 tap_match(self.serial, cancel, size)?;
                 settle_cancellable(self.cancelled)?;
@@ -952,7 +1010,11 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
             }
             if let Some(copy) = find_template(&screen, "battle/copy.png", lower_screen(), 0.75)? {
                 if Instant::now() >= deadline {
-                    return Err("Das vorgeschlagene Team konnte nicht übernommen werden.".into());
+                    return Err(text(
+                        "Could not copy the recommended team.",
+                        "Das vorgeschlagene Team konnte nicht übernommen werden.",
+                    )
+                    .into());
                 }
                 tap_match(self.serial, copy, size)?;
                 settle_cancellable(self.cancelled)?;
@@ -1007,7 +1069,11 @@ fn start_battle(
     .is_some()
     {
         adb::press_back(serial).map_err(|error| error.to_string())?;
-        return Err("Game requested currency. The Rust preview will not spend gold.".into());
+        return Err(text(
+            "The game requested payment. ADBHelper does not spend gold.",
+            "Das Spiel verlangt eine Zahlung. ADBHelper gibt kein Gold aus.",
+        )
+        .into());
     }
 
     if let Some((_, confirm)) = get_match(
@@ -1018,7 +1084,7 @@ fn start_battle(
     )? {
         if mode == GameMode::DurasTrials {
             adb::press_back(serial).map_err(|e| e.to_string())?;
-            return Err("Dura-Bestätigungsdialog nicht eindeutig; keine zusätzlichen Token oder Käufe bestätigt.".into());
+            return Err(text("Could not verify the Dura confirmation dialog. No extra tokens were used and no purchase was made.", "Dura-Bestätigungsdialog nicht eindeutig; keine zusätzlichen Token oder Käufe bestätigt.").into());
         }
         tap_match(serial, confirm, size)?;
         settle_cancellable(cancelled)?;
@@ -1249,7 +1315,10 @@ impl ResultDriver for AdbResultDriver<'_> {
         }
         tap_match(
             self.serial,
-            self.retry.ok_or("Retry wurde nicht erkannt")?,
+            self.retry.ok_or(text(
+                "Retry button not detected",
+                "Retry wurde nicht erkannt",
+            ))?,
             self.size,
         )?;
         settle_cancellable(self.cancelled)
@@ -1322,7 +1391,11 @@ fn wait_for_outcome(
         if let Some(skip) = live_battle_skip(&screen, mode)? {
             ensure_not_cancelled(cancelled)?;
             tap_match(serial, skip, size)?;
-            log("Union Campaign: Kampf überspringen.".into());
+            log(text(
+                "Skipping the Union Campaign battle.",
+                "Union Campaign: Kampf überspringen.",
+            )
+            .into());
             settle_cancellable(cancelled)?;
             continue;
         }
@@ -1360,7 +1433,11 @@ fn battle_with_current_team(
                         ..cursor
                     };
                     if !cursor.can_resume(settings) {
-                        log(error);
+                        log(text(
+                            "No battle result was detected after 100 seconds.",
+                            "Nach 100 Sekunden wurde kein Kampfergebnis erkannt.",
+                        )
+                        .into());
                         return Ok(StageResult::FormationFailed);
                     }
                     super::recovery::save_team_cursor(mode, cursor);
@@ -1450,7 +1527,7 @@ fn battle_with_current_team(
                 if mode != GameMode::DurasTrials {
                     tap_match(serial, found, size)?;
                 }
-                return Err("A confirmation popup appeared after battle. Check the game connection and screen.".into());
+                return Err(text("A confirmation popup appeared after battle. Check the game connection and screen.", "Nach dem Kampf ist ein Bestätigungsdialog erschienen. Prüfe die Spielverbindung und die aktuelle Ansicht.").into());
             }
             Outcome::FinalStage => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
@@ -1507,7 +1584,11 @@ pub(super) fn play_one_stage(
             continue;
         }
         if pass == FormationPass::Manual {
-            log("Automatische Teams ausgeschöpft; manuelle Teams werden zuletzt versucht.".into());
+            log(text(
+                "Automatic teams exhausted. Trying manual teams.",
+                "Automatische Teams ausgeschöpft; manuelle Teams werden zuletzt versucht.",
+            )
+            .into());
         }
         let mut formation_number = first.first_rank(pass, settings.attempts_per_formation);
         while formation_number <= settings.max_formations {
@@ -1534,7 +1615,8 @@ pub(super) fn play_one_stage(
             let used = resume
                 .filter(|cursor| cursor.slot == slot)
                 .map_or(0, |cursor| cursor.used);
-            log(format!(
+            log(format_text!(
+                "Trying team #{formation_number} ({pass:?}).",
                 "Team #{formation_number} ({pass:?}) wird versucht."
             ));
             match battle_with_current_team(
@@ -1644,7 +1726,9 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
             | GameMode::UnionCampaign
             | GameMode::DurasTrials
             | GameMode::Arena
-            | GameMode::SupremeArena => return Err("Kein AFK-Stages-Modus".into()),
+            | GameMode::SupremeArena => {
+                return Err(text("This is not an AFK Stages mode", "Kein AFK-Stages-Modus").into())
+            }
         }));
     }
     if mode == GameMode::AfkStages {
@@ -1652,7 +1736,8 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
             return Ok(Some(button.center()));
         }
     }
-    Err(format!(
+    Err(format_text!(
+        "Could not detect the entry point for {}.",
         "Der Einstieg für {} wurde nicht erkannt.",
         mode.label()
     ))
@@ -1749,9 +1834,11 @@ pub(super) fn navigate_to_current_overview(
             break;
         }
         if attempt == 20 {
-            log(
-                "Navigation zur Hauptansicht wird nach einem Spielneustart erneut versucht.".into(),
-            );
+            log(text(
+                "Retrying navigation to the main screen after a game restart.",
+                "Navigation zur Hauptansicht wird nach einem Spielneustart erneut versucht.",
+            )
+            .into());
             adb::stop_afk_journey(serial).map_err(|error| error.to_string())?;
             adb::launch_afk_journey(serial).map_err(|error| error.to_string())?;
             for _ in 0..5 {
@@ -1777,7 +1864,11 @@ pub(super) fn navigate_to_current_overview(
         }
         settle_cancellable(cancelled)?;
     }
-    Err("Die Hauptansicht konnte nicht erreicht werden. Bitte Spielverbindung prüfen.".into())
+    Err(text(
+        "Could not reach the main screen. Check the game connection.",
+        "Die Hauptansicht konnte nicht erreicht werden. Bitte Spielverbindung prüfen.",
+    )
+    .into())
 }
 
 type GameScreen = (GrayImage, (u32, u32));
@@ -1799,7 +1890,7 @@ fn enter_afk_page(navigator: &mut impl AfkNavigator) -> Result<GameScreen, Strin
             }
         }
     }
-    Err("Die AFK-Seite konnte nicht automatisch geöffnet werden. Bitte Spielverbindung und freigeschaltete Spielmodi prüfen.".into())
+    Err(text("Could not open the AFK page. Check the game connection and unlocked modes.", "Die AFK-Seite konnte nicht automatisch geöffnet werden. Bitte Spielverbindung und freigeschaltete Spielmodi prüfen.").into())
 }
 
 struct AdbAfkNavigator<'a, L> {
@@ -1904,7 +1995,11 @@ pub(super) fn navigate_to_battle_modes(
             return Ok(navigator.size);
         }
     }
-    Err("Die Kampfmodus-Auswahl konnte nicht geöffnet werden.".into())
+    Err(text(
+        "Could not open Battle Modes.",
+        "Die Kampfmodus-Auswahl konnte nicht geöffnet werden.",
+    )
+    .into())
 }
 
 fn navigate_to_afk_stages(
@@ -1946,7 +2041,8 @@ where
 
     let (screen, size) = navigate_to_afk_stages(serial, cancelled, &mut log)?;
     let Some((x, y)) = stage_entry_point(&screen, mode)? else {
-        log(format!(
+        log(format_text!(
+            "{} is unavailable or already completed.",
             "{} nicht verfügbar oder bereits abgeschlossen.",
             mode.label()
         ));
@@ -1956,7 +2052,7 @@ where
         });
     };
     adb::tap_game_point(serial, x, y, size).map_err(|error| error.to_string())?;
-    log(format!("{} ausgewählt.", mode.label()));
+    log(format_text!("Selected {}.", "{} ausgewählt.", mode.label()));
     settle_cancellable(cancelled)?;
 
     let (screen, size) = screenshot(serial)?;
@@ -1974,7 +2070,8 @@ where
     let mut cleared: u32 = 0;
     loop {
         ensure_not_cancelled(cancelled)?;
-        log(format!(
+        log(format_text!(
+            "{}: Preparing stage {}.",
             "{}: Stufe {} vorbereiten.",
             mode.label(),
             cleared + 1
@@ -1989,10 +2086,18 @@ where
         ) {
             Ok(StageResult::Won) => {
                 cleared = cleared.saturating_add(1);
-                log(format!("{}: {cleared} Stufen geschafft.", mode.label()));
+                log(format_text!(
+                    "{}: {cleared} stages cleared.",
+                    "{}: {cleared} Stufen geschafft.",
+                    mode.label()
+                ));
             }
             Ok(StageResult::FinalStage) => {
-                log(format!("{}: Letzte Stufe erreicht.", mode.label()));
+                log(format_text!(
+                    "{}: Final stage reached.",
+                    "{}: Letzte Stufe erreicht.",
+                    mode.label()
+                ));
                 return Ok(ModeSummary {
                     cleared,
                     end: ModeEnd::FinalStage,

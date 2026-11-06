@@ -4,6 +4,7 @@ use super::afk_stages::{self as common, Match, Rect};
 use super::ocr::{self, TextLine};
 use crate::activity::{ActivityEvent, BattleOutcome, GameMode};
 use crate::adb;
+use crate::localization::{format_text, text};
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
@@ -45,9 +46,9 @@ impl OpponentPosition {
     pub const ALL: [Self; 3] = [Self::Left, Self::Middle, Self::Right];
     pub fn label(self) -> &'static str {
         match self {
-            Self::Left => "Links",
-            Self::Middle => "Mitte",
-            Self::Right => "Rechts",
+            Self::Left => text("Left", "Links"),
+            Self::Middle => text("Middle", "Mitte"),
+            Self::Right => text("Right", "Rechts"),
         }
     }
     fn point(self) -> (u32, u32) {
@@ -188,7 +189,8 @@ fn navigate(
             break;
         }
     }
-    Err(format!(
+    Err(format_text!(
+        "{} is unavailable in Battle Modes.",
         "{} ist in den Kampfmodi nicht verfügbar.",
         kind.mode().label()
     ))
@@ -235,7 +237,11 @@ fn wait_home(serial: &str, kind: Kind, cancelled: &AtomicBool) -> Result<(), Str
         let (screen, size) = common::screenshot(serial)?;
         if purchase_popup(&screen)? || confirmation(&screen)? {
             adb::press_back(serial).map_err(|e| e.to_string())?;
-            return Err("Arena-Dialog nicht eindeutig bestätigt; kein Kauf ausgeführt.".into());
+            return Err(text(
+                "The Arena dialog could not be verified. No purchase was made.",
+                "Arena-Dialog nicht eindeutig bestätigt; kein Kauf ausgeführt.",
+            )
+            .into());
         }
         if common::get_match(
             &screen,
@@ -250,7 +256,11 @@ fn wait_home(serial: &str, kind: Kind, cancelled: &AtomicBool) -> Result<(), Str
         dismiss_notice(serial, kind, &screen, size)?;
         common::settle_cancellable(cancelled)?;
     }
-    Err(format!("{}-Übersicht nicht erkannt.", kind.mode().label()))
+    Err(format_text!(
+        "The {} overview was not detected.",
+        "{}-Übersicht nicht erkannt.",
+        kind.mode().label()
+    ))
 }
 
 /// Mirrors the original Spend + diamond + 0 prompt without treating 10/20 as 0.
@@ -451,16 +461,21 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             let (screen, size) = common::screenshot(self.serial)?;
             if purchase_popup(&screen)? || confirmation(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
-                return Err(
-                    "Unerwarteter Arena-Dialog; keine Bestätigung oder zusätzlicher Kauf.".into(),
-                );
+                return Err(text(
+                    "An unexpected Arena dialog appeared. No confirmation or purchase was made.",
+                    "Unerwarteter Arena-Dialog; keine Bestätigung oder zusätzlicher Kauf.",
+                )
+                .into());
             }
             if let Some(control) = find(&screen, path, roi)? {
                 return Ok((control, size));
             }
             common::settle_cancellable(self.cancelled)?;
         }
-        Err(format!("Arena-Steuerelement {path} nicht erkannt."))
+        Err(format_text!(
+            "Arena control {path} was not detected.",
+            "Arena-Steuerelement {path} nicht erkannt."
+        ))
     }
 
     fn finish_result(&self) -> Result<(), String> {
@@ -469,7 +484,11 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             let (screen, size) = common::screenshot(self.serial)?;
             if purchase_popup(&screen)? || confirmation(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
-                return Err("Unerwarteter Arena-Dialog nach dem Kampf; Lauf beendet.".into());
+                return Err(text(
+                    "The run stopped after an unexpected Arena dialog appeared.",
+                    "Unerwarteter Arena-Dialog nach dem Kampf; Lauf beendet.",
+                )
+                .into());
             }
             if common::get_match(
                 &screen,
@@ -484,7 +503,11 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             dismiss_notice(self.serial, self.settings.kind(), &screen, size)?;
             common::settle_cancellable(self.cancelled)?;
         }
-        Err("Arena-Ergebnis nicht geschlossen; kein weiterer Kampf gestartet.".into())
+        Err(text(
+            "The Arena result screen could not be closed. The run stopped.",
+            "Arena-Ergebnis nicht geschlossen; kein weiterer Kampf gestartet.",
+        )
+        .into())
     }
 }
 
@@ -507,7 +530,10 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
             common::lower_screen(),
             0.85,
         )?
-        .ok_or("Arena-Challenge nicht erkannt")?;
+        .ok_or(text(
+            "Arena Challenge button not detected",
+            "Arena-Challenge nicht erkannt",
+        ))?;
         common::ensure_not_cancelled(self.cancelled)?;
         common::tap_match(self.serial, challenge, size)?;
         common::settle_cancellable(self.cancelled)?;
@@ -522,7 +548,11 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
             }
             if confirmation(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
-                return Err("Arena-Bestätigung ist nicht eindeutig; kein Kauf.".into());
+                return Err(text(
+                    "The Arena confirmation could not be verified. No purchase was made.",
+                    "Arena-Bestätigung ist nicht eindeutig; kein Kauf.",
+                )
+                .into());
             }
             if kind == Kind::Arena {
                 if let Some(opponent) = find(
@@ -564,7 +594,11 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
             dismiss_notice(self.serial, kind, &screen, size)?;
             common::settle_cancellable(self.cancelled)?;
         }
-        Err("Arena-Gegnerauswahl nicht erkannt.".into())
+        Err(text(
+            "The Arena opponent selection was not detected.",
+            "Arena-Gegnerauswahl nicht erkannt.",
+        )
+        .into())
     }
 
     fn battle(&mut self) -> Result<BattleOutcome, String> {
@@ -591,7 +625,11 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
             let (screen, size) = common::screenshot(self.serial)?;
             if purchase_popup(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
-                return Err("Keine Arena-Versuche verfügbar; Kauf abgebrochen.".into());
+                return Err(text(
+                    "No Arena attempts are available. The purchase was cancelled.",
+                    "Keine Arena-Versuche verfügbar; Kauf abgebrochen.",
+                )
+                .into());
             }
             let close =
                 common::get_match(&screen, &["arena/done.png", "next.png"], footer(), 0.85)?;
@@ -620,7 +658,11 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
                 if seen_battle {
                     (self.progress)(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
                 }
-                return Err("Unbekannte Arena-Bestätigung; Lauf beendet.".into());
+                return Err(text(
+                    "The run stopped after an unknown Arena confirmation appeared.",
+                    "Unbekannte Arena-Bestätigung; Lauf beendet.",
+                )
+                .into());
             }
             if let Some(skip) = skip.filter(|_| !skipped) {
                 common::ensure_not_cancelled(self.cancelled)?;
@@ -720,7 +762,8 @@ pub fn run(
         &mut cursor,
         cancelled,
     )?;
-    log(format!(
+    log(format_text!(
+        "{} finished with {wins} confirmed wins.",
         "{} abgeschlossen: {wins} bestätigte Siege.",
         kind.mode().label()
     ));

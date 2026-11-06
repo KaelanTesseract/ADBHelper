@@ -1,6 +1,7 @@
 use super::afk_stages::{self as common, BattleSettings, Rect, StageResult};
 use crate::activity::{ActivityEvent, GameMode};
 use crate::adb;
+use crate::localization::{format_text, text};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
@@ -100,9 +101,11 @@ fn navigate(
                     0.78,
                 )? {
                     if coming_soon.center().1 < entry.center().1 {
-                        return Err(
-                            "Dura’s Trials sind noch nicht freigeschaltet (Coming Soon).".into(),
-                        );
+                        return Err(text(
+                            "Dura’s Trials is not unlocked yet (Coming Soon).",
+                            "Dura’s Trials sind noch nicht freigeschaltet (Coming Soon).",
+                        )
+                        .into());
                     }
                 }
                 common::tap_match(serial, entry, size)?;
@@ -138,7 +141,11 @@ fn navigate(
             }
         }
     }
-    Err("Dura’s Trials konnten nicht geöffnet werden.".into())
+    Err(text(
+        "Could not open Dura’s Trials.",
+        "Dura’s Trials konnten nicht geöffnet werden.",
+    )
+    .into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,11 +428,52 @@ struct Frame {
     snapshot: Snapshot,
 }
 
+fn trial_key(title: &str) -> String {
+    let key: String = title
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    // OCR reads the oversized R in the Raid overview as a separate word
+    // and can omit it entirely from the Sweep dialog.
+    match key.as_str() {
+        "aidtreasure" => "raidtreasure".into(),
+        _ => key,
+    }
+}
+
+fn overview_trial(lines: &[super::ocr::TextLine]) -> String {
+    let mut titles = lines.iter().filter_map(|line| {
+        let (_, y) = line.center();
+        if !(90..=205).contains(&y)
+            || line.x < 25.0
+            || line.x + line.width > 850.0
+            || line.width <= 120.0
+            || line.height < 40.0
+        {
+            return None;
+        }
+        let title = trial_key(&line.text);
+        (!title.is_empty()).then_some(title)
+    });
+    let title = titles.next().unwrap_or_default();
+    if titles.next().is_some() {
+        return String::new();
+    }
+    title
+}
+
 fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
     common::ensure_not_cancelled(cancelled)?;
     let bytes = adb::screenshot(serial).map_err(|e| e.to_string())?;
-    let (gray, size) = common::normalize_screenshot(&bytes)?;
-    let color = image::load_from_memory(&bytes)
+    let frame = decode_frame(&bytes)?;
+    common::ensure_not_cancelled(cancelled)?;
+    Ok(frame)
+}
+
+fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
+    let (gray, size) = common::normalize_screenshot(bytes)?;
+    let color = image::load_from_memory(bytes)
         .map_err(|e| e.to_string())?
         .resize_exact(1080, 1920, image::imageops::FilterType::Triangle)
         .to_rgb8();
@@ -503,12 +551,6 @@ fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
     if daily_remaining.is_none() {
         daily_remaining = isolated_daily_counter(&gray)?;
     }
-    let trial = lines
-        .iter()
-        .filter(|l| l.x > 150.0 && l.y > 75.0 && l.y < 205.0 && l.width > 120.0)
-        .map(|l| l.text.to_lowercase())
-        .collect::<Vec<_>>()
-        .join("|");
     let blocked = common::get_match(
         &gray,
         &["navigation/confirm.png", "cancel.png", "next.png"],
@@ -542,7 +584,7 @@ fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
         0.9,
     )?;
     let snapshot = Snapshot {
-        trial,
+        trial: overview_trial(&lines),
         blocked,
         stage,
         daily_remaining,
@@ -583,7 +625,6 @@ fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
             }
         }
     }
-    common::ensure_not_cancelled(cancelled)?;
     Ok(Frame {
         gray,
         color,
@@ -608,18 +649,26 @@ fn confirm_cap(first: &Snapshot, second: &Snapshot) -> Result<CapPermit, String>
             || frame.blocked
             || frame.trial.is_empty()
         {
-            return Err(
-                "Die Maximalstufe ist nicht eindeutig bestätigt; Sweep bleibt gesperrt.".into(),
-            );
+            return Err(text(
+                "Sweeps require a verified stage cap.",
+                "Die Maximalstufe ist nicht eindeutig bestätigt; Sweep bleibt gesperrt.",
+            )
+            .into());
         }
         let (Some(limit), Some(stage), Some(_)) = (frame.limit, frame.stage, frame.daily_remaining)
         else {
-            return Err("Stufe, Tageslimit oder tägliche Versuche unlesbar; kein Sweep.".into());
+            return Err(text(
+                "Could not read the stage, daily cap, or remaining attempts. Sweeps stopped.",
+                "Stufe, Tageslimit oder tägliche Versuche unlesbar; kein Sweep.",
+            )
+            .into());
         };
         if limit == 0 || limit > 999 || stage != limit || frame.daily_remaining.unwrap() > 99 {
-            return Err(
-                "Die ausgewählte Stufe ist nicht die aktuelle Maximalstufe; kein Sweep.".into(),
-            );
+            return Err(text(
+                "The selected stage is below the verified cap. Sweeps stopped.",
+                "Die ausgewählte Stufe ist nicht die aktuelle Maximalstufe; kein Sweep.",
+            )
+            .into());
         }
     }
     if first.daily_remaining.unwrap() > 0 {
@@ -631,7 +680,7 @@ fn confirm_cap(first: &Snapshot, second: &Snapshot) -> Result<CapPermit, String>
                         cost: 1,
                     })
             {
-                return Err("Tägliche Sweep-Kosten nicht eindeutig als ein Tagesversuch bestätigt; kein Sweep.".into());
+                return Err(text("Sweeps require a verified cost of one daily attempt.", "Tägliche Sweep-Kosten nicht eindeutig als ein Tagesversuch bestätigt; kein Sweep.").into());
             }
         }
     }
@@ -640,7 +689,11 @@ fn confirm_cap(first: &Snapshot, second: &Snapshot) -> Result<CapPermit, String>
         || first.stage != second.stage
         || first.daily_remaining != second.daily_remaining
     {
-        return Err("Die Stufenprüfung ist nicht stabil; kein Sweep.".into());
+        return Err(text(
+            "The stage verification returned inconsistent readings. Sweeps stopped.",
+            "Die Stufenprüfung ist nicht stabil; kein Sweep.",
+        )
+        .into());
     }
     Ok(CapPermit {
         stage: first.stage.unwrap(),
@@ -680,10 +733,11 @@ pub(super) fn ensure_formation(serial: &str, cancelled: &AtomicBool) -> Result<(
         }
         common::settle_cancellable(cancelled)?;
     }
-    Err(
-        "Die Dura-Teamaufstellung konnte nicht wieder geöffnet werden. Es wird nicht gesweept."
-            .into(),
+    Err(text(
+        "Could not reopen the Dura formation screen. Sweeps stopped.",
+        "Die Dura-Teamaufstellung konnte nicht wieder geöffnet werden. Es wird nicht gesweept.",
     )
+    .into())
 }
 
 fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
@@ -753,7 +807,11 @@ fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
         }
         common::settle_cancellable(cancelled)?;
     }
-    Err("Dura-Ergebnis nicht eindeutig abgeschlossen; kein Sweep.".into())
+    Err(text(
+        "Could not verify that the Dura battle ended. Sweeps stopped.",
+        "Dura-Ergebnis nicht eindeutig abgeschlossen; kein Sweep.",
+    )
+    .into())
 }
 
 fn select_next_stage(serial: &str, stage: u32, cancelled: &AtomicBool) -> Result<(), String> {
@@ -797,18 +855,21 @@ fn select_next_stage(serial: &str, stage: u32, cancelled: &AtomicBool) -> Result
         }
         common::settle_cancellable(cancelled)?;
     }
-    Err("Die nächste Dura-Stufe konnte nicht eindeutig ausgewählt werden; kein Sweep.".into())
+    Err(text(
+        "Could not verify the selection of the next Dura stage. Sweeps stopped.",
+        "Die nächste Dura-Stufe konnte nicht eindeutig ausgewählt werden; kein Sweep.",
+    )
+    .into())
 }
 
 trait SweepDriver {
     fn observe(&mut self) -> Result<Snapshot, String>;
     fn settle(&mut self) -> Result<(), String>;
-    fn sweep(&mut self, permit: &CapPermit) -> Result<u32, String>;
+    fn sweep(&mut self, permit: &CapPermit, quantity: u32) -> Result<u32, String>;
     fn report(&mut self, count: u32);
-    fn finish(&mut self) -> Result<(), String> {
-        Ok(())
-    }
 }
+
+const MAX_SWEEP_BATCH: u32 = 6;
 
 fn daily_sweeps(driver: &mut impl SweepDriver, budget: u32) -> Result<u32, String> {
     let mut total = 0;
@@ -823,21 +884,26 @@ fn daily_sweeps(driver: &mut impl SweepDriver, budget: u32) -> Result<u32, Strin
         if permit.daily_remaining == 0 {
             return Ok(total);
         }
-        let remaining = driver.sweep(&permit)?;
-        if remaining.checked_add(1) != Some(permit.daily_remaining) {
-            return Err("Sweep-Verbrauch nicht eindeutig bestätigt; kein weiterer Sweep.".into());
+        let quantity = permit
+            .daily_remaining
+            .min(MAX_SWEEP_BATCH)
+            .min(budget - total);
+        let remaining = driver.sweep(&permit, quantity)?;
+        if remaining.checked_add(quantity) != Some(permit.daily_remaining) {
+            return Err(text(
+                "Could not verify the attempt spent on the sweep. Sweeps stopped.",
+                "Sweep-Verbrauch nicht eindeutig bestätigt; kein weiterer Sweep.",
+            )
+            .into());
         }
-        let count = permit.daily_remaining - remaining;
-        if count > budget - total {
-            return Err(
-                "Sweep-Verbrauch überschreitet das Testbudget; kein weiterer Sweep.".into(),
-            );
-        }
-        total += count;
-        driver.report(count);
-        driver.finish()?;
+        total += quantity;
+        driver.report(quantity);
     }
-    Err("Unerwartet viele tägliche Dura-Versuche; Sweep beendet.".into())
+    Err(text(
+        "An unexpected number of daily Dura attempts was detected. Sweeps stopped.",
+        "Unerwartet viele tägliche Dura-Versuche; Sweep beendet.",
+    )
+    .into())
 }
 
 struct AdbSweep<'a, P> {
@@ -851,34 +917,36 @@ struct SweepDialog {
     trial: String,
     stage: u32,
     daily_remaining: u32,
-    quantity_one: bool,
+    quantity: Option<u32>,
+    daily_token: bool,
     cost: Option<SweepCost>,
     orange: bool,
 }
 
-fn validate_sweep_dialog(dialog: &SweepDialog, permit: &CapPermit) -> Result<(), String> {
+fn validate_sweep_dialog(
+    dialog: &SweepDialog,
+    permit: &CapPermit,
+    quantity: u32,
+) -> Result<(), String> {
     #[cfg(test)]
     println!("Dura sweep dialog: {dialog:?}");
-    let normalized = |s: &str| {
-        s.to_lowercase()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-    };
-    if normalized(&dialog.trial) != normalized(&permit.trial)
+    if trial_key(&dialog.trial) != trial_key(&permit.trial)
         || dialog.stage != permit.stage
         || dialog.daily_remaining != permit.daily_remaining
-        || !dialog.quantity_one
+        || dialog.quantity != Some(quantity)
+        || !dialog.daily_token
         || !dialog.orange
         || dialog.cost
             != Some(SweepCost {
                 available: permit.daily_remaining,
-                cost: 1,
+                cost: quantity,
             })
     {
-        return Err(
-            "Sweep-Dialog: Stufe, Menge oder Tageskosten nicht bestätigt; kein Verbrauch.".into(),
-        );
+        return Err(text(
+            "Could not verify the stage, quantity, or daily cost in the sweep dialog.",
+            "Sweep-Dialog: Stufe, Menge oder Tageskosten nicht bestätigt; kein Verbrauch.",
+        )
+        .into());
     }
     Ok(())
 }
@@ -898,6 +966,59 @@ fn sweep_quantity_one(gray: &image::GrayImage) -> Result<bool, String> {
         0.98,
     )?
     .is_some())
+}
+
+fn sweep_quantity(frame: &Frame) -> Result<Option<u32>, String> {
+    if sweep_quantity_one(&frame.gray)? {
+        return Ok(Some(1));
+    }
+    // The green slider thumb moves with the quantity. Its upper edge is
+    // separate from the green progress bar, so only the numeral is read.
+    let green: Vec<_> = (175..815)
+        .filter(|&x| {
+            let [r, g, b] = frame.color.get_pixel(x, 1575).0;
+            g > 70 && u16::from(g) > u16::from(r) + 18 && u16::from(g) > u16::from(b) + 12
+        })
+        .collect();
+    let (Some(&left), Some(&right)) = (green.first(), green.last()) else {
+        return Ok(None);
+    };
+    if green.len() < 50 || right - left > 100 {
+        return Ok(None);
+    }
+    let center = (left + right) / 2;
+    let digit = image::GrayImage::from_fn(46, 39, |x, y| {
+        let value = frame.gray.get_pixel(center - 23 + x, 1585 + y).0[0];
+        image::Luma([if value < 145 { 255 } else { 0 }])
+    });
+    Ok(unique_value(
+        repeated_numeric_patch(
+            &digit,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 46,
+                height: 39,
+            },
+        )?
+        .iter()
+        .filter_map(|line| repeated_counter(&line.text))
+        .filter(|number| (1..=MAX_SWEEP_BATCH).contains(number)),
+    ))
+}
+
+fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<common::Match>, String> {
+    common::find_template(
+        gray,
+        "duras_trials/sweep_plus.png",
+        Rect {
+            x: 830,
+            y: 1560,
+            width: 90,
+            height: 90,
+        },
+        0.95,
+    )
 }
 
 fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match)>, String> {
@@ -944,7 +1065,19 @@ fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match
     else {
         return Ok(None);
     };
-    let quantity_one = sweep_quantity_one(&frame.gray)?;
+    let quantity = sweep_quantity(frame)?;
+    let daily_token = common::find_template(
+        &frame.gray,
+        "duras_trials/sweep_daily_token.png",
+        Rect {
+            x: 570,
+            y: 1800,
+            width: 70,
+            height: 60,
+        },
+        0.88,
+    )?
+    .is_some();
     // Price is the total cost for the selected amount. Read this separately;
     // Windows OCR can omit the small token fraction from a full screenshot.
     let crop = image::imageops::crop_imm(&frame.gray, 635, 1810, 65, 50).to_image();
@@ -1024,7 +1157,8 @@ fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match
             trial: heading[0].0.clone(),
             stage: heading[0].1,
             daily_remaining,
-            quantity_one,
+            quantity,
+            daily_token,
             cost,
             orange: enabled_sweep_color(&frame.color, button.rect()),
         },
@@ -1032,48 +1166,97 @@ fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match
     )))
 }
 
-fn close_sweep_rewards(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
-    for _ in 0..8 {
-        let frame = read_frame(serial, cancelled)?;
-        if frame.snapshot.overview && frame.snapshot.sweep && !frame.snapshot.blocked {
-            return Ok(());
+#[derive(Debug, PartialEq, Eq)]
+enum SweepCompletion {
+    TapClose(u32, u32),
+    Back,
+}
+
+fn sweep_completion(lines: &[super::ocr::TextLine]) -> Option<SweepCompletion> {
+    let letters = |value: &str| -> String {
+        value
+            .to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphabetic())
+            .collect()
+    };
+    // The title sits near the middle for one reward and at the top for a batch.
+    if !lines
+        .iter()
+        .any(|line| line.y < 900.0 && line.width >= 540.0 && letters(&line.text) == "sweepcomplete")
+    {
+        return None;
+    }
+    let close = lines.iter().find(|line| {
+        let (x, y) = line.center();
+        (320..=760).contains(&x)
+            && (1650..=1910).contains(&y)
+            && matches!(
+                letters(&line.text).as_str(),
+                "taptoclose" | "tapanywheretoclose" | "tippenzumschließen"
+            )
+    });
+    Some(match close {
+        Some(line) => {
+            let (x, y) = line.center();
+            SweepCompletion::TapClose(x, y)
         }
-        if let Some((_, close)) = common::get_match(
-            &frame.gray,
-            &["tap_to_close.png", "afk_stages/tap_to_close.png"],
-            common::lower_screen(),
-            0.8,
-        )? {
-            common::tap_match(serial, close, frame.size)?;
-        } else if let Some(close) = frame.lines.iter().find(|line| {
-            let text: String = line
-                .text
-                .to_lowercase()
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            line.y > 1000.0
-                && (text == "taptoclose"
-                    || text == "tapanywheretoclose"
-                    || text == "tippenzumschließen")
-        }) {
-            let (x, y) = close.center();
-            adb::tap_game_point(serial, x, y, frame.size).map_err(|e| e.to_string())?;
-        } else if frame.lines.iter().any(|line| {
-            line.y > 350.0
-                && line.y < 1200.0
-                && ["rewards", "obtained", "belohnungen", "erhalten"]
-                    .contains(&line.text.to_lowercase().as_str())
-        }) {
-            // Bottom result buttons may be Repeat and consume another token.
-            // Dismiss the reward overlay with Back, never an arbitrary tap.
-            adb::press_back(serial).map_err(|e| e.to_string())?;
-        } else {
-            return Err("Sweep-Belohnungsbildschirm unklar; kein weiterer Sweep.".into());
+        None => SweepCompletion::Back,
+    })
+}
+
+fn daily_count_after_sweep(snapshot: &Snapshot, permit: &CapPermit) -> Option<u32> {
+    if snapshot.overview
+        && snapshot.sweep
+        && !snapshot.battle
+        && !snapshot.blocked
+        && snapshot.stage == Some(permit.stage)
+        && snapshot.limit == Some(permit.stage)
+        && snapshot.trial == permit.trial
+    {
+        return snapshot.daily_remaining;
+    }
+    None
+}
+
+fn wait_for_sweep_result(
+    serial: &str,
+    permit: &CapPermit,
+    cancelled: &AtomicBool,
+) -> Result<u32, String> {
+    for _ in 0..12 {
+        let frame = read_frame(serial, cancelled)?;
+        match sweep_completion(&frame.lines) {
+            Some(SweepCompletion::TapClose(x, y)) => {
+                common::ensure_not_cancelled(cancelled)?;
+                adb::tap_game_point(serial, x, y, frame.size).map_err(|e| e.to_string())?;
+            }
+            Some(SweepCompletion::Back) => {
+                common::ensure_not_cancelled(cancelled)?;
+                adb::press_back(serial).map_err(|e| e.to_string())?;
+            }
+            None => {
+                if let Some(remaining) = daily_count_after_sweep(&frame.snapshot, permit) {
+                    if remaining < permit.daily_remaining {
+                        return Ok(remaining);
+                    }
+                    if remaining > permit.daily_remaining {
+                        return Err(text(
+                            "The number of daily attempts changed. Sweeps stopped.",
+                            "Tagesversuche haben sich geändert; kein weiterer Sweep.",
+                        )
+                        .into());
+                    }
+                }
+            }
         }
         common::settle_cancellable(cancelled)?;
     }
-    Err("Sweep-Belohnungen konnten nicht eindeutig geschlossen werden.".into())
+    Err(text(
+        "Could not verify the sweep cost. Sweeps stopped.",
+        "Kein bestätigter Sweep-Verbrauch erkannt; kein weiterer Sweep.",
+    )
+    .into())
 }
 
 impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
@@ -1083,7 +1266,7 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
     fn settle(&mut self) -> Result<(), String> {
         common::settle_cancellable(self.cancelled)
     }
-    fn sweep(&mut self, permit: &CapPermit) -> Result<u32, String> {
+    fn sweep(&mut self, permit: &CapPermit, quantity: u32) -> Result<u32, String> {
         // Re-read immediately before the resource-consuming tap. A permit never
         // survives a changed trial, cap, selected card, or daily token count.
         let frame = read_frame(self.serial, self.cancelled)?;
@@ -1092,7 +1275,11 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
             || fresh.trial != permit.trial
             || fresh.daily_remaining != permit.daily_remaining
         {
-            return Err("Dura-Auswahl seit der Cap-Prüfung verändert; kein Sweep.".into());
+            return Err(text(
+                "The Dura selection changed after the cap check. Sweeps stopped.",
+                "Dura-Auswahl seit der Cap-Prüfung verändert; kein Sweep.",
+            )
+            .into());
         }
         let sweep = common::find_template(
             &frame.gray,
@@ -1105,48 +1292,49 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
             },
             0.9,
         )?
-        .ok_or("Sweep-Schaltfläche fehlt")?;
+        .ok_or(text("Sweep button not found", "Sweep-Schaltfläche fehlt"))?;
         common::ensure_not_cancelled(self.cancelled)?;
         common::tap_match(self.serial, sweep, frame.size)?;
         common::settle_cancellable(self.cancelled)?;
-        let mut confirmed = false;
         for _ in 0..12 {
-            let after = read_frame(self.serial, self.cancelled)?;
+            let mut after = read_frame(self.serial, self.cancelled)?;
             if let Some(remaining) = after.snapshot.daily_remaining {
-                if remaining < permit.daily_remaining {
-                    return Ok(remaining);
-                }
-                if remaining > permit.daily_remaining {
-                    return Err("Tagesversuche haben sich geändert; kein weiterer Sweep.".into());
+                if remaining != permit.daily_remaining {
+                    return Err(text(
+                        "The number of daily attempts changed. Sweeps stopped.",
+                        "Tagesversuche haben sich geändert; kein weiterer Sweep.",
+                    )
+                    .into());
                 }
             }
-            if confirmed
-                && after.lines.iter().any(|line| {
-                    line.y > 450.0
-                        && line.y < 900.0
-                        && line.text.trim().eq_ignore_ascii_case("Sweep Complete")
-                })
-            {
-                // This reward overlay hides both token counters. Dismiss only
-                // this explicit success screen, then verify the daily decrease.
-                adb::press_back(self.serial).map_err(|e| e.to_string())?;
-                common::settle_cancellable(self.cancelled)?;
-                continue;
-            }
-            if !confirmed {
-                if let Some((dialog, _)) = read_sweep_dialog(&after)? {
-                    validate_sweep_dialog(&dialog, permit)?;
-                    common::settle_cancellable(self.cancelled)?;
-                    let fresh = read_frame(self.serial, self.cancelled)?;
-                    let (dialog, button) = read_sweep_dialog(&fresh)?
-                        .ok_or("Sweep-Dialog verändert; kein Verbrauch.")?;
-                    validate_sweep_dialog(&dialog, permit)?;
+            if let Some((dialog, _)) = read_sweep_dialog(&after)? {
+                validate_sweep_dialog(&dialog, permit, 1)?;
+                for selected in 2..=quantity {
+                    let plus = find_sweep_plus(&after.gray)?.ok_or(text(
+                        "Could not verify the Sweep plus button.",
+                        "Die Plus-Schaltfläche für Sweeps wurde nicht eindeutig erkannt.",
+                    ))?;
                     common::ensure_not_cancelled(self.cancelled)?;
-                    common::tap_match(self.serial, button, fresh.size)?;
-                    confirmed = true;
+                    common::tap_match(self.serial, plus, after.size)?;
                     common::settle_cancellable(self.cancelled)?;
-                    continue;
+                    after = read_frame(self.serial, self.cancelled)?;
+                    let (dialog, _) = read_sweep_dialog(&after)?.ok_or(text(
+                        "The Sweep dialog changed while setting the quantity.",
+                        "Der Sweep-Dialog hat sich beim Einstellen der Menge verändert.",
+                    ))?;
+                    validate_sweep_dialog(&dialog, permit, selected)?;
                 }
+                common::settle_cancellable(self.cancelled)?;
+                let fresh = read_frame(self.serial, self.cancelled)?;
+                let (dialog, button) = read_sweep_dialog(&fresh)?.ok_or(text(
+                    "The sweep dialog changed before confirmation.",
+                    "Sweep-Dialog verändert; kein Verbrauch.",
+                ))?;
+                validate_sweep_dialog(&dialog, permit, quantity)?;
+                common::ensure_not_cancelled(self.cancelled)?;
+                common::tap_match(self.serial, button, fresh.size)?;
+                common::settle_cancellable(self.cancelled)?;
+                return wait_for_sweep_result(self.serial, permit, self.cancelled);
             }
             // A new confirmation dialog is never blindly accepted. Its quantity
             // and token type must be verified before adding support for it.
@@ -1155,20 +1343,22 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
                     && line.y < 1400.0
                     && ["confirm", "bestätigen"].contains(&line.text.to_lowercase().as_str())
             }) {
-                return Err(
-                    "Sweep-Dialog noch nicht eindeutig verifiziert; keine Bestätigung ausgeführt."
-                        .into(),
-                );
+                return Err(text(
+                    "The sweep dialog was left open because its details could not be verified.",
+                    "Sweep-Dialog noch nicht eindeutig verifiziert; keine Bestätigung ausgeführt.",
+                )
+                .into());
             }
             common::settle_cancellable(self.cancelled)?;
         }
-        Err("Kein bestätigter Sweep-Verbrauch erkannt; kein weiterer Sweep.".into())
+        Err(text(
+            "The Sweep dialog could not be verified.",
+            "Der Sweep-Dialog konnte nicht bestätigt werden.",
+        )
+        .into())
     }
     fn report(&mut self, count: u32) {
         (self.progress)(ActivityEvent::Swept(GameMode::DurasTrials, count));
-    }
-    fn finish(&mut self) -> Result<(), String> {
-        close_sweep_rewards(self.serial, self.cancelled)
     }
 }
 
@@ -1213,17 +1403,25 @@ fn run_with_budget(
     loop {
         let frame = read_frame(serial, cancelled)?;
         if !frame.snapshot.overview || frame.snapshot.blocked {
-            return Err("Dura-Stufenansicht ist nicht eindeutig; kein Sweep.".into());
+            return Err(text(
+                "Could not verify the Dura stage screen. Sweeps stopped.",
+                "Dura-Stufenansicht ist nicht eindeutig; kein Sweep.",
+            )
+            .into());
         }
         let (Some(stage), Some(limit)) = (frame.snapshot.stage, frame.snapshot.limit) else {
-            return Err(
-                "Ausgewählte Dura-Stufe oder Tageslimit nicht eindeutig lesbar; kein Sweep.".into(),
-            );
+            return Err(text(
+                "Could not read the selected Dura stage or the daily cap. Sweeps stopped.",
+                "Ausgewählte Dura-Stufe oder Tageslimit nicht eindeutig lesbar; kein Sweep.",
+            )
+            .into());
         };
         if stage > limit {
-            return Err(
-                "Ausgewählte Stufe liegt über dem aktuellen Tageslimit; kein Sweep.".into(),
-            );
+            return Err(text(
+                "The selected stage is above the current daily cap. Sweeps stopped.",
+                "Ausgewählte Stufe liegt über dem aktuellen Tageslimit; kein Sweep.",
+            )
+            .into());
         }
         if frame.snapshot.sweep {
             if stage < limit {
@@ -1239,14 +1437,19 @@ fn run_with_budget(
                     },
                     budget,
                 )?;
-                log(format!(
+                log(format_text!(
+                    "Verified Dura cap at stage {stage}. Completed {count} daily sweeps.",
                     "Bestätigte Dura-Maximalstufe {stage}: {count} tägliche Sweeps abgeschlossen."
                 ));
             }
             return Ok(cleared);
         }
         if !frame.snapshot.battle {
-            return Err("Keine eindeutige Dura-Kampfaktion; kein Sweep.".into());
+            return Err(text(
+                "Could not identify the Dura battle action. Sweeps stopped.",
+                "Keine eindeutige Dura-Kampfaktion; kein Sweep.",
+            )
+            .into());
         }
         ensure_formation(serial, cancelled)?;
         match common::play_one_stage(
@@ -1262,7 +1465,7 @@ fn run_with_budget(
                 after_victory(serial, cancelled)?;
             }
             StageResult::FormationFailed | StageResult::FinalStage => {
-                log("Dura-Teamversuche ausgeschöpft. Ohne bestätigte Maximalstufe wird nicht gesweept.".into());
+                log(text("Dura team attempts are exhausted. Sweeps require a verified stage cap.", "Dura-Teamversuche ausgeschöpft. Ohne bestätigte Maximalstufe wird nicht gesweept.").into());
                 return Ok(cleared);
             }
         }
@@ -1272,6 +1475,71 @@ fn run_with_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_rewards_are_closed_before_reading_the_same_trials_daily_counter() {
+        use super::super::ocr::TextLine;
+        let mut title = TextLine {
+            text: "Sweep Complete".into(),
+            x: 55.0,
+            y: 53.0,
+            width: 951.0,
+            height: 138.0,
+        };
+        let close = TextLine {
+            text: "• Tap to Close • —".into(),
+            x: 412.0,
+            y: 1797.0,
+            width: 289.0,
+            height: 38.0,
+        };
+        let (x, y) = close.center();
+        assert_eq!(
+            sweep_completion(&[title.clone(), close.clone()]),
+            Some(SweepCompletion::TapClose(x, y))
+        );
+        assert_eq!(sweep_completion(&[close]), None);
+        title.y = 594.0;
+        title.text = "-Sweep Complete—".into();
+        assert_eq!(sweep_completion(&[title]), Some(SweepCompletion::Back));
+
+        let before = capped();
+        let permit = confirm_cap(&before, &before).unwrap();
+        let mut after = before;
+        after.daily_remaining = Some(0);
+        after.blocked = true;
+        assert_eq!(daily_count_after_sweep(&after, &permit), None);
+        after.blocked = false;
+        assert_eq!(daily_count_after_sweep(&after, &permit), Some(0));
+        after.trial = "raidtreasure".into();
+        assert_eq!(daily_count_after_sweep(&after, &permit), None);
+    }
+
+    #[test]
+    #[ignore = "closes an already-open Sweep Complete overlay and reads the daily counter, without starting a sweep"]
+    fn connected_emulator_dura_existing_sweep_result() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
+        let overview =
+            std::env::var_os("ADBHELPER_TEST_DURA_OVERVIEW").expect("set the pre-Sweep capture");
+        let quantity: u32 = std::env::var("ADBHELPER_TEST_DURA_QUANTITY")
+            .expect("set the already-completed Sweep quantity")
+            .parse()
+            .unwrap();
+        let before = decode_frame(&std::fs::read(overview).unwrap())
+            .unwrap()
+            .snapshot;
+        let permit = confirm_cap(&before, &before).unwrap();
+        let expected = permit.daily_remaining.checked_sub(quantity).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let result = read_frame(&serial, &cancelled).unwrap();
+        assert!(sweep_completion(&result.lines).is_some());
+        let remaining = wait_for_sweep_result(&serial, &permit, &cancelled).unwrap();
+        assert_eq!(remaining, expected);
+        println!(
+            "Verified Sweep consumption: {} -> {remaining}",
+            permit.daily_remaining
+        );
+    }
 
     #[test]
     fn quantity_one_is_read_at_both_ends_of_the_track_but_not_on_other_controls() {
@@ -1340,7 +1608,7 @@ mod tests {
     }
 
     #[test]
-    fn sweep_dialog_requires_the_permitted_trial_floor_one_attempt_and_daily_price() {
+    fn sweep_dialog_requires_the_permitted_trial_floor_quantity_and_daily_price() {
         let permit = CapPermit {
             trial: "ale treasure".into(),
             stage: 25,
@@ -1350,38 +1618,40 @@ mod tests {
             trial: "aletreasure".into(),
             stage: 25,
             daily_remaining: 6,
-            quantity_one: true,
+            quantity: Some(6),
+            daily_token: true,
             cost: Some(SweepCost {
                 available: 6,
-                cost: 1,
+                cost: 6,
             }),
             orange: true,
         };
-        assert!(validate_sweep_dialog(&valid, &permit).is_ok());
-        for change in 0..8 {
+        assert!(validate_sweep_dialog(&valid, &permit, 6).is_ok());
+        for change in 0..9 {
             let mut invalid = valid.clone();
             match change {
                 0 => invalid.trial = "firetreasure".into(),
                 1 => invalid.stage = 24,
                 2 => invalid.daily_remaining = 5,
-                3 => invalid.quantity_one = false,
+                3 => invalid.quantity = Some(5),
                 4 => invalid.cost = None,
                 5 => {
                     invalid.cost = Some(SweepCost {
                         available: 10,
-                        cost: 1,
+                        cost: 6,
                     })
                 }
                 6 => {
                     invalid.cost = Some(SweepCost {
                         available: 6,
-                        cost: 6,
+                        cost: 5,
                     })
                 }
-                _ => invalid.orange = false,
+                7 => invalid.orange = false,
+                _ => invalid.daily_token = false,
             }
             assert!(
-                validate_sweep_dialog(&invalid, &permit).is_err(),
+                validate_sweep_dialog(&invalid, &permit, 6).is_err(),
                 "{invalid:?}"
             );
         }
@@ -1404,6 +1674,62 @@ mod tests {
         }
     }
 
+    #[test]
+    fn raid_heading_matches_the_dialog_despite_its_decorative_initial() {
+        let heading = super::super::ocr::TextLine {
+            text: "R aid Treasure".into(),
+            x: 50.0,
+            y: 66.0,
+            width: 569.0,
+            height: 105.0,
+        };
+        let counter = super::super::ocr::TextLine {
+            text: "@ 10".into(),
+            x: 519.0,
+            y: 27.0,
+            width: 159.0,
+            height: 58.0,
+        };
+        let mut snapshot = capped();
+        snapshot.trial = overview_trial(&[counter, heading]);
+        assert_eq!(snapshot.trial, "raidtreasure");
+        let permit = confirm_cap(&snapshot, &snapshot).unwrap();
+        let mut dialog = SweepDialog {
+            trial: "aidtreasure".into(),
+            stage: 25,
+            daily_remaining: 6,
+            quantity: Some(1),
+            daily_token: true,
+            cost: snapshot.sweep_cost,
+            orange: true,
+        };
+        assert!(validate_sweep_dialog(&dialog, &permit, 1).is_ok());
+        dialog.trial = "ale treasure".into();
+        assert!(validate_sweep_dialog(&dialog, &permit, 1).is_err());
+    }
+
+    #[test]
+    #[ignore = "validates supplied Dura overview and Sweep dialog captures with local Windows OCR"]
+    fn captured_dura_sweep_validation() {
+        let load = |name| {
+            let path = std::env::var_os(name).expect("set the path to the Dura capture");
+            decode_frame(&std::fs::read(path).unwrap()).unwrap()
+        };
+        let first = load("ADBHELPER_TEST_DURA_OVERVIEW");
+        let second = load("ADBHELPER_TEST_DURA_SECOND_OVERVIEW");
+        let permit = confirm_cap(&first.snapshot, &second.snapshot).unwrap();
+        let quantity = std::env::var("ADBHELPER_TEST_DURA_QUANTITY")
+            .map_or(1, |value| value.parse().expect("valid Sweep quantity"));
+        let frame = load("ADBHELPER_TEST_DURA_DIALOG");
+        let (dialog, _) = read_sweep_dialog(&frame)
+            .unwrap()
+            .expect("Sweep dialog detected");
+        validate_sweep_dialog(&dialog, &permit, quantity).unwrap();
+        if quantity < permit.daily_remaining.min(MAX_SWEEP_BATCH) {
+            assert!(find_sweep_plus(&frame.gray).unwrap().is_some());
+        }
+    }
+
     struct FakeSweep {
         snapshot: Snapshot,
         actions: usize,
@@ -1411,7 +1737,6 @@ mod tests {
         observe_count: usize,
         changed_second: bool,
         remaining_after: Option<u32>,
-        finish_error: bool,
     }
     impl SweepDriver for FakeSweep {
         fn observe(&mut self) -> Result<Snapshot, String> {
@@ -1425,9 +1750,11 @@ mod tests {
         fn settle(&mut self) -> Result<(), String> {
             Ok(())
         }
-        fn sweep(&mut self, permit: &CapPermit) -> Result<u32, String> {
+        fn sweep(&mut self, permit: &CapPermit, quantity: u32) -> Result<u32, String> {
             self.actions += 1;
-            let after = self.remaining_after.unwrap_or(permit.daily_remaining - 1);
+            let after = self
+                .remaining_after
+                .unwrap_or(permit.daily_remaining - quantity);
             self.snapshot.daily_remaining = Some(after);
             self.snapshot.sweep_cost = Some(SweepCost {
                 available: after,
@@ -1438,13 +1765,6 @@ mod tests {
         fn report(&mut self, count: u32) {
             self.reports.push(count);
         }
-        fn finish(&mut self) -> Result<(), String> {
-            if self.finish_error {
-                Err("Unknown reward overlay".into())
-            } else {
-                Ok(())
-            }
-        }
     }
     fn sweeper(snapshot: Snapshot) -> FakeSweep {
         FakeSweep {
@@ -1454,7 +1774,6 @@ mod tests {
             observe_count: 0,
             changed_second: false,
             remaining_after: None,
-            finish_error: false,
         }
     }
 
@@ -1462,7 +1781,8 @@ mod tests {
     fn explicit_live_budget_cannot_consume_more_daily_tokens_than_authorized() {
         let mut driver = sweeper(capped());
         assert_eq!(daily_sweeps(&mut driver, 3).unwrap(), 3);
-        assert_eq!(driver.actions, 3);
+        assert_eq!(driver.actions, 1);
+        assert_eq!(driver.reports, vec![3]);
         assert_eq!(driver.snapshot.daily_remaining, Some(3));
     }
 
@@ -1578,8 +1898,17 @@ mod tests {
     fn only_remaining_daily_tokens_are_consumed_and_zero_stops_without_any_tap() {
         let mut driver = sweeper(capped());
         assert_eq!(daily_sweeps(&mut driver, u32::MAX).unwrap(), 6);
-        assert_eq!(driver.actions, 6);
-        assert_eq!(driver.reports, vec![1; 6]);
+        assert_eq!(driver.actions, 1);
+        assert_eq!(driver.reports, vec![6]);
+        let mut more_attempts = capped();
+        more_attempts.daily_remaining = Some(7);
+        more_attempts.sweep_cost = Some(SweepCost {
+            available: 7,
+            cost: 1,
+        });
+        let mut driver = sweeper(more_attempts);
+        assert_eq!(daily_sweeps(&mut driver, u32::MAX).unwrap(), 7);
+        assert_eq!(driver.reports, vec![6, 1]);
         let mut no_tokens = capped();
         no_tokens.daily_remaining = Some(0);
         let mut driver = sweeper(no_tokens);
@@ -1588,7 +1917,7 @@ mod tests {
     }
 
     #[test]
-    fn unconfirmed_consumption_or_unknown_reward_overlay_never_causes_another_sweep() {
+    fn unconfirmed_consumption_never_causes_another_sweep() {
         for after in [4, 6, 7] {
             let mut driver = sweeper(capped());
             driver.remaining_after = Some(after);
@@ -1596,11 +1925,6 @@ mod tests {
             assert_eq!(driver.actions, 1);
             assert!(driver.reports.is_empty());
         }
-        let mut driver = sweeper(capped());
-        driver.finish_error = true;
-        assert!(daily_sweeps(&mut driver, u32::MAX).is_err());
-        assert_eq!(driver.actions, 1);
-        assert_eq!(driver.reports, vec![1]);
     }
 
     #[test]

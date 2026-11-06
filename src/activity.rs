@@ -1,3 +1,4 @@
+use crate::localization::text;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -50,8 +51,8 @@ impl LegendTower {
 impl GameMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::SeasonAfkStages => "Season-AFK-Stages",
-            Self::AfkStages => "AFK-Stages",
+            Self::SeasonAfkStages => text("Season AFK Stages", "Season-AFK-Stages"),
+            Self::AfkStages => text("AFK Stages", "AFK-Stages"),
             Self::SeasonLegendTrial(LegendTower::Lightbearer) => "Legend Trial · Lightbearer",
             Self::SeasonLegendTrial(LegendTower::Wilder) => "Legend Trial · Wilder",
             Self::SeasonLegendTrial(LegendTower::Graveborn) => "Legend Trial · Graveborn",

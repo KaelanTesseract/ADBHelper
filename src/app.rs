@@ -8,6 +8,7 @@ use crate::afk_journey::legend_trial::TowerSelection;
 use crate::design_system::{
     self, card, primary_button, status_badge, ColorTokens, GeometryTokens, SpaceTokens, TypeTokens,
 };
+use crate::localization::{format_text, text, Language};
 use crate::updater;
 use eframe::egui;
 use std::collections::VecDeque;
@@ -60,7 +61,7 @@ impl StageAction {
 
     fn label(self) -> &'static str {
         match self {
-            Self::AfkStages => "AFK-Stages",
+            Self::AfkStages => GameMode::AfkStages.label(),
             Self::SeasonLegendTrial => "Season Legend Trial",
             Self::UnionCampaign => "Union Campaign",
             Self::DurasTrials => "Dura’s Trials",
@@ -112,6 +113,7 @@ pub struct PlayerApp {
     logs: VecDeque<String>,
     busy: bool,
     page: Page,
+    language_save_error: Option<String>,
     claim_stage_rewards: bool,
     adb_path: String,
     stage_cancel: Option<Arc<AtomicBool>>,
@@ -163,6 +165,7 @@ impl PlayerApp {
             logs: VecDeque::new(),
             busy: false,
             page: Page::Automations,
+            language_save_error: None,
             claim_stage_rewards: false,
             adb_path: std::env::var("ADB_PATH")
                 .or_else(|_| std::env::var("ADBUTILS_ADB_PATH"))
@@ -191,7 +194,7 @@ impl PlayerApp {
             update_dialog_open: false,
             update_requests,
         };
-        app.log("AFK Journey · App gestartet. Verbinde ein Android-Gerät mit aktiviertem ADB-Debugging.");
+        app.log(text("AFK Journey · App started. Connect an Android device with ADB debugging enabled.", "AFK Journey · App gestartet. Verbinde ein Android-Gerät mit aktiviertem ADB-Debugging."));
         app.refresh_devices();
         let update_sender = app.sender.clone();
         let update_context = context.egui_ctx.clone();
@@ -225,7 +228,13 @@ impl PlayerApp {
         self.last_update_check = Some(Instant::now());
         if self.update_requests.send(()).is_err() {
             self.update_checking = false;
-            self.update_error = Some("Der Update-Dienst ist nicht verfügbar.".into());
+            self.update_error = Some(
+                text(
+                    "The update service is unavailable.",
+                    "Der Update-Dienst ist nicht verfügbar.",
+                )
+                .into(),
+            );
         }
     }
 
@@ -253,7 +262,7 @@ impl PlayerApp {
             card(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(notice);
-                    if ui.small_button("Schließen").clicked() {
+                    if ui.small_button(text("Close", "Schließen")).clicked() {
                         self.update_notice = None;
                     }
                 });
@@ -277,21 +286,26 @@ impl PlayerApp {
                 ui.set_width((context.content_rect().width() - 64.0).clamp(260.0, 560.0));
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(format!("Update {} verfügbar", release.version))
-                            .color(ColorTokens::GLOW),
+                        egui::RichText::new(format_text!(
+                            "Update {} available",
+                            "Update {} verfügbar",
+                            release.version
+                        ))
+                        .color(ColorTokens::GLOW),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Schließen").clicked() {
+                        if ui.button(text("Close", "Schließen")).clicked() {
                             close = true;
                         }
                     });
                 });
-                ui.label(format!(
+                ui.label(format_text!(
+                    "Installed: {} · New: {}",
                     "Installiert: {} · Neu: {}",
                     updater::VERSION,
                     release.version
                 ));
-                ui.strong("Patchnotes");
+                ui.strong(text("Patch notes", "Patchnotes"));
                 egui::ScrollArea::vertical()
                     .id_salt("update-patchnotes")
                     .max_height((context.content_rect().height() - 260.0).clamp(80.0, 360.0))
@@ -311,24 +325,43 @@ impl PlayerApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(!self.busy, primary_button("Herunterladen und installieren"))
+                        .add_enabled(
+                            !self.busy,
+                            primary_button(text(
+                                "Download and install",
+                                "Herunterladen und installieren",
+                            )),
+                        )
                         .clicked()
                     {
                         self.install_update();
                     }
-                    ui.hyperlink_to("Release auf GitHub", &release.url);
+                    ui.hyperlink_to(
+                        text("Release on GitHub", "Release auf GitHub"),
+                        &release.url,
+                    );
                 });
-                ui.small("Nach der Installation startet ADBHelper automatisch neu.");
+                ui.small(text(
+                    "ADBHelper will restart automatically after installation.",
+                    "Nach der Installation startet ADBHelper automatisch neu.",
+                ));
                 if let Some(percent) = self.update_progress {
                     ui.add(egui::ProgressBar::new(f32::from(percent) / 100.0).text(
                         if percent == 100 {
-                            "Update wird geprüft und vorbereitet …".into()
+                            text(
+                                "Verifying and preparing the update …",
+                                "Update wird geprüft und vorbereitet …",
+                            )
+                            .into()
                         } else {
-                            format!("Download: {percent} %")
+                            format_text!("Download: {percent}%", "Download: {percent} %")
                         },
                     ));
                 } else if self.busy {
-                    ui.small("Das Update kann nach dem laufenden Vorgang installiert werden.");
+                    ui.small(text(
+                        "The update can be installed after the current action finishes.",
+                        "Das Update kann nach dem laufenden Vorgang installiert werden.",
+                    ));
                 }
                 if let Some(error) = &self.update_error {
                     ui.add(egui::Label::new(error).wrap());
@@ -356,7 +389,10 @@ impl PlayerApp {
         F: FnOnce(String) -> Result<String, String> + Send + 'static,
     {
         let Some(serial) = self.selected_serial() else {
-            self.log("Bitte zuerst ein verbundenes Gerät auswählen.");
+            self.log(text(
+                "Select a connected device first.",
+                "Bitte zuerst ein verbundenes Gerät auswählen.",
+            ));
             return;
         };
         self.busy = true;
@@ -365,7 +401,9 @@ impl PlayerApp {
         thread::spawn(move || {
             let message = match action(serial) {
                 Ok(details) => format!("{label}: {details}"),
-                Err(error) => format!("{label} fehlgeschlagen: {error}"),
+                Err(error) => {
+                    format_text!("{label} failed: {error}", "{label} fehlgeschlagen: {error}")
+                }
             };
             let _ = sender.send(Event::Log(message));
             let _ = sender.send(Event::Busy(false));
@@ -376,13 +414,19 @@ impl PlayerApp {
     #[allow(dead_code)]
     fn start_claim_rewards(&mut self) {
         let Some(serial) = self.selected_serial() else {
-            self.log("Bitte zuerst ein verbundenes Gerät auswählen.");
+            self.log(text(
+                "Select a connected device first.",
+                "Bitte zuerst ein verbundenes Gerät auswählen.",
+            ));
             return;
         };
         let claim_stage_rewards = self.claim_stage_rewards;
         self.activity.start(GameMode::AfkStages, Instant::now());
         self.busy = true;
-        self.log("AFK-Belohnungen gestartet. AFK-Stufen im Spiel geöffnet lassen.");
+        self.log(text(
+            "Collecting AFK rewards. Keep AFK Stages open in the game.",
+            "AFK-Belohnungen gestartet. AFK-Stufen im Spiel geöffnet lassen.",
+        ));
         let sender = self.sender.clone();
         thread::spawn(move || {
             let _ = sender.send(Event::Activity(ActivityEvent::ModeEntered(
@@ -393,7 +437,8 @@ impl PlayerApp {
                     adb::tap(&serial, 520, 1400).map_err(|error| error.to_string())?;
                     thread::sleep(Duration::from_secs(1));
                     adb::tap(&serial, 550, 1080).map_err(|error| error.to_string())?;
-                    let _ = sender.send(Event::Log(format!(
+                    let _ = sender.send(Event::Log(format_text!(
+                        "Collected AFK reward step {}/3.",
                         "AFK-Belohnungsschritt {}/3 eingesammelt.",
                         round + 1
                     )));
@@ -406,7 +451,8 @@ impl PlayerApp {
                         adb::tap(&serial, 770, 500).map_err(|error| error.to_string())?;
                         thread::sleep(Duration::from_millis(300));
                         adb::tap(&serial, 770, 500).map_err(|error| error.to_string())?;
-                        let _ = sender.send(Event::Log(format!(
+                        let _ = sender.send(Event::Log(format_text!(
+                            "Collected stage reward {}/5.",
                             "Stufenbelohnung {}/5 eingesammelt.",
                             round + 1
                         )));
@@ -416,8 +462,13 @@ impl PlayerApp {
                 Ok(())
             })();
             let message = match result {
-                Ok(()) => "AFK-Belohnungen abgeschlossen.".to_owned(),
-                Err(error) => format!("AFK-Belohnungen abgebrochen: {error}"),
+                Ok(()) => {
+                    text("AFK rewards collected.", "AFK-Belohnungen abgeschlossen.").to_owned()
+                }
+                Err(error) => format_text!(
+                    "AFK rewards interrupted: {error}",
+                    "AFK-Belohnungen abgebrochen: {error}"
+                ),
             };
             let _ = sender.send(Event::Log(message));
             let _ = sender.send(Event::Busy(false));
@@ -451,13 +502,25 @@ impl PlayerApp {
             self.action_error = Some((
                 action,
                 match action {
-                    StageAction::AfkStages => "Bitte mindestens eine Stage-Art auswählen.",
-                    StageAction::SeasonLegendTrial => {
-                        "Bitte über das Zahnrad mindestens einen Turm auswählen."
+                    StageAction::AfkStages => text(
+                        "Select at least one stage type.",
+                        "Bitte mindestens eine Stage-Art auswählen.",
+                    ),
+                    StageAction::SeasonLegendTrial => text(
+                        "Open the gear menu and select at least one tower.",
+                        "Bitte über das Zahnrad mindestens einen Turm auswählen.",
+                    ),
+                    StageAction::UnionCampaign => text(
+                        "Union Campaign is unavailable.",
+                        "Union Campaign ist nicht verfügbar.",
+                    ),
+                    StageAction::DurasTrials => text(
+                        "Dura’s Trials is unavailable.",
+                        "Dura’s Trials sind nicht verfügbar.",
+                    ),
+                    StageAction::Arena | StageAction::SupremeArena => {
+                        text("Arena is unavailable.", "Arena ist nicht verfügbar.")
                     }
-                    StageAction::UnionCampaign => "Union Campaign ist nicht verfügbar.",
-                    StageAction::DurasTrials => "Dura’s Trials sind nicht verfügbar.",
-                    StageAction::Arena | StageAction::SupremeArena => "Arena ist nicht verfügbar.",
                 }
                 .into(),
             ));
@@ -466,7 +529,11 @@ impl PlayerApp {
         let Some(serial) = self.selected_serial() else {
             self.action_error = Some((
                 action,
-                "Bitte zuerst unter Einstellungen ein Gerät verbinden.".into(),
+                text(
+                    "Connect a device in Settings first.",
+                    "Bitte zuerst unter Einstellungen ein Gerät verbinden.",
+                )
+                .into(),
             ));
             return;
         };
@@ -476,7 +543,7 @@ impl PlayerApp {
         self.stage_cancel = Some(cancelled.clone());
         self.active_action = Some(action);
         self.busy = true;
-        self.log(format!("{} gestartet.", action.label()));
+        self.log(format_text!("{} started.", "{} gestartet.", action.label()));
         let sender = self.sender.clone();
         thread::spawn(move || {
             let log = |message| {
@@ -541,8 +608,14 @@ impl PlayerApp {
                 progress,
             );
             let message = match &result {
-                Ok(cleared) => format!("{} abgeschlossen · {cleared} geschafft.", action.label()),
-                Err(error) => format!("{} beendet: {error}", action.label()),
+                Ok(cleared) => format_text!(
+                    "{} finished · {cleared} cleared or won.",
+                    "{} abgeschlossen · {cleared} geschafft.",
+                    action.label()
+                ),
+                Err(error) => {
+                    format_text!("{} stopped: {error}", "{} beendet: {error}", action.label())
+                }
             };
             let _ = sender.send(Event::Log(message));
             let error = if cancelled.load(Ordering::Relaxed) {
@@ -567,18 +640,23 @@ impl PlayerApp {
                         self.selected_serial = devices.first().map(|device| device.serial.clone());
                     }
                     if devices.is_empty() {
-                        self.log("Keine autorisierten ADB-Geräte gefunden.");
+                        self.log(text(
+                            "No authorized ADB devices found.",
+                            "Keine autorisierten ADB-Geräte gefunden.",
+                        ));
                     } else {
-                        self.log(format!(
+                        self.log(format_text!(
+                            "Found {} authorized ADB device(s).",
                             "{} autorisierte(s) ADB-Gerät(e) gefunden.",
                             devices.len()
                         ));
                     }
                     self.devices = devices;
                 }
-                Event::Devices(Err(error)) => {
-                    self.log(format!("ADB-Suche fehlgeschlagen: {error}"))
-                }
+                Event::Devices(Err(error)) => self.log(format_text!(
+                    "ADB device discovery failed: {error}",
+                    "ADB-Suche fehlgeschlagen: {error}"
+                )),
                 Event::Log(message) => self.log(message),
                 Event::RecoveryStatus(message) => {
                     self.log(&message);
@@ -645,7 +723,7 @@ impl PlayerApp {
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = SpaceTokens::SM;
-                    ui.heading(egui::RichText::new("Aktionen").color(ColorTokens::TEXT_PRIMARY));
+                    ui.heading(egui::RichText::new(text("Actions", "Aktionen")).color(ColorTokens::TEXT_PRIMARY));
                     ui.add_space(SpaceTokens::SM);
                     egui::ScrollArea::vertical()
                         .id_salt("dashboard-actions")
@@ -656,7 +734,7 @@ impl PlayerApp {
                                 && self.stage_cancel.is_some();
                             design_system::state_card(ui, active, |ui| {
                                 self.show_action_header(ui, StageAction::AfkStages, active);
-                                ui.label("Ausgewählte Stages pushen");
+                                ui.label(text("Push selected stages", "Ausgewählte Stages pushen"));
                                 ui.add_space(SpaceTokens::SM);
                                 ui.add_enabled_ui(!self.busy, |ui| {
                                     ui.spacing_mut().interact_size.y = 20.0;
@@ -664,17 +742,17 @@ impl PlayerApp {
                                         design_system::active_checkbox(
                                             ui,
                                             &mut self.stage_selection.season,
-                                            "Season-Stages",
+                                            text("Season Stages", "Season-Stages"),
                                         );
                                         design_system::active_checkbox(
                                             ui,
                                             &mut self.stage_selection.normal,
-                                            "Normale Stages",
+                                            text("Normal Stages", "Normale Stages"),
                                         );
                                     });
                                 });
                                 if self.stage_selection.season && self.stage_selection.normal {
-                                    ui.small("Zuerst Season, dann Normal");
+                                    ui.small(text("Season Stages first", "Zuerst Season, dann Normal"));
                                 }
                                 ui.add_space(SpaceTokens::SM);
                                 ui.separator();
@@ -684,7 +762,7 @@ impl PlayerApp {
                                     !self.busy
                                         && (self.stage_selection.season
                                             || self.stage_selection.normal),
-                                    primary_button("Starten"),
+                                    primary_button(text("Start", "Starten")),
                                 )
                                 .clicked()
                             {
@@ -694,7 +772,7 @@ impl PlayerApp {
                                 let cancel = cancel.clone();
                                 if ui.add(design_system::stop_button("Stop")).clicked() {
                                     cancel.store(true, Ordering::Relaxed);
-                                    self.log("Stop für den gesamten AFK-Stages-Lauf angefordert.");
+                                    self.log(text("Stop requested for the AFK Stages run.", "Stop für den gesamten AFK-Stages-Lauf angefordert."));
                                 }
                             }
                         });
@@ -720,9 +798,8 @@ impl PlayerApp {
                                     StageAction::SeasonLegendTrial,
                                     legend_active,
                                 );
-                                ui.label("Verfügbare Fraktionstürme pushen");
-                                ui.small(format!(
-                                    "{} Türme ausgewählt",
+                                ui.label(text("Push available faction towers", "Verfügbare Fraktionstürme pushen"));
+                                ui.small(format_text!("{} towers selected", "{} Türme ausgewählt",
                                     self.tower_selection.selected().len()
                                 ));
                                 ui.add_space(SpaceTokens::SM);
@@ -731,7 +808,7 @@ impl PlayerApp {
                                         .add_enabled(
                                             !self.busy
                                                 && !self.tower_selection.selected().is_empty(),
-                                            primary_button("Starten"),
+                                            primary_button(text("Start", "Starten")),
                                         )
                                         .clicked()
                                     {
@@ -743,7 +820,7 @@ impl PlayerApp {
                                             {
                                                 cancel.store(true, Ordering::Relaxed);
                                                 self.log(
-                                            "Stop für den gesamten Legend-Trial-Lauf angefordert.",
+                                            text("Stop requested for the Legend Trial run.", "Stop für den gesamten Legend-Trial-Lauf angefordert."),
                                         );
                                             }
                                         }
@@ -771,11 +848,11 @@ impl PlayerApp {
                                     StageAction::UnionCampaign,
                                     union_active,
                                 );
-                                ui.label("Gilden-Etagen pushen");
+                                ui.label(text("Push guild floors", "Gilden-Etagen pushen"));
                                 ui.add_space(SpaceTokens::SM);
                                 ui.horizontal(|ui| {
                                     if ui
-                                        .add_enabled(!self.busy, primary_button("Starten"))
+                                        .add_enabled(!self.busy, primary_button(text("Start", "Starten")))
                                         .clicked()
                                     {
                                         self.start_action(StageAction::UnionCampaign);
@@ -786,7 +863,7 @@ impl PlayerApp {
                                             {
                                                 cancel.store(true, Ordering::Relaxed);
                                                 self.log(
-                                                    "Stop für die Union Campaign angefordert.",
+                                                    text("Stop requested for Union Campaign.", "Stop für die Union Campaign angefordert."),
                                                 );
                                             }
                                         }
@@ -809,11 +886,11 @@ impl PlayerApp {
                                 && self.stage_cancel.is_some();
                             design_system::state_card(ui, dura_active, |ui| {
                                 self.show_action_header(ui, StageAction::DurasTrials, dura_active);
-                                ui.label("Stufen pushen · Sweep nur am bestätigten Maximum");
+                                ui.label(text("Push stages · Sweep at the verified cap", "Stufen pushen · Sweep nur am bestätigten Maximum"));
                                 ui.add_space(SpaceTokens::SM);
                                 ui.horizontal(|ui| {
                                     if ui
-                                        .add_enabled(!self.busy, primary_button("Starten"))
+                                        .add_enabled(!self.busy, primary_button(text("Start", "Starten")))
                                         .clicked()
                                     {
                                         self.start_action(StageAction::DurasTrials);
@@ -823,7 +900,7 @@ impl PlayerApp {
                                             if ui.add(design_system::stop_button("Stop")).clicked()
                                             {
                                                 cancel.store(true, Ordering::Relaxed);
-                                                self.log("Stop für Dura’s Trials angefordert.");
+                                                self.log(text("Stop requested for Dura’s Trials.", "Stop für Dura’s Trials angefordert."));
                                             }
                                         }
                                     }
@@ -863,13 +940,13 @@ impl PlayerApp {
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = SpaceTokens::SM;
-                    ui.heading(egui::RichText::new("Aktivität").color(ColorTokens::TEXT_PRIMARY));
+                    ui.heading(egui::RichText::new(text("Activity", "Aktivität")).color(ColorTokens::TEXT_PRIMARY));
                     ui.add_space(SpaceTokens::SM);
                     card(ui, |ui| {
                         ui.small(if self.activity.is_running() {
-                            "AKTUELLER SPIELMODUS"
+                            text("CURRENT GAME MODE", "AKTUELLER SPIELMODUS")
                         } else {
-                            "LETZTER SPIELMODUS"
+                            text("LAST GAME MODE", "LETZTER SPIELMODUS")
                         });
                         match self.activity.current_mode {
                             Some(mode) => {
@@ -880,13 +957,13 @@ impl PlayerApp {
                                 );
                             }
                             None if self.activity.is_running() => {
-                                ui.label("Spielmodus wird geöffnet …");
+                                ui.label(text("Opening game mode …", "Spielmodus wird geöffnet …"));
                                 if let Some(target) = self.activity.target {
-                                    ui.small(format!("Ziel: {}", target.label()));
+                                    ui.small(format_text!("Target: {}", "Ziel: {}", target.label()));
                                 }
                             }
                             None => {
-                                ui.label("Noch kein Modus gestartet");
+                                ui.label(text("No mode started yet", "Noch kein Modus gestartet"));
                             }
                         }
                     });
@@ -903,11 +980,11 @@ impl PlayerApp {
                             ui.add_space(SpaceTokens::SM);
                             ui.separator();
                             ui.horizontal(|ui| {
-                                progress_metric(ui, "VERSUCHE", stats.attempts);
+                                progress_metric(ui, text("ATTEMPTS", "VERSUCHE"), stats.attempts);
                                 ui.add_space(SpaceTokens::MD);
                                 progress_metric(
                                     ui,
-                                    if mode.is_pvp() { "SIEGE" } else { "GECLEART" },
+                                    if mode.is_pvp() { text("WINS", "SIEGE") } else { text("CLEARED", "GECLEART") },
                                     if mode.is_pvp() {
                                         stats.wins
                                     } else {
@@ -931,14 +1008,17 @@ impl PlayerApp {
         design_system::state_card(ui, active, |ui| {
             self.show_action_header(ui, action, active);
             ui.label(if action == StageAction::Arena {
-                "Tägliche Arena-Kämpfe spielen"
+                text("Play daily Arena battles", "Tägliche Arena-Kämpfe spielen")
             } else {
-                "Tägliche Supreme-Arena-Kämpfe spielen"
+                text(
+                    "Play daily Supreme Arena battles",
+                    "Tägliche Supreme-Arena-Kämpfe spielen",
+                )
             });
             ui.add_space(SpaceTokens::SM);
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!self.busy, primary_button("Starten"))
+                    .add_enabled(!self.busy, primary_button(text("Start", "Starten")))
                     .clicked()
                 {
                     self.start_action(action);
@@ -947,7 +1027,11 @@ impl PlayerApp {
                     if let Some(cancel) = self.stage_cancel.clone() {
                         if ui.add(design_system::stop_button("Stop")).clicked() {
                             cancel.store(true, Ordering::Relaxed);
-                            self.log(format!("Stop für {} angefordert.", action.label()));
+                            self.log(format_text!(
+                                "Stop requested for {}.",
+                                "Stop für {} angefordert.",
+                                action.label()
+                            ));
                         }
                     }
                 }
@@ -988,9 +1072,9 @@ impl PlayerApp {
                     status_badge(
                         ui,
                         if self.recovery_notice.is_some() {
-                            "NEUSTART"
+                            text("RECOVERING", "NEUSTART")
                         } else {
-                            "LÄUFT"
+                            text("RUNNING", "LÄUFT")
                         },
                         true,
                     );
@@ -1009,12 +1093,12 @@ impl PlayerApp {
             .show(context, |ui| {
                 ui.set_width((context.content_rect().width() - 64.0).clamp(260.0, 500.0));
                 ui.heading(action.label());
-                ui.label("Aktionseinstellungen");
+                ui.label(text("Action settings", "Aktionseinstellungen"));
                 ui.add_space(SpaceTokens::SM);
                 ui.separator();
                 ui.add_space(SpaceTokens::SM);
                 if self.busy {
-                    ui.small("Während eines laufenden Vorgangs können die Einstellungen nur angesehen werden.");
+                    ui.small(text("Action settings are read-only during a run.", "Während eines laufenden Vorgangs können die Einstellungen nur angesehen werden."));
                     ui.add_space(SpaceTokens::SM);
                 }
                 egui::ScrollArea::vertical()
@@ -1024,58 +1108,58 @@ impl PlayerApp {
                         ui.add_enabled_ui(!self.busy, |ui| {
                             match action {
                                 StageAction::AfkStages => {
-                                    ui.strong("Stage-Auswahl");
+                                    ui.strong(text("Stage selection", "Stage-Auswahl"));
                                     ui.horizontal(|ui| {
-                                        design_system::active_checkbox(ui, &mut self.stage_selection.season, "Season-Stages");
-                                        design_system::active_checkbox(ui, &mut self.stage_selection.normal, "Normale Stages");
+                                        design_system::active_checkbox(ui, &mut self.stage_selection.season, text("Season Stages", "Season-Stages"));
+                                        design_system::active_checkbox(ui, &mut self.stage_selection.normal, text("Normal Stages", "Normale Stages"));
                                     });
-                                    ui.small("Bei gemeinsamer Auswahl zuerst Season, danach Normal.");
+                                    ui.small(text("When both are selected, Season Stages run first.", "Bei gemeinsamer Auswahl zuerst Season, danach Normal."));
                                 }
                                 StageAction::SeasonLegendTrial => {
-                                    ui.strong("Fraktionstürme");
-                                    ui.label("Heute geschlossene Türme werden automatisch übersprungen.");
+                                    ui.strong(text("Faction towers", "Fraktionstürme"));
+                                    ui.label(text("Towers that are closed today are skipped automatically.", "Heute geschlossene Türme werden automatisch übersprungen."));
                                     egui::Grid::new("legend-trial-towers").num_columns(2).show(ui, |ui| {
                                         for (index, tower) in LegendTower::ALL.into_iter().enumerate() {
                                             design_system::active_checkbox(ui, &mut self.tower_selection.enabled[index], tower.label());
                                             if index % 2 == 1 { ui.end_row(); }
                                         }
                                     });
-                                    ui.small("Reihenfolge: Lightbearer, Wilder, Graveborn, Mauler.");
+                                    ui.small(text("Order: Lightbearer, Wilder, Graveborn, Mauler.", "Reihenfolge: Lightbearer, Wilder, Graveborn, Mauler."));
                                 }
                                 StageAction::DurasTrials => {
-                                    ui.strong("Tägliche Sweeps");
+                                    ui.strong(text("Daily sweeps", "Tägliche Sweeps"));
                                     design_system::active_checkbox(ui, &mut self.dura_sweep_after_cap,
-                                        "Nach bestätigter Maximalstufe tägliche Sweeps ausführen");
-                                    ui.small("Nur an der eindeutig bestätigten aktuellen Maximalstufe. Bei unklarer Erkennung wird nicht gesweept. Zusätzliche Vorratstoken werden nicht verwendet.");
+                                        text("Run daily sweeps once the stage cap is verified", "Nach bestätigter Maximalstufe tägliche Sweeps ausführen"));
+                                    ui.small(text("Sweeps require a verified current stage cap and use daily attempts only.", "Nur an der eindeutig bestätigten aktuellen Maximalstufe. Bei unklarer Erkennung wird nicht gesweept. Zusätzliche Vorratstoken werden nicht verwendet."));
                                 }
                                 StageAction::UnionCampaign => {}
                                 StageAction::Arena => {
-                                    ui.strong("Tägliche Versuche");
+                                    ui.strong(text("Daily attempts", "Tägliche Versuche"));
                                     ui.horizontal(|ui| {
-                                        ui.label("Vorhandene Versuche");
+                                        ui.label(text("Available attempts", "Vorhandene Versuche"));
                                         ui.add(egui::DragValue::new(&mut self.arena_settings.attempts).range(1..=5));
                                     });
-                                    design_system::active_checkbox(ui,&mut self.arena_settings.claim_free_attempts,"Bis zu zwei zusätzliche kostenlose Versuche abholen");
-                                    ui.small("Zusätzliche Versuche nur bei eindeutig bestätigten Kosten von null Diamanten. Keine kostenpflichtigen Käufe.");
+                                    design_system::active_checkbox(ui,&mut self.arena_settings.claim_free_attempts,text("Claim up to two extra free attempts", "Bis zu zwei zusätzliche kostenlose Versuche abholen"));
+                                    ui.small(text("Extra attempts require a verified price of zero diamonds.", "Zusätzliche Versuche nur bei eindeutig bestätigten Kosten von null Diamanten. Keine kostenpflichtigen Käufe."));
                                     ui.add_space(SpaceTokens::MD);
-                                    ui.strong("Gegner und Team");
-                                    ui.label("Wie im ADBAutoPlayer wird der linke Gegner gewählt. Es wird dein im Spiel eingestelltes Arena-Team verwendet.");
+                                    ui.strong(text("Opponent and team", "Gegner und Team"));
+                                    ui.label(text("Selects the left opponent and uses your in-game Arena team, following ADBAutoPlayer.", "Wie im ADBAutoPlayer wird der linke Gegner gewählt. Es wird dein im Spiel eingestelltes Arena-Team verwendet."));
                                 }
                                 StageAction::SupremeArena => {
-                                    ui.strong("Tägliche Versuche");
+                                    ui.strong(text("Daily attempts", "Tägliche Versuche"));
                                     ui.horizontal(|ui| {
-                                        ui.label("Maximale Kämpfe");
+                                        ui.label(text("Maximum battles", "Maximale Kämpfe"));
                                         ui.add(egui::DragValue::new(&mut self.supreme_settings.attempts).range(1..=10));
                                     });
-                                    ui.small("Endet vorher, wenn keine vorhandenen Versuche mehr verfügbar sind. Es werden keine Versuche gekauft.");
+                                    ui.small(text("Stops when your available attempts run out.", "Endet vorher, wenn keine vorhandenen Versuche mehr verfügbar sind. Es werden keine Versuche gekauft."));
                                     ui.add_space(SpaceTokens::MD);
-                                    ui.strong("Gegnerauswahl");
+                                    ui.strong(text("Opponent selection", "Gegnerauswahl"));
                                     ui.horizontal(|ui| {
                                         for position in OpponentPosition::ALL {
                                             ui.selectable_value(&mut self.supreme_settings.opponent,position,position.label());
                                         }
                                     });
-                                    ui.label("Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf.");
+                                    ui.label(text("Uses your three in-game teams. Selects Next twice, then Battle.", "Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf."));
                                 }
                             }
                             if !matches!(action,StageAction::Arena|StageAction::SupremeArena) && action != StageAction::UnionCampaign {
@@ -1091,9 +1175,9 @@ impl PlayerApp {
                 ui.add_space(SpaceTokens::MD);
                 ui.separator();
                 ui.add_space(SpaceTokens::SM);
-                ui.small("Änderungen gelten direkt für diese Aktion.");
+                ui.small(text("Changes apply immediately to this action.", "Änderungen gelten direkt für diese Aktion."));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    close = ui.button("Schließen").clicked();
+                    close = ui.button(text("Close", "Schließen")).clicked();
                 });
             });
         if close || response.should_close() {
@@ -1102,18 +1186,56 @@ impl PlayerApp {
     }
 
     fn show_settings(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("Einstellungen").color(ColorTokens::TEXT_PRIMARY));
-        ui.label("Geräteverbindung und App-Updates verwalten.");
+        ui.heading(
+            egui::RichText::new(text("Settings", "Einstellungen")).color(ColorTokens::TEXT_PRIMARY),
+        );
+        ui.label(text(
+            "Manage your language, device connection, and app updates.",
+            "Geräteverbindung und App-Updates verwalten.",
+        ));
         ui.add_space(SpaceTokens::MD);
         card(ui, |ui| {
-            ui.strong("App-Updates");
+            let current = Language::current();
+            let mut selected = current;
+            ui.horizontal(|ui| {
+                ui.strong(text("Language", "Sprache"));
+                egui::ComboBox::from_id_salt("app-language")
+                    .selected_text(current.name())
+                    .show_ui(ui, |ui| {
+                        for language in Language::ALL {
+                            ui.selectable_value(&mut selected, language, language.name());
+                        }
+                    });
+            });
+            if selected != current {
+                self.language_save_error = selected.select().err().map(|error| error.to_string());
+                ui.ctx().request_repaint();
+            }
+            if let Some(error) = &self.language_save_error {
+                ui.label(format_text!(
+                    "Could not save the language preference: {error}",
+                    "Die Spracheinstellung konnte nicht gespeichert werden: {error}"
+                ));
+            }
+        });
+        ui.add_space(SpaceTokens::MD);
+        card(ui, |ui| {
+            ui.strong(text("App updates", "App-Updates"));
             ui.label(format!("ADBHelper {}", updater::VERSION));
-            ui.hyperlink_to("GitHub-Repository", updater::REPOSITORY_URL);
+            ui.hyperlink_to(
+                text("GitHub repository", "GitHub-Repository"),
+                updater::REPOSITORY_URL,
+            );
             ui.small(
-                "Automatische Prüfung beim Start und alle 5 Minuten, auch bei minimierter App.",
+                text("Checks automatically at startup and every five minutes, including while minimized.", "Automatische Prüfung beim Start und alle 5 Minuten, auch bei minimierter App."),
             );
             if self.available_update.is_some()
-                && ui.button("Update und Patchnotes anzeigen").clicked()
+                && ui
+                    .button(text(
+                        "Show update and patch notes",
+                        "Update und Patchnotes anzeigen",
+                    ))
+                    .clicked()
             {
                 self.update_dialog_open = true;
             }
@@ -1123,19 +1245,22 @@ impl PlayerApp {
             if ui
                 .add_enabled(
                     !self.update_checking && self.update_progress.is_none() && !cooldown,
-                    egui::Button::new("Auf Updates prüfen"),
+                    egui::Button::new(text("Check for updates", "Auf Updates prüfen")),
                 )
                 .clicked()
             {
                 self.check_updates();
             }
             if self.update_checking {
-                ui.label("Updates werden geprüft …");
+                ui.label(text("Checking for updates …", "Updates werden geprüft …"));
             } else if self.update_checked
                 && self.available_update.is_none()
                 && self.update_error.is_none()
             {
-                ui.label("Du verwendest die aktuelle Version.");
+                ui.label(text(
+                    "You’re using the latest version.",
+                    "Du verwendest die aktuelle Version.",
+                ));
             }
             if let Some(error) = &self.update_error {
                 ui.add(egui::Label::new(error).wrap());
@@ -1143,23 +1268,29 @@ impl PlayerApp {
         });
         ui.add_space(SpaceTokens::MD);
         card(ui, |ui| {
-            ui.strong("Geräteverbindung");
-            ui.label("Gerät auswählen und Verbindung verwalten.");
+            ui.strong(text("Device connection", "Geräteverbindung"));
+            ui.label(text(
+                "Select a device and manage its connection.",
+                "Gerät auswählen und Verbindung verwalten.",
+            ));
             ui.add_space(SpaceTokens::SM);
             ui.horizontal(|ui| {
                 if self.selected_serial.is_some() {
-                    status_badge(ui, "VERBUNDEN", true);
+                    status_badge(ui, text("CONNECTED", "VERBUNDEN"), true);
                 } else {
-                    ui.colored_label(MUTED, "Kein Gerät verbunden");
+                    ui.colored_label(MUTED, text("No device connected", "Kein Gerät verbunden"));
                 }
-                if ui.small_button("Geräte suchen").clicked() {
+                if ui
+                    .small_button(text("Find devices", "Geräte suchen"))
+                    .clicked()
+                {
                     self.refresh_devices();
                 }
             });
             let selected_label = self
                 .selected_serial
                 .clone()
-                .unwrap_or_else(|| "Gerät auswählen".to_owned());
+                .unwrap_or_else(|| text("Select device", "Gerät auswählen").to_owned());
             egui::ComboBox::from_id_salt("device-picker-settings")
                 .width(ui.available_width())
                 .selected_text(selected_label)
@@ -1173,20 +1304,27 @@ impl PlayerApp {
                     }
                 });
             ui.add_space(SpaceTokens::SM);
-            ui.strong("ADB-Pfad");
-            ui.small("Leer lassen, um ADB aus PATH zu verwenden.");
+            ui.strong(text("ADB path", "ADB-Pfad"));
+            ui.small(text(
+                "Leave blank to use ADB from PATH.",
+                "Leer lassen, um ADB aus PATH zu verwenden.",
+            ));
             ui.horizontal(|ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.adb_path)
                         .desired_width((ui.available_width() - 150.0).max(120.0)),
                 );
-                if ui.button("Pfad übernehmen").clicked() {
+                if ui.button(text("Apply path", "Pfad übernehmen")).clicked() {
                     if self.adb_path.trim().is_empty() {
                         std::env::remove_var("ADB_PATH");
-                        self.log("ADB aus PATH wird verwendet.");
+                        self.log(text("Using ADB from PATH.", "ADB aus PATH wird verwendet."));
                     } else {
                         std::env::set_var("ADB_PATH", self.adb_path.trim());
-                        self.log(format!("ADB-Pfad gesetzt: {}", self.adb_path.trim()));
+                        self.log(format_text!(
+                            "ADB path set: {}",
+                            "ADB-Pfad gesetzt: {}",
+                            self.adb_path.trim()
+                        ));
                     }
                     self.refresh_devices();
                 }
@@ -1194,30 +1332,45 @@ impl PlayerApp {
             ui.add_space(SpaceTokens::SM);
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!self.busy, egui::Button::new("AFK Journey starten"))
+                    .add_enabled(
+                        !self.busy,
+                        egui::Button::new(text("Launch AFK Journey", "AFK Journey starten")),
+                    )
                     .clicked()
                 {
-                    self.run_device_action("AFK Journey gestartet", |serial| {
-                        adb::launch_afk_journey(&serial).map_err(|error| error.to_string())
-                    });
+                    self.run_device_action(
+                        text("AFK Journey launched", "AFK Journey gestartet"),
+                        |serial| {
+                            adb::launch_afk_journey(&serial).map_err(|error| error.to_string())
+                        },
+                    );
                 }
                 if ui
-                    .add_enabled(!self.busy, egui::Button::new("Spiel beenden"))
+                    .add_enabled(
+                        !self.busy,
+                        egui::Button::new(text("Close game", "Spiel beenden")),
+                    )
                     .clicked()
                 {
-                    self.run_device_action("AFK Journey beendet", |serial| {
-                        adb::stop_afk_journey(&serial).map_err(|error| error.to_string())
-                    });
+                    self.run_device_action(
+                        text("AFK Journey closed", "AFK Journey beendet"),
+                        |serial| adb::stop_afk_journey(&serial).map_err(|error| error.to_string()),
+                    );
                 }
                 if ui
-                    .add_enabled(!self.busy, egui::Button::new("Zurück"))
+                    .add_enabled(!self.busy, egui::Button::new(text("Back", "Zurück")))
                     .clicked()
                 {
-                    self.run_device_action("Zurück-Taste gesendet", |serial| {
-                        adb::press_back(&serial)
-                            .map(|_| "an das Gerät gesendet".to_owned())
-                            .map_err(|error| error.to_string())
-                    });
+                    self.run_device_action(
+                        text("Back button sent", "Zurück-Taste gesendet"),
+                        |serial| {
+                            adb::press_back(&serial)
+                                .map(|_| {
+                                    text("sent to the device", "an das Gerät gesendet").to_owned()
+                                })
+                                .map_err(|error| error.to_string())
+                        },
+                    );
                 }
             });
         });
@@ -1274,7 +1427,7 @@ impl eframe::App for PlayerApp {
                             if nav_tab(
                                 ui,
                                 self.page == Page::Settings,
-                                "Einstellungen",
+                                text("Settings", "Einstellungen"),
                                 GeometryTokens::NAV_SETTINGS_WIDTH,
                             ) {
                                 self.page = Page::Settings;
@@ -1310,15 +1463,22 @@ impl eframe::App for PlayerApp {
                                         ui.colored_label(
                                             ColorTokens::TEXT_PRIMARY,
                                             if self.update_progress.is_some() {
-                                                "Update wird geladen"
+                                                text("Downloading update", "Update wird geladen")
                                             } else {
-                                                "Automation läuft"
+                                                text("Automation running", "Automation läuft")
                                             },
                                         );
                                         ui.add_space(SpaceTokens::SM);
                                     }
                                     if let Some(serial) = &self.selected_serial {
-                                        status_badge(ui, &format!("VERBUNDEN · {serial}"), true);
+                                        status_badge(
+                                            ui,
+                                            &format_text!(
+                                                "CONNECTED · {serial}",
+                                                "VERBUNDEN · {serial}"
+                                            ),
+                                            true,
+                                        );
                                         ui.add_space(SpaceTokens::MD);
                                     }
                                     let drag = ui.allocate_response(
@@ -1361,45 +1521,60 @@ impl eframe::App for PlayerApp {
 }
 
 fn show_battle_options(ui: &mut egui::Ui, options: &mut ActionBattleOptions) {
-    ui.strong("Teamwahl und Kampfversuche");
+    ui.strong(text(
+        "Team selection and battle attempts",
+        "Teamwahl und Kampfversuche",
+    ));
     ui.add_space(SpaceTokens::SM);
     design_system::active_checkbox(
         ui,
         &mut options.suggested_formations,
-        "Empfohlene Teams aus den Ranglisten übernehmen",
+        text(
+            "Copy recommended teams from the leaderboards",
+            "Empfohlene Teams aus den Ranglisten übernehmen",
+        ),
     );
     design_system::active_checkbox(
         ui,
         &mut options.current_team_first,
-        "Aktuelles Team zuerst versuchen",
+        text(
+            "Try the current team first",
+            "Aktuelles Team zuerst versuchen",
+        ),
     );
     design_system::active_checkbox(
         ui,
         &mut options.skip_manual_formations,
-        "Manuelle Teams überspringen",
+        text("Skip manual teams", "Manuelle Teams überspringen"),
     );
-    ui.small("Ohne Haken werden manuelle Teams nach den automatischen Vorschlägen versucht.");
+    ui.small(text(
+        "When unchecked, manual teams are tried after automatic suggestions.",
+        "Ohne Haken werden manuelle Teams nach den automatischen Vorschlägen versucht.",
+    ));
     ui.add_space(SpaceTokens::MD);
     egui::Grid::new("battle-attempt-options")
         .num_columns(2)
         .spacing(egui::vec2(SpaceTokens::XL, SpaceTokens::SM))
         .show(ui, |ui| {
-            ui.label("Empfohlene Teams");
+            ui.label(text("Recommended teams", "Empfohlene Teams"));
             ui.add_enabled(
                 options.suggested_formations,
                 egui::DragValue::new(&mut options.max_formations).range(1..=10),
             );
             ui.end_row();
-            ui.label("Versuche pro Team");
+            ui.label(text("Attempts per team", "Versuche pro Team"));
             ui.add(egui::DragValue::new(&mut options.attempts_per_formation).range(1..=10));
             ui.end_row();
         });
     ui.add_space(SpaceTokens::SM);
-    ui.small("Gesperrte Teams werden übersprungen. Gold wird nicht ausgegeben.");
+    ui.small(text(
+        "Locked teams are skipped. Gold is never spent.",
+        "Gesperrte Teams werden übersprungen. Gold wird nicht ausgegeben.",
+    ));
 }
 
 fn settings_gear(ui: &mut egui::Ui, action: &str, active: bool) -> egui::Response {
-    let label = format!("{action}: Einstellungen öffnen");
+    let label = format_text!("{action}: Open settings", "{action}: Einstellungen öffnen");
     let response = ui
         .add_sized(egui::vec2(28.0, 28.0), egui::Button::new("").frame(false))
         .on_hover_text(&label)
@@ -1441,12 +1616,15 @@ fn update_icon(ui: &mut egui::Ui, version: &str) -> egui::Response {
             egui::vec2(32.0, GeometryTokens::TITLEBAR_HEIGHT),
             egui::Button::new("").frame(false),
         )
-        .on_hover_text(format!("Update {version} verfügbar – Patchnotes anzeigen"));
+        .on_hover_text(format_text!(
+            "Update {version} available – View patch notes",
+            "Update {version} verfügbar – Patchnotes anzeigen"
+        ));
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::Role::Button,
             true,
-            format!("Update {version} verfügbar"),
+            format_text!("Update {version} available", "Update {version} verfügbar"),
         )
     });
     let color = if response.hovered() {

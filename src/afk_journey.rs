@@ -7,7 +7,8 @@ pub const PACKAGE_NAMES: &[&str] = &[
 pub const DISPLAY_NAME: &str = "AFK Journey";
 pub const BASE_RESOLUTION: (u32, u32) = (1080, 1920);
 pub const BATTLE_TIMEOUT_SECONDS: u64 = 100;
-const BATTLE_RESULT_TIMEOUT: &str = "Nach 100 Sekunden wurde kein Kampfergebnis erkannt.";
+// Internal signal for the recovery loop, independent of the selected language.
+const BATTLE_RESULT_TIMEOUT: &str = "battle result timeout";
 
 pub mod afk_stages;
 pub mod arena;

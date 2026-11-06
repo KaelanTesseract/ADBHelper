@@ -3,7 +3,7 @@
 **Nur nach ausdrücklicher Freigabe des Nutzers pushen oder veröffentlichen.** Das gilt auch für Quellcode-Pushes und Tags. Lokale Änderungen, Tests und Test-EXEs dürfen vorher vorbereitet werden.
 
 1. Änderungen implementieren und `version` in Cargo.toml erhöhen. Cargo.lock aktualisieren.
-2. Für **jedes** Release `releases/v<VERSION>.md` schreiben: neue Funktionen, konkrete Änderungen, behobene Fehler und relevante Voraussetzungen. Keine unveränderten alten Patchnotes wiederverwenden.
+2. Für **jedes** Release neue englische Patchnotes unter `releases/v<VERSION>.md` schreiben. Sie beschreiben neue Funktionen, konkrete Änderungen, behobene Fehler und relevante Voraussetzungen. Änderungen an der README ebenfalls auf Englisch schreiben.
 3. `./scripts/Build-Release.ps1` ausführen. Ohne Patchnotes oder mit fehlschlagenden Tests wird kein Release gebaut.
 4. Quellcode und Patchnotes committen und pushen. Den passenden Tag `v<VERSION>` erstellen und pushen.
 5. Der Windows-Workflow testet und baut die einzelne EXE, veröffentlicht sie mit SHA-256-Datei und verwendet genau die neue Patchnotes-Datei als GitHub-Release-Text.

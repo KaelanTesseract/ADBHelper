@@ -2,13 +2,12 @@
 
 Native Rust desktop app for AFK Journey on Windows x64.
 
-**Ideengeber und Vorlage:** [ADBAutoPlayer](https://github.com/AdbAutoPlayer/AdbAutoPlayer).
-ADBHelper überträgt dessen AFK-Journey-Abläufe in eine native Rust-App.
+ADBHelper adapts the AFK Journey workflows from [ADBAutoPlayer](https://github.com/AdbAutoPlayer/AdbAutoPlayer) into a native Rust app.
 
-Download stable versions and patchnotes from [GitHub Releases](https://github.com/KaelanTesseract/ADBHelper/releases).
+Download stable versions and release notes from [GitHub Releases](https://github.com/KaelanTesseract/ADBHelper/releases).
 The app checks for updates at startup and every five minutes, including while
 minimized. A green update icon beside Settings indicates a new release. Click it
-to open the patchnotes popup, then choose **Herunterladen und installieren** to
+to open the patch notes, then choose **Download and install** to
 download, verify, replace and restart the executable. Updates require write access to the executable's folder;
 no GitHub login is needed. See [RELEASING.md](RELEASING.md) for publishing.
 
@@ -32,9 +31,12 @@ is hidden; that routine is reserved for integration into a combined action.
 Each action card has a gear button for its settings popup. PvE team selection,
 manual-team skipping and attempts per team are configured separately per action.
 Stage selection, Legend Trial towers and Dura's daily Sweep option are available
-in the corresponding popup. Changes apply immediately; close it with **Schließen**,
+in the corresponding popup. Changes apply immediately. Close it with **Close**,
 Escape or a click outside. During a running task the controls are read-only.
-The main Settings page contains device connection and app updates.
+The main Settings page contains language, device connection, and app updates.
+ADBHelper defaults to English. Select **Deutsch** under **Settings → Language**
+to switch to German. The app remembers your choice across restarts and updates.
+GitHub patch notes appear as published.
 
 **Arena** and **Supreme Arena** follow the original AdbAutoPlayer PvP workflows.
 They use the formations already configured in the game, not copied PvE teams.
@@ -53,7 +55,7 @@ restart the completed Season phase; Legend Trial skips previously finished tower
 The game provides its saved stage/floor after navigation. Confirmed counters and
 run duration survive recovery; an interrupted undecided fight remains unclear.
 Arena request/claim checkpoints prevent a restart from resetting the attempt
-budget. The current card shows **NEUSTART** until its mode is re-entered. Stop
+budget. The current card shows **RECOVERING** until its mode is re-entered. Stop
 prevents further restarts. Device/ADB connection failures are not treated as game
 crashes. Recovery is limited to three restarts per run and lives in the running
 ADBHelper process.
@@ -103,9 +105,11 @@ number or an unknown confirmation dialog never authorizes Sweep. The state is
 checked again immediately before each Sweep. Extra stock tokens and purchases are
 excluded; the routine stops when daily attempts are gone. Sweep resources are
 counted separately and do not inflate battle attempts, clears or win rate.
-The separate Sweep dialog must show the same trial and floor, exactly one attempt,
-and a total price of one remaining daily token. It is checked twice before a
-single confirmation; quantity sliders and maximum buttons are never used.
+The separate Sweep dialog must show the same trial and floor. ADBHelper uses the
+plus button to set up to six available daily attempts per confirmation. It
+checks the displayed quantity, total price, and daily token icon after each
+increment and again before confirming. It closes the **Sweep Complete** screen
+and records the batch once the daily counter shows the expected decrease.
 
 The Sweep option is enabled initially and can be disabled via the Dura card's gear. Dura result
 screens use Back rather than unverified Retry/Repeat or confirmation buttons, so a
@@ -128,7 +132,7 @@ slider position and OCR omissions. Other daily class layouts still need live cov
    connects to its default local ADB port (`127.0.0.1:7555`). Set
    `MUMU_ADB_PORT` if the instance uses a different port. For another emulator,
    enter the full path to `adb.exe` in the app's **ADB path** field and choose
-   **Use this ADB path**. `ADB_PATH` and `ADBUTILS_ADB_PATH` environment
+   **Apply path**. `ADB_PATH` and `ADBUTILS_ADB_PATH` environment
    variables are also recognized.
 2. Enable USB debugging on the Android device or emulator and accept its ADB
    authorization prompt.
@@ -158,7 +162,7 @@ The resulting `target/release/adbhelper.exe` contains the ADBHelper logo and AFK
 Journey templates and does not open a console window. The tester still needs
 an Android emulator with ADB available; MuMuPlayer is detected automatically.
 
-Both AFK Stages actions bring the game to the foreground and navigate
+For both AFK Stages modes, ADBHelper brings the game to the foreground and navigates
 from the current menu through Battle Modes to the requested stage selector.
 It closes known overlays and uses Back to leave other menus, with one game
 restart as recovery if navigation gets stuck. Navigation is bounded and cancellable.
@@ -166,11 +170,12 @@ The run continues until no available team can clear another stage. It tries the
 current team first when the current screen allows it, then copies suggested
 teams from Records (default: up to 10 teams, with up to five attempts per
 team). It skips locked teams and tries manual formations after automatic
-suggestions. Enable **Manuelle Teams überspringen** in the action's settings popup to exclude
+suggestions. Enable **Skip manual teams** in the action's settings popup to exclude
 manual suggestions in both modes. Before each mode it returns to the recognized
 world or homestead overview and navigates through Battle Modes again.
-It will not spend gold. If no result screen is detected or device
-communication fails, it stops and reports the reason on the action card. Activity shows only the
+It will not spend gold. If the battle result times out and attempts remain,
+ADBHelper reopens the active mode. Device communication errors end the run
+and appear on the action card. Activity shows only the
 current game mode and separate attempt/clear counters for each mode visited
 within the run. The middle column shows elapsed time, win rate over decided
 battles, and average attempts needed for completed stages. Pending and unclear
@@ -185,9 +190,6 @@ group to see its full mode name and exact counts. No sample data is shown in an 
 The device display must use
 portrait 9:16 output; screenshots at other 9:16 sizes are resized to the
 game's 1080 × 1920 coordinate space.
-
-OCR, other AFK Journey workflows, and a platform installer are still to be
-ported; this is not feature parity yet.
 
 The Windows build embeds the ADBHelper logo as a multi-resolution executable
 icon (16–256 px), in addition to the window/taskbar icon and header logo.

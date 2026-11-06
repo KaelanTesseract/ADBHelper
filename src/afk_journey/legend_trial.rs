@@ -3,6 +3,7 @@
 use super::afk_stages::{self as common, BattleSettings, Match, Rect, StageResult};
 use crate::activity::{ActivityEvent, GameMode, LegendTower};
 use crate::adb;
+use crate::localization::{format_text, text};
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -65,9 +66,11 @@ fn run_towers(
 ) -> Result<u32, String> {
     let towers = selection.selected();
     if towers.is_empty() {
-        return Err(
-            "Bitte unter Einstellungen mindestens einen Legend-Trial-Turm auswählen.".into(),
-        );
+        return Err(text(
+            "Select at least one Legend Trial tower in the settings.",
+            "Bitte unter Einstellungen mindestens einen Legend-Trial-Turm auswählen.",
+        )
+        .into());
     }
     let mut cleared = 0u32;
     for tower in towers {
@@ -159,7 +162,7 @@ fn navigate_to_select(
             return Ok(());
         }
     }
-    Err("Season Legend Trial konnte nicht geöffnet werden. Bitte Freischaltung und Spielverbindung prüfen.".into())
+    Err(text("Could not open Season Legend Trial. Check game access and connection.", "Season Legend Trial konnte nicht geöffnet werden. Bitte Freischaltung und Spielverbindung prüfen.").into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,7 +231,11 @@ fn continue_after_win(driver: &mut impl FloorDriver) -> Result<bool, String> {
             }
         }
     }
-    Err("Die nächste Legend-Trial-Etage konnte nicht geöffnet werden.".into())
+    Err(text(
+        "Could not open the next Legend Trial floor.",
+        "Die nächste Legend-Trial-Etage konnte nicht geöffnet werden.",
+    )
+    .into())
 }
 
 struct AdbFloorDriver<'a> {
@@ -252,7 +259,11 @@ impl FloorDriver for AdbFloorDriver<'_> {
             }
             std::thread::sleep(Duration::from_millis(400));
         }
-        Err("Die nächste Legend-Trial-Etage oder deren Abschluss wurde nicht erkannt.".into())
+        Err(text(
+            "Could not detect the next Legend Trial floor or its completion.",
+            "Die nächste Legend-Trial-Etage oder deren Abschluss wurde nicht erkannt.",
+        )
+        .into())
     }
 
     fn activate(&mut self, action: FloorAction) -> Result<(), String> {
@@ -262,7 +273,10 @@ impl FloorDriver for AdbFloorDriver<'_> {
         } else {
             common::tap_match(
                 self.serial,
-                self.found.take().ok_or("Legend-Trial-Schaltfläche fehlt")?,
+                self.found.take().ok_or(text(
+                    "Legend Trial button not found",
+                    "Legend-Trial-Schaltfläche fehlt",
+                ))?,
                 self.size,
             )?;
         }
@@ -322,7 +336,11 @@ pub fn run(
 ) -> Result<u32, String> {
     common::ensure_not_cancelled(cancelled)?;
     if selection.selected().is_empty() {
-        return Err("Bitte mindestens einen Legend-Trial-Turm auswählen.".into());
+        return Err(text(
+            "Select at least one Legend Trial tower.",
+            "Bitte mindestens einen Legend-Trial-Turm auswählen.",
+        )
+        .into());
     }
     adb::launch_afk_journey(serial).map_err(|e| e.to_string())?;
     for _ in 0..3 {
@@ -335,7 +353,8 @@ pub fn run(
         common::settle_cancellable(cancelled)?;
         let (screen, _) = common::screenshot(serial)?;
         if tower_closed(&screen, tower)? {
-            log(format!(
+            log(format_text!(
+                "{} is closed today and will be skipped.",
                 "{} ist heute geschlossen und wird übersprungen.",
                 tower.label()
             ));
@@ -353,7 +372,11 @@ pub fn run(
             cancelled,
         )?
         else {
-            log(format!("{}-Turm ist nicht verfügbar.", tower.label()));
+            log(format_text!(
+                "The {} tower is unavailable.",
+                "{}-Turm ist nicht verfügbar.",
+                tower.label()
+            ));
             return Ok(TowerReport {
                 cleared: 0,
                 end: TowerEnd::Unavailable,
@@ -369,7 +392,11 @@ pub fn run(
             size,
         };
         if !driver.select_floor()? {
-            log(format!("{}: Keine weitere Etage verfügbar.", tower.label()));
+            log(format_text!(
+                "{} has no further floors available.",
+                "{}: Keine weitere Etage verfügbar.",
+                tower.label()
+            ));
             return Ok(TowerReport {
                 cleared: 0,
                 end: TowerEnd::Completed,

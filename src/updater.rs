@@ -1,3 +1,4 @@
+use crate::localization::{format_text, text};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -72,8 +73,12 @@ struct GithubAsset {
 }
 
 fn parse_release(json: &str, current: &str) -> Result<Option<Release>, String> {
-    let release: GithubRelease =
-        serde_json::from_str(json).map_err(|e| format!("Ungültige Release-Antwort: {e}"))?;
+    let release: GithubRelease = serde_json::from_str(json).map_err(|e| {
+        format_text!(
+            "Invalid release response: {e}",
+            "Ungültige Release-Antwort: {e}"
+        )
+    })?;
     let version = Version::parse(
         release
             .tag_name
@@ -94,23 +99,29 @@ fn parse_release(json: &str, current: &str) -> Result<Option<Release>, String> {
         .assets
         .into_iter()
         .find(|a| a.name == ASSET_NAME)
-        .ok_or("Das Release enthält keine Windows-x64-EXE.")?;
+        .ok_or(text(
+            "The release has no Windows x64 executable.",
+            "Das Release enthält keine Windows-x64-EXE.",
+        ))?;
     let prefix = format!("{REPOSITORY_URL}/releases/download/");
     if !asset.browser_download_url.starts_with(&prefix) || !(4096..=MAX_SIZE).contains(&asset.size)
     {
-        return Err("Ungültige Release-Datei.".into());
+        return Err(text("Invalid release file.", "Ungültige Release-Datei.").into());
     }
     let sha256 = asset
         .digest
         .and_then(|d| d.strip_prefix("sha256:").map(str::to_owned))
-        .ok_or("Das Release enthält keine SHA-256-Prüfsumme.")?;
+        .ok_or(text(
+            "The release has no SHA-256 checksum.",
+            "Das Release enthält keine SHA-256-Prüfsumme.",
+        ))?;
     if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err("Ungültige Release-Prüfsumme.".into());
+        return Err(text("Invalid release checksum.", "Ungültige Release-Prüfsumme.").into());
     }
-    let notes = release
-        .body
-        .filter(|s| !s.trim().is_empty())
-        .ok_or("Das Release enthält keine Patchnotes.")?;
+    let notes = release.body.filter(|s| !s.trim().is_empty()).ok_or(text(
+        "The release has no patch notes.",
+        "Das Release enthält keine Patchnotes.",
+    ))?;
     Ok(Some(Release {
         version: version.to_string(),
         notes,
@@ -139,7 +150,12 @@ pub fn check(current: &str) -> Result<Option<Release>, String> {
     {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(404)) => return Ok(None),
-        Err(e) => return Err(format!("Update-Prüfung fehlgeschlagen: {e}")),
+        Err(e) => {
+            return Err(format_text!(
+                "Update check failed: {e}",
+                "Update-Prüfung fehlgeschlagen: {e}"
+            ))
+        }
     };
     let json = response
         .body_mut()
@@ -166,17 +182,25 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 
 fn verify_executable(path: &Path, size: u64, hash: &str) -> Result<(), String> {
     if fs::metadata(path).map_err(|e| e.to_string())?.len() != size {
-        return Err("Der Download ist unvollständig.".into());
+        return Err(text(
+            "The download is incomplete.",
+            "Der Download ist unvollständig.",
+        )
+        .into());
     }
     if sha256_file(path)? != hash.to_ascii_lowercase() {
-        return Err("Die Prüfsumme des Downloads stimmt nicht überein.".into());
+        return Err(text(
+            "The downloaded file’s checksum does not match.",
+            "Die Prüfsumme des Downloads stimmt nicht überein.",
+        )
+        .into());
     }
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let mut dos = [0_u8; 64];
     file.read_exact(&mut dos).map_err(|e| e.to_string())?;
     let pe = u32::from_le_bytes(dos[60..64].try_into().unwrap()) as u64;
     if &dos[..2] != b"MZ" || pe > size.saturating_sub(94) {
-        return Err("Keine gültige Windows-EXE.".into());
+        return Err(text("Invalid Windows executable.", "Keine gültige Windows-EXE.").into());
     }
     file.seek(SeekFrom::Start(pe)).map_err(|e| e.to_string())?;
     let mut header = [0_u8; 94];
@@ -186,7 +210,11 @@ fn verify_executable(path: &Path, size: u64, hash: &str) -> Result<(), String> {
         || u16::from_le_bytes([header[24], header[25]]) != 0x20b
         || u16::from_le_bytes([header[92], header[93]]) != 2
     {
-        return Err("Das Update ist keine Windows-x64-GUI-Anwendung.".into());
+        return Err(text(
+            "The update is not a Windows x64 desktop app.",
+            "Das Update ist keine Windows-x64-GUI-Anwendung.",
+        )
+        .into());
     }
     Ok(())
 }
@@ -223,6 +251,13 @@ struct InstallStatus {
     message: String,
 }
 
+fn update_success(version: &str) -> String {
+    format_text!(
+        "ADBHelper was updated to version {version}.",
+        "ADBHelper wurde auf Version {version} aktualisiert."
+    )
+}
+
 fn hidden_command(path: &Path) -> Command {
     let mut command = Command::new(path);
     #[cfg(windows)]
@@ -244,9 +279,12 @@ pub fn download_and_handoff(release: &Release, mut progress: impl FnMut(u8)) -> 
         .as_nanos();
     let staging = target
         .parent()
-        .ok_or("Kein Programmordner")?
+        .ok_or(text(
+            "Application folder unavailable",
+            "Kein Programmordner",
+        ))?
         .join(format!(".adbhelper-update-{}-{nonce}", std::process::id()));
-    fs::create_dir(&staging).map_err(|e| format!("Der Programmordner ist nicht beschreibbar. Verschiebe ADBHelper in einen eigenen Ordner: {e}"))?;
+    fs::create_dir(&staging).map_err(|e| format_text!("Could not write to the application folder. Move ADBHelper to a folder you can write to: {e}", "Der Programmordner ist nicht beschreibbar. Verschiebe ADBHelper in einen eigenen Ordner: {e}"))?;
     let mut guard = StagingGuard {
         path: staging.clone(),
         handed_off: false,
@@ -257,7 +295,7 @@ pub fn download_and_handoff(release: &Release, mut progress: impl FnMut(u8)) -> 
         .get(&release.download)
         .header("User-Agent", &format!("ADBHelper/{VERSION}"))
         .call()
-        .map_err(|e| format!("Download fehlgeschlagen: {e}"))?;
+        .map_err(|e| format_text!("Download failed: {e}", "Download fehlgeschlagen: {e}"))?;
     let mut reader = response.body_mut().as_reader();
     let mut buffer = [0_u8; 65536];
     let mut total = 0_u64;
@@ -269,7 +307,11 @@ pub fn download_and_handoff(release: &Release, mut progress: impl FnMut(u8)) -> 
         }
         total += count as u64;
         if total > release.size || total > MAX_SIZE {
-            return Err("Der Download ist größer als die Release-Datei.".into());
+            return Err(text(
+                "The download is larger than the release file.",
+                "Der Download ist größer als die Release-Datei.",
+            )
+            .into());
         }
         output
             .write_all(&buffer[..count])
@@ -312,19 +354,29 @@ pub fn download_and_handoff(release: &Release, mut progress: impl FnMut(u8)) -> 
             return Ok(());
         }
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            return Err(format!("Update-Helfer konnte nicht starten ({status})."));
+            return Err(format_text!(
+                "Could not start the update helper ({status}).",
+                "Update-Helfer konnte nicht starten ({status})."
+            ));
         }
         thread::sleep(Duration::from_millis(50));
     }
     let _ = child.kill();
-    Err("Update-Helfer antwortet nicht; die bisherige Version bleibt geöffnet.".into())
+    Err(text(
+        "The update helper did not respond. The current version is still open.",
+        "Update-Helfer antwortet nicht; die bisherige Version bleibt geöffnet.",
+    )
+    .into())
 }
 
 fn read_job(path: &Path) -> Result<Job, String> {
     let job: Job = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    let dir = fs::canonicalize(path.parent().ok_or("Ungültiger Update-Auftrag")?)
-        .map_err(|e| e.to_string())?;
+    let dir = fs::canonicalize(
+        path.parent()
+            .ok_or(text("Invalid update job", "Ungültiger Update-Auftrag"))?,
+    )
+    .map_err(|e| e.to_string())?;
     if path.file_name().and_then(|s| s.to_str()) != Some("job.json")
         || fs::canonicalize(&job.staging).map_err(|e| e.to_string())? != dir
         || !dir
@@ -336,7 +388,7 @@ fn read_job(path: &Path) -> Result<Job, String> {
             != dir.parent().map(Path::to_path_buf)
         || job.target.extension().and_then(|s| s.to_str()) != Some("exe")
     {
-        return Err("Ungültiger Update-Auftrag.".into());
+        return Err(text("Invalid update job.", "Ungültiger Update-Auftrag.").into());
     }
     Ok(job)
 }
@@ -348,7 +400,7 @@ fn wait_for_parent(pid: u32, ready: &Path) -> Result<(), String> {
         System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
     };
     if pid == std::process::id() {
-        return Err("Ungültiger Elternprozess.".into());
+        return Err(text("Invalid parent process.", "Ungültiger Elternprozess.").into());
     }
     // The handle prevents PID reuse while waiting for the original process to exit.
     unsafe {
@@ -358,17 +410,29 @@ fn wait_for_parent(pid: u32, ready: &Path) -> Result<(), String> {
                 fs::write(ready, b"ready").map_err(|e| e.to_string())?;
                 return Ok(());
             }
-            return Err("Der bisherige Prozess kann nicht überwacht werden.".into());
+            return Err(text(
+                "Could not monitor the current process.",
+                "Der bisherige Prozess kann nicht überwacht werden.",
+            )
+            .into());
         }
         let signal = fs::write(ready, b"ready");
         if signal.is_err() {
             CloseHandle(handle);
-            return Err("Update-Bereitschaft konnte nicht gespeichert werden.".into());
+            return Err(text(
+                "Could not save the update readiness status.",
+                "Update-Bereitschaft konnte nicht gespeichert werden.",
+            )
+            .into());
         }
         let result = WaitForSingleObject(handle, 120_000);
         CloseHandle(handle);
         if result != WAIT_OBJECT_0 {
-            return Err("Die bisherige App wurde nicht rechtzeitig beendet.".into());
+            return Err(text(
+                "The current app did not close in time.",
+                "Die bisherige App wurde nicht rechtzeitig beendet.",
+            )
+            .into());
         }
     }
     Ok(())
@@ -376,7 +440,11 @@ fn wait_for_parent(pid: u32, ready: &Path) -> Result<(), String> {
 
 #[cfg(not(windows))]
 fn wait_for_parent(_: u32, _: &Path) -> Result<(), String> {
-    Err("Automatische Installation ist nur für Windows verfügbar.".into())
+    Err(text(
+        "Automatic installation is available on Windows only.",
+        "Automatische Installation ist nur für Windows verfügbar.",
+    )
+    .into())
 }
 
 fn rename_with_retry(source: &Path, destination: &Path) -> std::io::Result<()> {
@@ -403,17 +471,23 @@ fn replace_and_launch(
     backup: &Path,
     launch: impl FnOnce(&Path) -> std::io::Result<()>,
 ) -> Result<(), String> {
-    rename_with_retry(target, backup)
-        .map_err(|e| format!("Alte EXE konnte nicht freigegeben werden: {e}"))?;
+    rename_with_retry(target, backup).map_err(|e| {
+        format_text!(
+            "Could not release the previous executable: {e}",
+            "Alte EXE konnte nicht freigegeben werden: {e}"
+        )
+    })?;
     if let Err(error) = rename_with_retry(source, target) {
-        rename_with_retry(backup, target).map_err(|restore| format!("Installation fehlgeschlagen ({error}); Wiederherstellung fehlgeschlagen ({restore}). Sicherung: {}", backup.display()))?;
-        return Err(format!(
+        rename_with_retry(backup, target).map_err(|restore| format_text!("Installation failed ({error}). Restore failed ({restore}). Backup: {}", "Installation fehlgeschlagen ({error}); Wiederherstellung fehlgeschlagen ({restore}). Sicherung: {}", backup.display()))?;
+        return Err(format_text!(
+            "Installation failed and the previous version was restored: {error}",
             "Installation fehlgeschlagen; alte Version wiederhergestellt: {error}"
         ));
     }
     if let Err(error) = launch(target) {
-        rename_with_retry(target, source).and_then(|_| rename_with_retry(backup, target)).map_err(|restore| format!("Start fehlgeschlagen ({error}); Wiederherstellung fehlgeschlagen ({restore}). Sicherung: {}", backup.display()))?;
-        return Err(format!(
+        rename_with_retry(target, source).and_then(|_| rename_with_retry(backup, target)).map_err(|restore| format_text!("Launch failed ({error}). Restore failed ({restore}). Backup: {}", "Start fehlgeschlagen ({error}); Wiederherstellung fehlgeschlagen ({restore}). Sicherung: {}", backup.display()))?;
+        return Err(format_text!(
+            "Launch failed and the previous version was restored: {error}",
             "Start fehlgeschlagen; alte Version wiederhergestellt: {error}"
         ));
     }
@@ -427,7 +501,11 @@ pub fn apply_update(path: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         != job.staging.join("updater.exe")
     {
-        return Err("Update muss vom separaten Helfer ausgeführt werden.".into());
+        return Err(text(
+            "The update must run through the separate update helper.",
+            "Update muss vom separaten Helfer ausgeführt werden.",
+        )
+        .into());
     }
     let source = job.staging.join("new.exe");
     verify_executable(&source, job.size, &job.sha256)?;
@@ -435,13 +513,15 @@ pub fn apply_update(path: &Path) -> Result<(), String> {
     let result_path = job.staging.join("status.json");
     let status = InstallStatus {
         success: true,
-        message: format!("ADBHelper wurde auf Version {} aktualisiert.", job.version),
+        message: update_success(&job.version),
     };
     let result = (|| {
         if sha256_file(&job.target)? != job.original_sha256 {
-            return Err(
-                "Die installierte EXE wurde zwischenzeitlich verändert; Update abgebrochen.".into(),
-            );
+            return Err(text(
+                "The update was cancelled because the installed executable changed.",
+                "Die installierte EXE wurde zwischenzeitlich verändert; Update abgebrochen.",
+            )
+            .into());
         }
         fs::write(
             &result_path,
@@ -495,6 +575,7 @@ pub fn startup_notice() -> Option<String> {
         serde_json::from_slice(&fs::read(job.staging.join("status.json")).ok()?).ok()?;
     // Keep the old executable until the new GUI has successfully initialized.
     if status.success && verify_executable(&job.target, job.size, &job.sha256).is_ok() {
+        let notice = update_success(&job.version);
         thread::spawn(move || {
             for _ in 0..30 {
                 for name in ["previous.exe", "new.exe", "updater.exe"] {
@@ -510,6 +591,7 @@ pub fn startup_notice() -> Option<String> {
                 thread::sleep(Duration::from_millis(200));
             }
         });
+        return Some(notice);
     }
     Some(status.message)
 }
@@ -708,7 +790,7 @@ mod tests {
             Err(std::io::Error::other("cannot launch"))
         })
         .unwrap_err();
-        assert!(error.contains("Start fehlgeschlagen"), "{error}");
+        assert!(error.contains("Launch failed"), "{error}");
         assert_eq!(fs::read(&target).unwrap(), b"old");
         assert_eq!(fs::read(&source).unwrap(), b"new");
         assert!(!backup.exists());
@@ -722,7 +804,7 @@ mod tests {
         fs::write(&target, b"old").unwrap();
         let error = replace_and_launch(&target, &source, &backup, |_| panic!("must not launch"))
             .unwrap_err();
-        assert!(error.contains("Installation fehlgeschlagen"), "{error}");
+        assert!(error.contains("Installation failed"), "{error}");
         assert_eq!(fs::read(&target).unwrap(), b"old");
         assert!(!backup.exists());
     }

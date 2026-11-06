@@ -1,3 +1,4 @@
+use crate::localization::{format_text, text};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -127,11 +128,18 @@ pub enum AdbError {
 impl std::fmt::Display for AdbError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotInstalled(error) => write!(formatter, "Could not start ADB: {error}"),
-            Self::Failed(message) => write!(formatter, "ADB command failed: {message}"),
-            Self::InvalidOutput(message) => {
-                write!(formatter, "Could not read ADB output: {message}")
-            }
+            Self::NotInstalled(error) => formatter.write_str(&format_text!(
+                "Could not start ADB: {error}",
+                "ADB konnte nicht gestartet werden: {error}"
+            )),
+            Self::Failed(message) => formatter.write_str(&format_text!(
+                "ADB command failed: {message}",
+                "ADB-Befehl fehlgeschlagen: {message}"
+            )),
+            Self::InvalidOutput(message) => formatter.write_str(&format_text!(
+                "Could not read ADB output: {message}",
+                "ADB-Ausgabe konnte nicht gelesen werden: {message}"
+            )),
         }
     }
 }
@@ -242,7 +250,11 @@ pub fn afk_journey_running(serial: &str) -> Result<bool, AdbError> {
 fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
     let Some((pids, status)) = stdout.rsplit_once("ADBHELPER_PID_EXIT:") else {
         return Err(AdbError::InvalidOutput(
-            "Prozessprüfung ohne Statusmarker".into(),
+            text(
+                "The process check returned no status marker",
+                "Prozessprüfung ohne Statusmarker",
+            )
+            .into(),
         ));
     };
     let pids = pids.trim();
@@ -256,7 +268,11 @@ fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
         }
         "1" if pids.is_empty() => Ok(false),
         _ => Err(AdbError::InvalidOutput(
-            "Prozessprüfung nicht eindeutig; kein Spielabsturz bestätigt".into(),
+            text(
+                "The process check could not confirm a game crash",
+                "Prozessprüfung nicht eindeutig; kein Spielabsturz bestätigt",
+            )
+            .into(),
         )),
     }
 }
