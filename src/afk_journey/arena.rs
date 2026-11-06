@@ -364,29 +364,84 @@ fn verified_free_offer(screen: &GrayImage) -> Result<bool, String> {
     .is_some())
 }
 
+fn result_text(value: &str) -> String {
+    value
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphabetic())
+        .collect()
+}
+
 fn result_outcome(lines: &[TextLine]) -> BattleOutcome {
     let headings = lines
         .iter()
         .filter(|line| line.y < 1050.0 && line.height >= 45.0)
-        .filter_map(|line| {
-            let text = line
-                .text
-                .to_lowercase()
-                .chars()
-                .filter(|c| c.is_alphabetic())
-                .collect::<String>();
-            match text.as_str() {
-                "victory" | "win" | "youwin" | "sieg" => Some(true),
-                "defeat" | "defeated" | "youlose" | "niederlage" => Some(false),
-                _ => None,
-            }
+        .filter_map(|line| match result_text(&line.text).as_str() {
+            "victory" | "win" | "youwin" | "sieg" => Some(true),
+            "defeat" | "defeated" | "youlose" | "niederlage" => Some(false),
+            _ => None,
         })
         .collect::<Vec<_>>();
-    match (headings.contains(&true), headings.contains(&false)) {
+    // The decorative VICTORY title is often unreadable to OCR. This banner
+    // explicitly identifies a win on the results screen.
+    let victory_rewards = lines.iter().any(|line| {
+        let (x, y) = line.center();
+        (325..=755).contains(&x)
+            && (1350..=1560).contains(&y)
+            && result_text(&line.text) == "victoryrewards"
+    });
+    match (
+        headings.contains(&true) || victory_rewards,
+        headings.contains(&false),
+    ) {
         (true, false) => BattleOutcome::Won,
         (false, true) => BattleOutcome::Lost,
         _ => BattleOutcome::Unclear,
     }
+}
+
+fn result_prompt(lines: &[TextLine], outcome: BattleOutcome) -> Option<(u32, u32)> {
+    let close = lines.iter().find(|line| {
+        let (x, y) = line.center();
+        (320..=760).contains(&x)
+            && (1650..=1890).contains(&y)
+            && matches!(
+                result_text(&line.text).as_str(),
+                "taptoclose" | "tapanywheretoclose" | "tippenzumschließen"
+            )
+    })?;
+    if matches!(outcome, BattleOutcome::Unclear) {
+        // A generic close prompt is also used outside battle. When OCR
+        // cannot decide the outcome, require the result screen's two controls.
+        let footer_control = |label, x_range: std::ops::RangeInclusive<u32>| {
+            lines.iter().any(|line| {
+                let (x, y) = line.center();
+                x_range.contains(&x)
+                    && (1740..=1910).contains(&y)
+                    && line.text.trim().eq_ignore_ascii_case(label)
+            })
+        };
+        if !footer_control("Replay", 0..=230) || !footer_control("Details", 850..=1080) {
+            return None;
+        }
+    }
+    Some(close.center())
+}
+
+fn battle_result(
+    screen: &GrayImage,
+    seen_battle: bool,
+) -> Result<Option<(BattleOutcome, (u32, u32))>, String> {
+    let lines = ocr::recognize(screen)?;
+    let outcome = result_outcome(&lines);
+    if let Some(close) = result_prompt(&lines, outcome) {
+        return Ok(Some((outcome, close)));
+    }
+    if seen_battle || !matches!(outcome, BattleOutcome::Unclear) {
+        let button = common::get_match(screen, &["arena/done.png", "next.png"], footer(), 0.85)?;
+        return Ok(button.map(|(_, found)| (outcome, found.center())));
+    }
+    Ok(None)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -523,7 +578,26 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
         ))
     }
 
-    fn finish_result(&self) -> Result<(), String> {
+    fn complete_battle(
+        &mut self,
+        mut outcome: BattleOutcome,
+        close: (u32, u32),
+        size: (u32, u32),
+    ) -> Result<BattleOutcome, String> {
+        let finish = (|| {
+            common::ensure_not_cancelled(self.cancelled)?;
+            adb::tap_game_point(self.serial, close.0, close.1, size).map_err(|e| e.to_string())?;
+            common::settle_cancellable(self.cancelled)?;
+            self.finish_result(&mut outcome)
+        })();
+        (self.progress)(ActivityEvent::BattleFinished(
+            self.settings.kind().mode(),
+            outcome,
+        ));
+        finish.map(|()| outcome)
+    }
+
+    fn finish_result(&self, outcome: &mut BattleOutcome) -> Result<(), String> {
         for _ in 0..8 {
             common::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = common::screenshot(self.serial)?;
@@ -538,7 +612,17 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             if home_control(&screen, self.settings.kind())?.is_some() {
                 return Ok(());
             }
-            dismiss_notice(self.serial, self.settings.kind(), &screen, size)?;
+            let lines = ocr::recognize(&screen)?;
+            let observed = result_outcome(&lines);
+            if let Some((x, y)) = result_prompt(&lines, observed) {
+                if matches!(*outcome, BattleOutcome::Unclear) {
+                    *outcome = observed;
+                }
+                common::ensure_not_cancelled(self.cancelled)?;
+                adb::tap_game_point(self.serial, x, y, size).map_err(|e| e.to_string())?;
+            } else {
+                dismiss_notice(self.serial, self.settings.kind(), &screen, size)?;
+            }
             common::settle_cancellable(self.cancelled)?;
         }
         Err(text(
@@ -647,7 +731,7 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
         common::tap_match(self.serial, battle, size)?;
         common::settle_cancellable(self.cancelled)?;
         let started = Instant::now();
-        let (mut seen_battle, mut skipped) = (false, false);
+        let mut seen_battle = false;
         while started.elapsed() < Duration::from_secs(super::BATTLE_TIMEOUT_SECONDS) {
             common::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = common::screenshot(self.serial)?;
@@ -659,27 +743,8 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
                 )
                 .into());
             }
-            let close =
-                common::get_match(&screen, &["arena/done.png", "next.png"], footer(), 0.85)?;
-            let skip = find(&screen, "arena/skip.png", common::full_screen())?;
-            // OCR is only needed once an end control is visible, never to infer
-            // a victory from a generic Done/Next button or from an opponent name.
-            let outcome = if close.is_some() {
-                result_outcome(&ocr::recognize(&screen)?)
-            } else {
-                BattleOutcome::Unclear
-            };
-            let decisive = !matches!(outcome, BattleOutcome::Unclear);
-            if !seen_battle && (skip.is_some() || (close.is_some() && decisive)) {
-                seen_battle = true;
-            }
-            if let Some((_, close)) = close.filter(|_| seen_battle) {
-                (self.progress)(ActivityEvent::BattleFinished(mode, outcome));
-                common::ensure_not_cancelled(self.cancelled)?;
-                common::tap_match(self.serial, close, size)?;
-                common::settle_cancellable(self.cancelled)?;
-                self.finish_result()?;
-                return Ok(outcome);
+            if let Some((outcome, close)) = battle_result(&screen, seen_battle)? {
+                return self.complete_battle(outcome, close, size);
             }
             if confirmation(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
@@ -692,10 +757,12 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
                 )
                 .into());
             }
-            if let Some(skip) = skip.filter(|_| !skipped) {
-                common::ensure_not_cancelled(self.cancelled)?;
-                common::tap_match(self.serial, skip, size)?;
-                skipped = true;
+            if !seen_battle {
+                if let Some(skip) = find(&screen, "arena/skip.png", common::full_screen())? {
+                    common::ensure_not_cancelled(self.cancelled)?;
+                    common::tap_match(self.serial, skip, size)?;
+                    seen_battle = true;
+                }
             }
             common::settle_cancellable(self.cancelled)?;
         }
@@ -1094,7 +1161,7 @@ mod tests {
         assert!(!zero_cost(&[line("Spend 0", 100.0, 30.0)]));
     }
     #[test]
-    fn only_explicit_large_result_headlines_decide_pvp_victories() {
+    fn explicit_result_headlines_decide_pvp_outcomes() {
         assert!(matches!(
             result_outcome(&[line("VICTORY", 200.0, 120.0)]),
             BattleOutcome::Won
@@ -1110,6 +1177,70 @@ mod tests {
         ] {
             assert!(matches!(result_outcome(&lines), BattleOutcome::Unclear));
         }
+    }
+
+    #[test]
+    fn arena_victory_rewards_and_center_close_identify_the_reported_result() {
+        let rewards = line("Victory Rewards", 1421.0, 37.0);
+        let prompt = line("Tap to Close", 1753.0, 37.0);
+        let lines = [rewards, prompt.clone()];
+        let outcome = result_outcome(&lines);
+        assert!(matches!(outcome, BattleOutcome::Won));
+        assert_eq!(result_prompt(&lines, outcome), Some(prompt.center()));
+        assert_eq!(
+            result_prompt(&[prompt.clone()], BattleOutcome::Unclear),
+            None
+        );
+        assert_eq!(
+            result_prompt(
+                &[line("Replay", 1818.0, 29.0), prompt],
+                BattleOutcome::Unclear
+            ),
+            None
+        );
+        assert!(matches!(
+            result_outcome(&[line("DEFEAT", 430.0, 120.0), lines[0].clone()]),
+            BattleOutcome::Unclear
+        ));
+    }
+
+    #[test]
+    #[ignore = "verifies a supplied Arena result and closes an existing result without starting a battle"]
+    fn connected_emulator_arena_existing_victory() {
+        let path =
+            std::env::var_os("ADBHELPER_TEST_ARENA_RESULT_IMAGE").expect("set a result capture");
+        let (captured, _) = common::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        assert!(matches!(
+            battle_result(&captured, false).unwrap(),
+            Some((BattleOutcome::Won, _))
+        ));
+
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
+        let cancelled = AtomicBool::new(false);
+        let (screen, size) = common::screenshot(&serial).unwrap();
+        let (outcome, close) = battle_result(&screen, false)
+            .unwrap()
+            .expect("open Arena result");
+        assert!(matches!(outcome, BattleOutcome::Won));
+        let mut events = Vec::new();
+        let mut driver = AdbDriver {
+            serial: &serial,
+            settings: Settings::Arena(ArenaSettings::default()),
+            cancelled: &cancelled,
+            progress: &mut |event| events.push(event),
+        };
+        assert!(matches!(
+            driver.complete_battle(outcome, close, size).unwrap(),
+            BattleOutcome::Won
+        ));
+        assert!(matches!(
+            events.as_slice(),
+            [ActivityEvent::BattleFinished(
+                GameMode::Arena,
+                BattleOutcome::Won
+            )]
+        ));
+        println!("One Arena victory recorded and Arena overview reached.");
     }
     #[test]
     fn supreme_opponent_positions_are_the_original_three_card_centres() {
