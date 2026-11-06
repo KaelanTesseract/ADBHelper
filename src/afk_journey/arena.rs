@@ -153,6 +153,54 @@ fn confirmation(screen: &GrayImage) -> Result<bool, String> {
     .is_some())
 }
 
+fn home_control(screen: &GrayImage, kind: Kind) -> Result<Option<(String, Match)>, String> {
+    let label = match kind {
+        Kind::Arena => "arena/home_label.png",
+        Kind::Supreme => "supreme_arena/label.png",
+    };
+    let header = Rect {
+        x: 0,
+        y: 0,
+        width: 790,
+        height: 180,
+    };
+    if find(screen, label, header)?.is_none() {
+        return Ok(None);
+    }
+    common::get_match(
+        screen,
+        &[kind.challenge(), "arena/continue.png"],
+        footer(),
+        0.85,
+    )
+}
+
+fn attempt_count(value: &str) -> Option<u32> {
+    let compact: String = value.chars().filter(|c| !c.is_whitespace()).collect();
+    let (remaining, cost) = compact.split_once('/')?;
+    if cost != "1" || !remaining.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    remaining.parse().ok()
+}
+
+fn challenge_attempts(screen: &GrayImage) -> Result<Option<u32>, String> {
+    // Read only the ratio beside the ticket. Matching the whole badge made
+    // the shared ticket and "/1" pixels outweigh the difference between 0 and 5.
+    let padded = GrayImage::from_fn(106, 83, |x, y| {
+        let ink = (18..88).contains(&x)
+            && (18..65).contains(&y)
+            && screen.get_pixel(714 + x - 18, 1817 + y - 18).0[0] >= 130;
+        image::Luma([if ink { 0 } else { 255 }])
+    });
+    let enlarged =
+        image::imageops::resize(&padded, 424, 332, image::imageops::FilterType::CatmullRom);
+    let lines = ocr::recognize(&enlarged)?;
+    let mut counts = lines.iter().filter_map(|line| attempt_count(&line.text));
+    let count = counts.next();
+    Ok(count.filter(|first| counts.all(|next| next == *first)))
+}
+
 fn navigate(
     serial: &str,
     kind: Kind,
@@ -179,7 +227,7 @@ fn navigate(
             common::ensure_not_cancelled(cancelled)?;
             common::tap_match(serial, entry, size)?;
             common::settle_cancellable(cancelled)?;
-            return wait_home(serial, kind, cancelled);
+            return wait_home(serial, kind, cancelled).map(|_| ());
         }
         if swipe < 4 && kind == Kind::Supreme {
             adb::swipe_game_points(serial, (540, 1200), (540, 700), size, 1500)
@@ -231,7 +279,11 @@ fn dismiss_notice(
     Ok(false)
 }
 
-fn wait_home(serial: &str, kind: Kind, cancelled: &AtomicBool) -> Result<(), String> {
+fn wait_home(
+    serial: &str,
+    kind: Kind,
+    cancelled: &AtomicBool,
+) -> Result<(GrayImage, (u32, u32)), String> {
     for _ in 0..12 {
         common::ensure_not_cancelled(cancelled)?;
         let (screen, size) = common::screenshot(serial)?;
@@ -243,15 +295,8 @@ fn wait_home(serial: &str, kind: Kind, cancelled: &AtomicBool) -> Result<(), Str
             )
             .into());
         }
-        if common::get_match(
-            &screen,
-            &[kind.challenge(), "arena/continue.png"],
-            common::lower_screen(),
-            0.85,
-        )?
-        .is_some()
-        {
-            return Ok(());
+        if home_control(&screen, kind)?.is_some() {
+            return Ok((screen, size));
         }
         dismiss_notice(serial, kind, &screen, size)?;
         common::settle_cancellable(cancelled)?;
@@ -490,14 +535,7 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                 )
                 .into());
             }
-            if common::get_match(
-                &screen,
-                &[self.settings.kind().challenge(), "arena/continue.png"],
-                common::lower_screen(),
-                0.85,
-            )?
-            .is_some()
-            {
+            if home_control(&screen, self.settings.kind())?.is_some() {
                 return Ok(());
             }
             dismiss_notice(self.serial, self.settings.kind(), &screen, size)?;
@@ -517,32 +555,22 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
     }
     fn choose(&mut self) -> Result<Choice, String> {
         common::ensure_not_cancelled(self.cancelled)?;
-        let (screen, _) = common::screenshot(self.serial)?;
-        if find(&screen, "arena/no_attempts.png", common::lower_screen())?.is_some() {
-            return Ok(Choice::Exhausted);
-        }
         let kind = self.settings.kind();
-        wait_home(self.serial, kind, self.cancelled)?;
-        let (screen, size) = common::screenshot(self.serial)?;
-        let (_, challenge) = common::get_match(
-            &screen,
-            &[kind.challenge(), "arena/continue.png"],
-            common::lower_screen(),
-            0.85,
-        )?
-        .ok_or(text(
+        let (screen, size) = wait_home(self.serial, kind, self.cancelled)?;
+        let (path, challenge) = home_control(&screen, kind)?.ok_or(text(
             "Arena Challenge button not detected",
             "Arena-Challenge nicht erkannt",
         ))?;
+        if path == kind.challenge() && challenge_attempts(&screen)? == Some(0) {
+            return Ok(Choice::Exhausted);
+        }
         common::ensure_not_cancelled(self.cancelled)?;
         common::tap_match(self.serial, challenge, size)?;
         common::settle_cancellable(self.cancelled)?;
         for _ in 0..12 {
             common::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = common::screenshot(self.serial)?;
-            if purchase_popup(&screen)?
-                || find(&screen, "arena/no_attempts.png", common::lower_screen())?.is_some()
-            {
+            if purchase_popup(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
                 return Ok(Choice::Exhausted);
             }
@@ -679,8 +707,7 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
         if self.settings.kind() != Kind::Arena {
             return Ok(false);
         }
-        wait_home(self.serial, Kind::Arena, self.cancelled)?;
-        let (screen, size) = common::screenshot(self.serial)?;
+        let (screen, size) = wait_home(self.serial, Kind::Arena, self.cancelled)?;
         let Some(buy) = find(
             &screen,
             "arena/buy.png",
@@ -773,6 +800,41 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn challenge_ratio_reads_the_available_count_without_guessing() {
+        assert_eq!(attempt_count("0/1"), Some(0));
+        assert_eq!(attempt_count("5 / 1"), Some(5));
+        for unclear in ["O/1", "0/I", "0/2", "0", "5/1 0/1", ""] {
+            assert_eq!(attempt_count(unclear), None);
+        }
+    }
+
+    #[test]
+    #[ignore = "opens the formation of an existing Arena attempt, without spending another ticket or starting a fight"]
+    fn connected_emulator_arena_formation_without_combat() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
+        let cancelled = AtomicBool::new(false);
+        let mut log = |message| println!("{message}");
+        navigate(&serial, Kind::Arena, &cancelled, &mut log).unwrap();
+        let (home, _) = wait_home(&serial, Kind::Arena, &cancelled).unwrap();
+        let (control, _) = home_control(&home, Kind::Arena).unwrap().unwrap();
+        assert_eq!(control, "arena/continue.png", "open an Arena attempt first");
+        let mut driver = AdbDriver {
+            serial: &serial,
+            settings: Settings::Arena(ArenaSettings::default()),
+            cancelled: &cancelled,
+            progress: &mut |_| panic!("the diagnostic must not start a fight"),
+        };
+        assert!(driver.choose().unwrap() == Choice::Ready);
+        driver.wait_control("arena/battle.png", footer()).unwrap();
+        std::fs::write(
+            ".update-test/arena-formation.png",
+            adb::screenshot(&serial).unwrap(),
+        )
+        .unwrap();
+        println!("Battle button reached using the pending Arena attempt.");
+    }
 
     #[derive(Default)]
     struct Fake {

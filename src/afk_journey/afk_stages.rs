@@ -174,7 +174,7 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         "arena/challenge.png" => include_bytes!("../../assets/AFKJourney/arena/challenge.png"),
         "arena/done.png" => include_bytes!("../../assets/AFKJourney/arena/done.png"),
         "arena/label.png" => include_bytes!("../../assets/AFKJourney/arena/label.png"),
-        "arena/no_attempts.png" => include_bytes!("../../assets/AFKJourney/arena/no_attempts.png"),
+        "arena/home_label.png" => include_bytes!("../../assets/AFKJourney/arena/home_label.png"),
         "arena/opponent.png" => include_bytes!("../../assets/AFKJourney/arena/opponent.png"),
         "arena/skip.png" => include_bytes!("../../assets/AFKJourney/arena/skip.png"),
         "arena/weekly_notice.png" => {
