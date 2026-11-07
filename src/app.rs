@@ -9,6 +9,7 @@ use crate::design_system::{
     self, card, primary_button, status_badge, ColorTokens, GeometryTokens, SpaceTokens, TypeTokens,
 };
 use crate::localization::{format_text, text, Language};
+use crate::routine::{Action as StageAction, Routine};
 use crate::updater;
 use eframe::egui;
 use std::collections::VecDeque;
@@ -25,6 +26,7 @@ enum Event {
     Activity(ActivityEvent),
     RecoveryStatus(String),
     StagesFinished(StageAction, Option<String>),
+    DailyStep(usize),
     UpdateChecked(Result<Option<updater::Release>, String>),
     UpdateCheckStarted,
     UpdateProgress(u8),
@@ -35,40 +37,6 @@ enum Event {
 enum Page {
     Automations,
     Settings,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum StageAction {
-    AfkStages,
-    SeasonLegendTrial,
-    UnionCampaign,
-    DurasTrials,
-    Arena,
-    SupremeArena,
-}
-
-impl StageAction {
-    fn index(self) -> usize {
-        match self {
-            Self::AfkStages => 0,
-            Self::SeasonLegendTrial => 1,
-            Self::UnionCampaign => 2,
-            Self::DurasTrials => 3,
-            Self::Arena => 4,
-            Self::SupremeArena => 5,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::AfkStages => GameMode::AfkStages.label(),
-            Self::SeasonLegendTrial => "Season Legend Trial",
-            Self::UnionCampaign => "Union Campaign",
-            Self::DurasTrials => "Dura’s Trials",
-            Self::Arena => "Arena",
-            Self::SupremeArena => "Supreme Arena",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +73,148 @@ impl ActionBattleOptions {
     }
 }
 
+#[derive(Clone, Copy)]
+struct RunSettings {
+    selection: StageSelection,
+    towers: TowerSelection,
+    dura_sweep: bool,
+    battle: [ActionBattleOptions; 6],
+    arena: ArenaSettings,
+    supreme: SupremeSettings,
+    diamond_hourglasses: crate::routine::DiamondHourglassSettings,
+}
+
+impl RunSettings {
+    fn mode(self, action: StageAction) -> Option<GameMode> {
+        match action {
+            StageAction::AfkStages => self.selection.modes().first().copied(),
+            StageAction::SeasonLegendTrial => self
+                .towers
+                .selected()
+                .first()
+                .copied()
+                .map(GameMode::SeasonLegendTrial),
+            StageAction::UnionCampaign => Some(GameMode::UnionCampaign),
+            StageAction::DurasTrials => Some(GameMode::DurasTrials),
+            StageAction::Arena => Some(GameMode::Arena),
+            StageAction::SupremeArena => Some(GameMode::SupremeArena),
+            StageAction::AfkRewards => Some(GameMode::AfkRewards),
+            StageAction::FreeHourglasses => Some(GameMode::FreeHourglasses),
+            StageAction::DiamondHourglasses => Some(GameMode::DiamondHourglasses),
+            StageAction::StageRewards => Some(GameMode::StageRewards),
+            StageAction::Daily => None,
+        }
+    }
+}
+
+fn run_step(
+    serial: &str,
+    action: StageAction,
+    settings: RunSettings,
+    cancelled: &AtomicBool,
+    sender: &Sender<Event>,
+) -> Result<u32, String> {
+    let mode = settings.mode(action).ok_or_else(|| {
+        format_text!(
+            "Select stages or towers for {} in its settings.",
+            "Wähle Stufen oder Türme für {} in den Einstellungen.",
+            action.label()
+        )
+    })?;
+    let mut log = |message| {
+        let _ = sender.send(Event::Log(message));
+    };
+    let mut collection = crate::afk_journey::daily::Cursor::default();
+    let mut extras = crate::afk_journey::daily_extras::Cursor::default();
+    crate::afk_journey::recovery::run(
+        serial,
+        cancelled,
+        |checkpoint, report| {
+            let battle = || settings.battle[action.index()].battle_settings(mode);
+            match action {
+                StageAction::AfkStages => crate::afk_journey::afk_stages::run_selected(
+                    serial,
+                    battle(),
+                    checkpoint.stages(settings.selection),
+                    cancelled,
+                    &mut log,
+                    report,
+                ),
+                StageAction::SeasonLegendTrial => crate::afk_journey::legend_trial::run(
+                    serial,
+                    battle(),
+                    checkpoint.towers(settings.towers),
+                    cancelled,
+                    &mut log,
+                    report,
+                ),
+                StageAction::UnionCampaign => crate::afk_journey::union_campaign::run(
+                    serial,
+                    battle(),
+                    cancelled,
+                    &mut log,
+                    report,
+                ),
+                StageAction::DurasTrials => crate::afk_journey::duras_trials::run(
+                    serial,
+                    battle(),
+                    settings.dura_sweep,
+                    cancelled,
+                    &mut log,
+                    report,
+                ),
+                StageAction::Arena => crate::afk_journey::arena::run(
+                    serial,
+                    PvpSettings::Arena(settings.arena),
+                    cancelled,
+                    &mut log,
+                    report,
+                ),
+                StageAction::SupremeArena => crate::afk_journey::arena::run(
+                    serial,
+                    PvpSettings::Supreme(settings.supreme),
+                    cancelled,
+                    &mut log,
+                    report,
+                ),
+                StageAction::AfkRewards | StageAction::FreeHourglasses => {
+                    let kind = if action == StageAction::AfkRewards {
+                        crate::afk_journey::daily::Collection::AfkRewards
+                    } else {
+                        crate::afk_journey::daily::Collection::FreeHourglasses
+                    };
+                    crate::afk_journey::daily::run(
+                        serial,
+                        kind,
+                        &mut collection,
+                        cancelled,
+                        &mut log,
+                        report,
+                    )
+                }
+                StageAction::DiamondHourglasses | StageAction::StageRewards => {
+                    crate::afk_journey::daily_extras::run(
+                        serial,
+                        mode,
+                        settings.diamond_hourglasses,
+                        &mut extras,
+                        cancelled,
+                        &mut log,
+                        report,
+                    )
+                }
+                StageAction::Daily => Err("A Daily routine cannot contain itself.".into()),
+            }
+        },
+        |message| {
+            let _ = sender.send(Event::RecoveryStatus(message));
+        },
+        |event| {
+            let _ = sender.send(Event::Activity(event));
+        },
+    )
+}
+
 pub struct PlayerApp {
     sender: Sender<Event>,
     receiver: Receiver<Event>,
@@ -114,7 +224,9 @@ pub struct PlayerApp {
     busy: bool,
     page: Page,
     language_save_error: Option<String>,
-    claim_stage_rewards: bool,
+    daily_routine: Routine,
+    daily_settings_error: Option<String>,
+    daily_step: Option<usize>,
     adb_path: String,
     stage_cancel: Option<Arc<AtomicBool>>,
     stage_selection: StageSelection,
@@ -145,6 +257,10 @@ impl PlayerApp {
     pub fn new(context: &eframe::CreationContext<'_>) -> Self {
         let (sender, receiver) = mpsc::channel();
         let (update_requests, update_receiver) = mpsc::channel();
+        let (daily_routine, daily_settings_error) = match Routine::load() {
+            Ok(routine) => (routine, None),
+            Err(error) => (Routine::default(), Some(error)),
+        };
         let logo_image = image::load_from_memory(include_bytes!("../assets/adbhelper-logo-v2.png"))
             .expect("embedded ADBHelper logo should be a valid PNG")
             .to_rgba8();
@@ -166,7 +282,9 @@ impl PlayerApp {
             busy: false,
             page: Page::Automations,
             language_save_error: None,
-            claim_stage_rewards: false,
+            daily_routine,
+            daily_settings_error,
+            daily_step: None,
             adb_path: std::env::var("ADB_PATH")
                 .or_else(|_| std::env::var("ADBUTILS_ADB_PATH"))
                 .unwrap_or_else(|_| adb::suggested_adb_path()),
@@ -410,122 +528,51 @@ impl PlayerApp {
         });
     }
 
-    // Reserved for the combined action; no standalone dashboard entry for now.
-    #[allow(dead_code)]
-    fn start_claim_rewards(&mut self) {
-        let Some(serial) = self.selected_serial() else {
-            self.log(text(
-                "Select a connected device first.",
-                "Bitte zuerst ein verbundenes Gerät auswählen.",
-            ));
-            return;
-        };
-        let claim_stage_rewards = self.claim_stage_rewards;
-        self.activity.start(GameMode::AfkStages, Instant::now());
-        self.busy = true;
-        self.log(text(
-            "Collecting AFK rewards. Keep AFK Stages open in the game.",
-            "AFK-Belohnungen gestartet. AFK-Stufen im Spiel geöffnet lassen.",
-        ));
-        let sender = self.sender.clone();
-        thread::spawn(move || {
-            let _ = sender.send(Event::Activity(ActivityEvent::ModeEntered(
-                GameMode::AfkStages,
-            )));
-            let result = (|| -> Result<(), String> {
-                for round in 0..3 {
-                    adb::tap(&serial, 520, 1400).map_err(|error| error.to_string())?;
-                    thread::sleep(Duration::from_secs(1));
-                    adb::tap(&serial, 550, 1080).map_err(|error| error.to_string())?;
-                    let _ = sender.send(Event::Log(format_text!(
-                        "Collected AFK reward step {}/3.",
-                        "AFK-Belohnungsschritt {}/3 eingesammelt.",
-                        round + 1
-                    )));
-                    thread::sleep(Duration::from_secs(1));
-                }
-                thread::sleep(Duration::from_secs(1));
-                adb::tap(&serial, 550, 1080).map_err(|error| error.to_string())?;
-                if claim_stage_rewards {
-                    for round in 0..5 {
-                        adb::tap(&serial, 770, 500).map_err(|error| error.to_string())?;
-                        thread::sleep(Duration::from_millis(300));
-                        adb::tap(&serial, 770, 500).map_err(|error| error.to_string())?;
-                        let _ = sender.send(Event::Log(format_text!(
-                            "Collected stage reward {}/5.",
-                            "Stufenbelohnung {}/5 eingesammelt.",
-                            round + 1
-                        )));
-                        thread::sleep(Duration::from_secs(1));
-                    }
-                }
-                Ok(())
-            })();
-            let message = match result {
-                Ok(()) => {
-                    text("AFK rewards collected.", "AFK-Belohnungen abgeschlossen.").to_owned()
-                }
-                Err(error) => format_text!(
-                    "AFK rewards interrupted: {error}",
-                    "AFK-Belohnungen abgebrochen: {error}"
-                ),
-            };
-            let _ = sender.send(Event::Log(message));
-            let _ = sender.send(Event::Busy(false));
-        });
-    }
-
     fn start_action(&mut self, action: StageAction) {
         if self.busy {
             return;
         }
         self.action_error = None;
         self.recovery_notice = None;
-        let selection = self.stage_selection;
-        let towers = self.tower_selection;
-        let dura_sweep_after_cap = self.dura_sweep_after_cap;
-        let arena_settings = self.arena_settings;
-        let supreme_settings = self.supreme_settings;
-        let mode = match action {
-            StageAction::AfkStages => selection.modes().first().copied(),
-            StageAction::SeasonLegendTrial => towers
-                .selected()
-                .first()
-                .copied()
-                .map(GameMode::SeasonLegendTrial),
-            StageAction::UnionCampaign => Some(GameMode::UnionCampaign),
-            StageAction::DurasTrials => Some(GameMode::DurasTrials),
-            StageAction::Arena => Some(GameMode::Arena),
-            StageAction::SupremeArena => Some(GameMode::SupremeArena),
+        self.daily_step = None;
+        let steps = if action == StageAction::Daily {
+            self.daily_routine.steps.clone()
+        } else {
+            vec![action]
         };
-        let Some(mode) = mode else {
+        if steps.is_empty() {
             self.action_error = Some((
                 action,
-                match action {
-                    StageAction::AfkStages => text(
-                        "Select at least one stage type.",
-                        "Bitte mindestens eine Stage-Art auswählen.",
-                    ),
-                    StageAction::SeasonLegendTrial => text(
-                        "Open the gear menu and select at least one tower.",
-                        "Bitte über das Zahnrad mindestens einen Turm auswählen.",
-                    ),
-                    StageAction::UnionCampaign => text(
-                        "Union Campaign is unavailable.",
-                        "Union Campaign ist nicht verfügbar.",
-                    ),
-                    StageAction::DurasTrials => text(
-                        "Dura’s Trials is unavailable.",
-                        "Dura’s Trials sind nicht verfügbar.",
-                    ),
-                    StageAction::Arena | StageAction::SupremeArena => {
-                        text("Arena is unavailable.", "Arena ist nicht verfügbar.")
-                    }
-                }
+                text(
+                    "Add at least one step in the Daily settings.",
+                    "Füge in den Daily-Einstellungen mindestens einen Schritt hinzu.",
+                )
                 .into(),
             ));
             return;
+        }
+        let settings = RunSettings {
+            selection: self.stage_selection,
+            towers: self.tower_selection,
+            dura_sweep: self.dura_sweep_after_cap,
+            battle: self.battle_options,
+            arena: self.arena_settings,
+            supreme: self.supreme_settings,
+            diamond_hourglasses: self.daily_routine.diamond_hourglasses,
         };
+        for step in &steps {
+            if settings.mode(*step).is_none() {
+                self.action_error = Some((
+                    action,
+                    format_text!(
+                        "Select stages or towers for {} in its settings.",
+                        "Wähle Stufen oder Türme für {} in den Einstellungen.",
+                        step.label()
+                    ),
+                ));
+                return;
+            }
+        }
         let Some(serial) = self.selected_serial() else {
             self.action_error = Some((
                 action,
@@ -537,8 +584,10 @@ impl PlayerApp {
             ));
             return;
         };
-        self.activity.start(mode, Instant::now());
-        let battle_settings = self.battle_options[action.index()].battle_settings(mode);
+        self.activity.start(
+            settings.mode(steps[0]).expect("steps validated"),
+            Instant::now(),
+        );
         let cancelled = Arc::new(AtomicBool::new(false));
         self.stage_cancel = Some(cancelled.clone());
         self.active_action = Some(action);
@@ -546,73 +595,19 @@ impl PlayerApp {
         self.log(format_text!("{} started.", "{} gestartet.", action.label()));
         let sender = self.sender.clone();
         thread::spawn(move || {
-            let log = |message| {
-                let _ = sender.send(Event::Log(message));
-            };
-            let progress = |progress| {
-                let _ = sender.send(Event::Activity(progress));
-            };
-            let result = crate::afk_journey::recovery::run(
-                &serial,
-                &cancelled,
-                |checkpoint, report| match action {
-                    StageAction::AfkStages => crate::afk_journey::afk_stages::run_selected(
-                        &serial,
-                        battle_settings,
-                        checkpoint.stages(selection),
-                        &cancelled,
-                        log,
-                        |event| report(event),
-                    ),
-                    StageAction::SeasonLegendTrial => crate::afk_journey::legend_trial::run(
-                        &serial,
-                        battle_settings,
-                        checkpoint.towers(towers),
-                        &cancelled,
-                        log,
-                        |event| report(event),
-                    ),
-                    StageAction::UnionCampaign => crate::afk_journey::union_campaign::run(
-                        &serial,
-                        battle_settings,
-                        &cancelled,
-                        log,
-                        |event| report(event),
-                    ),
-                    StageAction::DurasTrials => crate::afk_journey::duras_trials::run(
-                        &serial,
-                        battle_settings,
-                        dura_sweep_after_cap,
-                        &cancelled,
-                        log,
-                        |event| report(event),
-                    ),
-                    StageAction::Arena => crate::afk_journey::arena::run(
-                        &serial,
-                        PvpSettings::Arena(arena_settings),
-                        &cancelled,
-                        log,
-                        |event| report(event),
-                    ),
-                    StageAction::SupremeArena => crate::afk_journey::arena::run(
-                        &serial,
-                        PvpSettings::Supreme(supreme_settings),
-                        &cancelled,
-                        log,
-                        |event| report(event),
-                    ),
-                },
-                |message| {
-                    let _ = sender.send(Event::RecoveryStatus(message));
-                },
-                progress,
-            );
+            let result = Routine {
+                steps,
+                diamond_hourglasses: settings.diamond_hourglasses,
+            }
+            .run(&cancelled, |index, step| {
+                if action == StageAction::Daily {
+                    let _ = sender.send(Event::DailyStep(index));
+                }
+                run_step(&serial, step, settings, &cancelled, &sender)
+                    .map_err(|error| format!("{} · {error}", step.label()))
+            });
             let message = match &result {
-                Ok(cleared) => format_text!(
-                    "{} finished · {cleared} cleared or won.",
-                    "{} abgeschlossen · {cleared} geschafft.",
-                    action.label()
-                ),
+                Ok(_) => format_text!("{} finished.", "{} abgeschlossen.", action.label()),
                 Err(error) => {
                     format_text!("{} stopped: {error}", "{} beendet: {error}", action.label())
                 }
@@ -631,6 +626,7 @@ impl PlayerApp {
     fn receive_events(&mut self) {
         while let Ok(event) = self.receiver.try_recv() {
             match event {
+                Event::DailyStep(index) => self.daily_step = Some(index),
                 Event::Devices(Ok(devices)) => {
                     if self
                         .selected_serial
@@ -670,6 +666,7 @@ impl PlayerApp {
                 }
                 Event::StagesFinished(action, error) => {
                     self.recovery_notice = None;
+                    self.daily_step = None;
                     self.action_error = error.map(|error| (action, error))
                 }
                 Event::UpdateChecked(result) => {
@@ -730,6 +727,8 @@ impl PlayerApp {
                         .max_height(ui.available_height())
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
+                            self.show_daily_card(ui);
+                            ui.add_space(SpaceTokens::MD);
                             let active = self.active_action == Some(StageAction::AfkStages)
                                 && self.stage_cancel.is_some();
                             design_system::state_card(ui, active, |ui| {
@@ -967,6 +966,11 @@ impl PlayerApp {
                             }
                         }
                     });
+                    egui::ScrollArea::vertical()
+                        .id_salt("activity-mode-counters")
+                        .max_height(ui.available_height())
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
                     for (mode, stats) in &self.activity.modes {
                         ui.add_space(SpaceTokens::MD);
                         let active =
@@ -980,6 +984,10 @@ impl PlayerApp {
                             ui.add_space(SpaceTokens::SM);
                             ui.separator();
                             ui.horizontal(|ui| {
+                                if mode.is_collection() {
+                                    progress_metric(ui, text("COLLECTED", "ABGEHOLT"), stats.collected);
+                                    return;
+                                }
                                 progress_metric(ui, text("ATTEMPTS", "VERSUCHE"), stats.attempts);
                                 ui.add_space(SpaceTokens::MD);
                                 progress_metric(
@@ -998,6 +1006,7 @@ impl PlayerApp {
                             });
                         });
                     }
+                        });
                 },
             );
         });
@@ -1050,6 +1059,174 @@ impl PlayerApp {
         });
     }
 
+    fn show_daily_card(&mut self, ui: &mut egui::Ui) {
+        let active = self.active_action == Some(StageAction::Daily) && self.stage_cancel.is_some();
+        design_system::state_card(ui, active, |ui| {
+            self.show_action_header(ui, StageAction::Daily, active);
+            if let Some(index) = self.daily_step.filter(|_| active) {
+                if let Some(step) = self.daily_routine.steps.get(index) {
+                    ui.label(format_text!(
+                        "Step {}/{} · {}",
+                        "Schritt {}/{} · {}",
+                        index + 1,
+                        self.daily_routine.steps.len(),
+                        step.label()
+                    ));
+                }
+            } else {
+                ui.label(format_text!(
+                    "{} steps · Your daily routine",
+                    "{} Schritte · Deine tägliche Routine",
+                    self.daily_routine.steps.len()
+                ));
+            }
+            ui.add_space(SpaceTokens::SM);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !self.busy && !self.daily_routine.steps.is_empty(),
+                        primary_button(text("Start", "Starten")),
+                    )
+                    .clicked()
+                {
+                    self.start_action(StageAction::Daily);
+                }
+                if active && ui.add(design_system::stop_button("Stop")).clicked() {
+                    if let Some(cancelled) = &self.stage_cancel {
+                        cancelled.store(true, Ordering::Relaxed);
+                    }
+                }
+            });
+            if let Some((StageAction::Daily, error)) = &self.action_error {
+                ui.colored_label(ColorTokens::CLOSE_HOVER, error);
+            }
+        });
+    }
+
+    fn show_daily_settings(&mut self, context: &egui::Context) {
+        let previous = self.daily_routine.clone();
+        let mut diamond_settings = self.daily_routine.diamond_hourglasses;
+        let mut close = false;
+        let mut placement = None;
+        let mut remove = None;
+        let response = egui::Modal::new(egui::Id::unique("daily-routine-editor"))
+            .frame(design_system::panel_frame())
+            .show(context, |ui| {
+                ui.set_width((context.content_rect().width() - 64.0).clamp(520.0, 760.0));
+                ui.heading(text("Daily routine", "Daily-Routine"));
+                ui.label(text(
+                    "Drag actions into your routine and arrange them in the order they should run.",
+                    "Ziehe Aktionen in deine Routine und sortiere sie in der gewünschten Reihenfolge.",
+                ));
+                ui.small(text(
+                    "Each step uses the settings from its action card.",
+                    "Jeder Schritt verwendet die Einstellungen seiner Aktionskachel.",
+                ));
+                ui.add_space(SpaceTokens::MD);
+                if self.busy {
+                    ui.small(text("Stop the current run to edit the routine.", "Beende den aktuellen Lauf, um die Routine zu bearbeiten."));
+                }
+                egui::ScrollArea::vertical()
+                    .id_salt("daily-editor-scroll")
+                    .max_height((context.content_rect().height() - 260.0).clamp(140.0, 520.0))
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(!self.busy, |ui| {
+                            ui.columns(2, |columns| {
+                                columns[0].strong(text("Available actions", "Verfügbare Aktionen"));
+                                columns[0].add_space(SpaceTokens::SM);
+                                for action in StageAction::DAILY_STEPS {
+                                    if self.daily_routine.steps.contains(&action) { continue; }
+                                    design_system::panel_frame().show(&mut columns[0], |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.dnd_drag_source(egui::Id::unique(("daily-source", action.index())), action, |ui| {
+                                                ui.label(action.label());
+                                            });
+                                            if ui.small_button("+").on_hover_text(text("Add step", "Schritt hinzufügen")).clicked() {
+                                                placement = Some((action, self.daily_routine.steps.len()));
+                                            }
+                                        });
+                                    });
+                                    columns[0].add_space(SpaceTokens::SM);
+                                }
+                                columns[1].strong(text("Run in this order", "In dieser Reihenfolge ausführen"));
+                                columns[1].add_space(SpaceTokens::SM);
+                                let count = self.daily_routine.steps.len();
+                                for (index, action) in self.daily_routine.steps.iter().copied().enumerate() {
+                                    let row = design_system::panel_frame().show(&mut columns[1], |ui| {
+                                        ui.dnd_drag_source(egui::Id::unique(("daily-step", action.index())), action, |ui| {
+                                            ui.label(format!("{}  {}", index + 1, action.label()));
+                                        });
+                                        if action == StageAction::DiamondHourglasses {
+                                            ui.horizontal(|ui| {
+                                                ui.label(text("Purchases", "Käufe"));
+                                                ui.add(egui::DragValue::new(&mut diamond_settings.purchases).range(1..=10));
+                                            });
+                                            ui.horizontal(|ui| {
+                                                ui.label(text("Diamond budget", "Diamantenbudget"));
+                                                ui.add(egui::DragValue::new(&mut diamond_settings.budget).range(0..=5000).speed(10));
+                                            });
+                                            ui.small(text("Total limit per run. Free hourglasses should run first.", "Gesamtlimit pro Lauf. Kostenlose Sanduhren sollten zuerst laufen."));
+                                        }
+                                        ui.horizontal(|ui| {
+                                            if ui.add_enabled(index > 0, egui::Button::new(text("Up", "Hoch")).small()).clicked() {
+                                                placement = Some((action, index - 1));
+                                            }
+                                            if ui.add_enabled(index + 1 < count, egui::Button::new(text("Down", "Runter")).small()).clicked() {
+                                                placement = Some((action, index + 2));
+                                            }
+                                            if ui.small_button(text("Remove", "Entfernen")).clicked() { remove = Some(index); }
+                                        });
+                                    }).response;
+                                    if row.dnd_hover_payload::<StageAction>().is_some() {
+                                        let before = context.pointer_latest_pos().is_none_or(|p| p.y < row.rect.center().y);
+                                        let y = if before { row.rect.top() } else { row.rect.bottom() };
+                                        columns[1].painter().line_segment(
+                                            [egui::pos2(row.rect.left(), y), egui::pos2(row.rect.right(), y)],
+                                            egui::Stroke::new(2.0, ColorTokens::GLOW),
+                                        );
+                                        if let Some(action) = row.dnd_release_payload::<StageAction>() {
+                                            placement = Some((*action, index + usize::from(!before)));
+                                        }
+                                    }
+                                    columns[1].add_space(SpaceTokens::SM);
+                                }
+                                let (_, dropped) = columns[1].dnd_drop_zone::<StageAction, _>(
+                                    design_system::panel_frame(),
+                                    |ui| {
+                                        ui.set_min_size(egui::vec2(ui.available_width(), 32.0));
+                                        ui.label(text("Drop a step here", "Schritt hier ablegen"));
+                                    },
+                                );
+                                if let Some(action) = dropped { placement = Some((*action, count)); }
+                            });
+                        });
+                    });
+                ui.add_space(SpaceTokens::MD);
+                ui.separator();
+                if let Some(error) = &self.daily_settings_error {
+                    ui.colored_label(ColorTokens::CLOSE_HOVER, format_text!(
+                        "Daily settings could not be saved or loaded: {error}",
+                        "Daily-Einstellungen konnten nicht gespeichert oder geladen werden: {error}"
+                    ));
+                }
+                ui.small(text("The routine is saved automatically.", "Die Routine wird automatisch gespeichert."));
+                close = ui.button(text("Close", "Schließen")).clicked();
+            });
+        if let Some(index) = remove {
+            self.daily_routine.steps.remove(index);
+        }
+        self.daily_routine.diamond_hourglasses = diamond_settings;
+        if let Some((action, index)) = placement {
+            self.daily_routine.place(action, index);
+        }
+        if self.daily_routine != previous {
+            self.daily_settings_error = self.daily_routine.save().err();
+        }
+        if close || response.should_close() {
+            self.action_settings_dialog = None;
+        }
+    }
+
     fn show_action_header(&mut self, ui: &mut egui::Ui, action: StageAction, active: bool) {
         ui.horizontal(|ui| {
             ui.label(
@@ -1087,6 +1264,10 @@ impl PlayerApp {
         let Some(action) = self.action_settings_dialog else {
             return;
         };
+        if action == StageAction::Daily {
+            self.show_daily_settings(context);
+            return;
+        }
         let mut close = false;
         let response = egui::Modal::new(egui::Id::unique(("action-settings-dialog", action.index())))
             .frame(design_system::panel_frame())
@@ -1161,6 +1342,7 @@ impl PlayerApp {
                                     });
                                     ui.label(text("Uses your three in-game teams. Selects Next twice, then Battle.", "Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf."));
                                 }
+                                StageAction::Daily | StageAction::AfkRewards | StageAction::FreeHourglasses | StageAction::DiamondHourglasses | StageAction::StageRewards => {}
                             }
                             if !matches!(action,StageAction::Arena|StageAction::SupremeArena) && action != StageAction::UnionCampaign {
                                 ui.add_space(SpaceTokens::MD);

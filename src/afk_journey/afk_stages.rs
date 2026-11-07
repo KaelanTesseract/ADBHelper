@@ -162,6 +162,18 @@ pub fn run_selected(
 
 fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
     let bytes: &'static [u8] = match relative_path {
+        "daily/afk_time.png" => include_bytes!("../../assets/AFKJourney/daily/afk_time.png"),
+        "daily/wallet_diamond.png" => {
+            include_bytes!("../../assets/AFKJourney/daily/wallet_diamond.png")
+        }
+        "daily/timer_reset.png" => include_bytes!("../../assets/AFKJourney/daily/timer_reset.png"),
+        "daily/claim.png" => include_bytes!("../../assets/AFKJourney/daily/claim.png"),
+        "daily/free_hourglass.png" => {
+            include_bytes!("../../assets/AFKJourney/daily/free_hourglass.png")
+        }
+        "daily/paid_hourglass.png" => {
+            include_bytes!("../../assets/AFKJourney/daily/paid_hourglass.png")
+        }
         "arena/free_price_zero.png" => {
             include_bytes!("../../assets/AFKJourney/arena/free_price_zero.png")
         }
@@ -702,7 +714,7 @@ pub(super) fn poll_for_match(
     Ok(None)
 }
 
-pub(super) fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
+pub(crate) fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
     if cancelled.load(Ordering::Relaxed) {
         Err(text("Cancelled by user.", "Vom Benutzer abgebrochen.").to_owned())
     } else {
@@ -1726,7 +1738,11 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
             | GameMode::UnionCampaign
             | GameMode::DurasTrials
             | GameMode::Arena
-            | GameMode::SupremeArena => {
+            | GameMode::SupremeArena
+            | GameMode::AfkRewards
+            | GameMode::FreeHourglasses
+            | GameMode::DiamondHourglasses
+            | GameMode::StageRewards => {
                 return Err(text("This is not an AFK Stages mode", "Kein AFK-Stages-Modus").into())
             }
         }));
@@ -2002,7 +2018,7 @@ pub(super) fn navigate_to_battle_modes(
     .into())
 }
 
-fn navigate_to_afk_stages(
+pub(super) fn navigate_to_afk_stages(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),

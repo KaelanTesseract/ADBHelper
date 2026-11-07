@@ -12,6 +12,8 @@ const BATTLE_RESULT_TIMEOUT: &str = "battle result timeout";
 
 pub mod afk_stages;
 pub mod arena;
+pub mod daily;
+pub mod daily_extras;
 pub mod duras_trials;
 pub mod legend_trial;
 mod ocr;

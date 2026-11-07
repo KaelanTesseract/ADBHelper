@@ -1,5 +1,4 @@
 use std::io;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -49,7 +48,7 @@ impl Language {
     }
 
     pub fn load() {
-        let language = settings_file()
+        let language = crate::settings::file("language")
             .ok()
             .and_then(|path| std::fs::read_to_string(path).ok())
             .map_or_else(Self::default, |code| Self::from_code(&code));
@@ -58,29 +57,8 @@ impl Language {
 
     pub fn select(self) -> io::Result<()> {
         self.activate();
-        let path = settings_file()?;
-        std::fs::create_dir_all(path.parent().expect("language file has a directory"))?;
-        std::fs::write(path, self.code())
+        crate::settings::write("language", self.code().as_bytes())
     }
-}
-
-fn settings_file() -> io::Result<PathBuf> {
-    let directory = if cfg!(target_os = "windows") {
-        std::env::var_os("APPDATA").map(PathBuf::from)
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-    };
-    directory
-        .filter(|path| path.is_absolute())
-        .map(|path| path.join("ADBHelper").join("language"))
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "User configuration folder unavailable",
-            )
-        })
 }
 
 pub fn text<'a>(english: &'a str, german: &'a str) -> &'a str {

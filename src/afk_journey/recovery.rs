@@ -218,6 +218,9 @@ fn supervised(
         let (_, checkpoint) = state();
         let result = execute(checkpoint, &mut |event| {
             match event {
+                ActivityEvent::Collected(_, count) => {
+                    total = total.saturating_add(count);
+                }
                 ActivityEvent::ModeOpening(mode) | ActivityEvent::ModeEntered(mode) => {
                     SESSION.with(|slot| {
                         if let Some(s) = slot.borrow_mut().as_mut() {

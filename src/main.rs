@@ -7,6 +7,8 @@ mod app;
 mod charts;
 pub mod design_system;
 mod localization;
+mod routine;
+mod settings;
 mod updater;
 
 use std::env;

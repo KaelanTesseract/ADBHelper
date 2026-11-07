@@ -5,6 +5,11 @@ Native Rust desktop app for AFK Journey on Windows x64.
 ADBHelper adapts the AFK Journey workflows from [ADBAutoPlayer](https://github.com/AdbAutoPlayer/AdbAutoPlayer) into a native Rust app.
 
 Download stable versions and release notes from [GitHub Releases](https://github.com/KaelanTesseract/ADBHelper/releases).
+
+**New in 0.4.4:** build a saved Daily routine with drag and drop, AFK rewards,
+free hourglasses, optional diamond hourglasses, and AFK stage rewards.
+See the [0.4.4 patch notes](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.4.4).
+
 The app checks for updates at startup and every five minutes, including while
 minimized. A green update icon beside Settings indicates a new release. Click it
 to open the patch notes, then choose **Download and install** to
@@ -25,8 +30,27 @@ Completed or unavailable modes are skipped. Technical errors and Stop end the
 whole sequence. With neither checkbox selected, Start is disabled.
 Each mode uses automatic navigation and suggested teams. Mode-specific counters,
 charts and the run timer persist across the transition. Team settings apply to both.
-The standalone rewards card
-is hidden; that routine is reserved for integration into a combined action.
+The **Daily** card appears first. Its gear opens a routine editor where actions
+can be added, removed, and reordered with drag and drop or the Up/Down buttons.
+The saved routine runs from top to bottom and uses each action card's settings.
+Stop ends the whole routine, and an error prevents later steps from starting.
+The default routine collects AFK chest rewards twice and claims up to three
+available free Instant AFK hourglasses. Each collection is checked before its
+counter is updated. Once the hourglass button displays a diamond price, the
+free-hourglass step is complete.
+
+Two additional optional Daily steps are available: **Diamond hourglasses** and
+**AFK stage rewards**. Drag them into the routine to enable them; existing saved
+routines keep their current steps. The paid step has its own purchase count and
+total diamond budget per run in the routine editor (initially one purchase and
+50 diamonds). A zero budget disables spending. Run free hourglasses first.
+The price is checked twice before each purchase, and the exact diamond balance
+is read from Mystical House before and after it. The budget is reserved before
+the purchase tap because the game can charge immediately without confirmation.
+An unconfirmed charge stops the routine instead of retrying a purchase.
+Stage rewards use the original AFK reward entry, recognize claim dialogs and
+reward overlays, and maintain their own collection counter. No rewards available
+is a completed step; an unrecognized reward response is not counted as a claim.
 
 Each action card has a gear button for its settings popup. PvE team selection,
 manual-team skipping and attempts per team are configured separately per action.
@@ -144,7 +168,8 @@ slider position and OCR omissions. Other daily class layouts still need live cov
 
 The app lists authorized devices and launches or stops AFK Journey. Stage
 automation uses embedded image templates internally; game screenshots are not
-displayed in the interface. The rewards routine is reserved for a future action.
+displayed in the interface. Collection counts appear separately from battle
+attempts, stage clears, and wins.
 
 To build a standalone debug executable, run:
 

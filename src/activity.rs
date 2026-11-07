@@ -11,6 +11,10 @@ pub enum GameMode {
     DurasTrials,
     Arena,
     SupremeArena,
+    AfkRewards,
+    FreeHourglasses,
+    DiamondHourglasses,
+    StageRewards,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,6 +65,10 @@ impl GameMode {
             Self::DurasTrials => "Dura’s Trials",
             Self::Arena => "Arena",
             Self::SupremeArena => "Supreme Arena",
+            Self::AfkRewards => text("AFK rewards", "AFK-Belohnungen"),
+            Self::FreeHourglasses => text("Free hourglasses", "Kostenlose Sanduhren"),
+            Self::DiamondHourglasses => text("Diamond hourglasses", "Diamanten-Sanduhren"),
+            Self::StageRewards => text("AFK stage rewards", "AFK-Stufenbelohnungen"),
         }
     }
 
@@ -70,6 +78,16 @@ impl GameMode {
 
     pub fn is_pvp(self) -> bool {
         matches!(self, Self::Arena | Self::SupremeArena)
+    }
+
+    pub fn is_collection(self) -> bool {
+        matches!(
+            self,
+            Self::AfkRewards
+                | Self::FreeHourglasses
+                | Self::DiamondHourglasses
+                | Self::StageRewards
+        )
     }
 
     pub fn has_external_progression(self) -> bool {
@@ -92,6 +110,7 @@ pub enum ActivityEvent {
     BattleFinished(GameMode, BattleOutcome),
     StageCleared(GameMode),
     Swept(GameMode, u32),
+    Collected(GameMode, u32),
 }
 
 #[derive(Default, Debug)]
@@ -101,6 +120,7 @@ pub struct ModeStats {
     pub wins: u64,
     pub losses: u64,
     pub sweeps: u64,
+    pub collected: u64,
     attempts_for_cleared: u64,
     battle_pending: bool,
     clear_pending: bool,
@@ -182,7 +202,7 @@ impl RunActivity {
             ActivityEvent::BattleStarted(mode)
             | ActivityEvent::BattleFinished(mode, _)
             | ActivityEvent::StageCleared(mode) => mode,
-            ActivityEvent::Swept(mode, _) => mode,
+            ActivityEvent::Swept(mode, _) | ActivityEvent::Collected(mode, _) => mode,
             ActivityEvent::ModeEntered(_) | ActivityEvent::ModeOpening(_) => unreachable!(),
         };
         let stats = self.modes.entry(mode).or_default();
@@ -190,6 +210,9 @@ impl RunActivity {
         match event {
             ActivityEvent::Swept(_, count) => {
                 stats.sweeps = stats.sweeps.saturating_add(u64::from(count));
+            }
+            ActivityEvent::Collected(_, count) => {
+                stats.collected = stats.collected.saturating_add(u64::from(count));
             }
             ActivityEvent::BattleStarted(_) if !stats.battle_pending => {
                 stats.attempts = stats.attempts.saturating_add(1);
@@ -281,6 +304,22 @@ mod tests {
         }
     }
     const SEASON: GameMode = GameMode::SeasonAfkStages;
+
+    #[test]
+    fn collection_counts_do_not_become_battles_clears_or_wins() {
+        let mut run = RunActivity::default();
+        run.start(GameMode::AfkRewards, Instant::now());
+        run.apply(ActivityEvent::ModeEntered(GameMode::AfkRewards));
+        run.apply(ActivityEvent::Collected(GameMode::AfkRewards, 2));
+        run.apply(ActivityEvent::ModeEntered(GameMode::FreeHourglasses));
+        run.apply(ActivityEvent::Collected(GameMode::FreeHourglasses, 3));
+        assert_eq!(run.modes[&GameMode::AfkRewards].collected, 2);
+        assert_eq!(run.modes[&GameMode::FreeHourglasses].collected, 3);
+        assert_eq!(run.outcomes(), (0, 0));
+        assert_eq!(run.success_rate(), None);
+        assert_eq!(run.attempts_per_clear(), None);
+        assert_eq!(run.stage_history.len(), 1);
+    }
 
     #[test]
     fn counters_survive_switches_and_results_stay_with_their_mode() {

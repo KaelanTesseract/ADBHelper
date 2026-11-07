@@ -104,6 +104,71 @@ pub(super) fn recognize(_: &GrayImage) -> Result<Vec<TextLine>, String> {
     .into())
 }
 
+pub(super) fn repeated_counter(text: &str) -> Option<u32> {
+    let text = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
+    if !text.bytes().all(|c| c.is_ascii_digit()) || ![3, 6].contains(&text.len()) {
+        return None;
+    }
+    let len = text.len() / 3;
+    let first = &text[..len];
+    (first == &text[len..len * 2] && first == &text[len * 2..])
+        .then(|| first.parse().ok())
+        .flatten()
+}
+
+pub(super) fn repeated_numeric_patch(
+    gray: &image::GrayImage,
+    roi: super::afk_stages::Rect,
+) -> Result<Vec<TextLine>, String> {
+    // Windows OCR omits some isolated one-digit counters. Repeat the same
+    // captured glyph three times as a single word; accept only three identical
+    // readings. No digit is generated, guessed or taken from the Sweep price.
+    let mut left = roi.width;
+    let mut top = roi.height;
+    let (mut right, mut bottom) = (0, 0);
+    for y in 0..roi.height {
+        for x in 0..roi.width {
+            if gray.get_pixel(roi.x + x, roi.y + y).0[0] > 180 {
+                left = left.min(x);
+                top = top.min(y);
+                right = right.max(x + 1);
+                bottom = bottom.max(y + 1);
+            }
+        }
+    }
+    if right <= left
+        || bottom <= top
+        || !(6..=65).contains(&(right - left))
+        || !(20..=45).contains(&(bottom - top))
+    {
+        return Ok(Vec::new());
+    }
+    let (width, height) = (right - left, bottom - top);
+    let mut word = image::GrayImage::from_pixel(width * 3 + 64, height + 60, image::Luma([255]));
+    for copy in 0..3 {
+        for y in 0..height {
+            for x in 0..width {
+                let value = gray.get_pixel(roi.x + left + x, roi.y + top + y).0[0];
+                word.put_pixel(
+                    30 + copy * (width + 2) + x,
+                    30 + y,
+                    image::Luma([if value > 180 { 0 } else { 255 }]),
+                );
+            }
+        }
+    }
+    let word = image::imageops::resize(
+        &word,
+        word.width() * 4,
+        word.height() * 4,
+        image::imageops::FilterType::CatmullRom,
+    );
+    recognize(&word)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

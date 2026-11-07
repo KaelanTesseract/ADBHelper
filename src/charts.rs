@@ -154,6 +154,7 @@ pub fn mode_comparison(ui: &mut egui::Ui, run: &RunActivity, height: f32) {
     let data: Vec<_> = run
         .modes
         .iter()
+        .filter(|(mode, _)| !mode.is_collection())
         .map(|(mode, stats)| ComparisonPoint {
             label: mode.label().to_owned(),
             attempts: stats.attempts,

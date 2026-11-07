@@ -18,4 +18,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create $env:GITHUB_REF_NAME dist/ADBHelper-Windows-x64.exe dist/ADBHelper-Windows-x64.exe.sha256 --verify-tag --title "ADBHelper $env:GITHUB_REF_NAME" --notes-file "releases/$env:GITHUB_REF_NAME.md"
+          $assets = @('dist/ADBHelper-Windows-x64.exe', 'dist/ADBHelper-Windows-x64.exe.sha256')
+          $image = "releases/media/ADBHelper-$env:GITHUB_REF_NAME.png"
+          if (Test-Path -LiteralPath $image) { $assets += $image }
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "ADBHelper $env:GITHUB_REF_NAME" --notes-file "releases/$env:GITHUB_REF_NAME.md"
