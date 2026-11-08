@@ -819,6 +819,103 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "simulates a game exit and Android Home while Legend Trial is open; verifies return to the same tower without starting a battle"]
+    fn connected_emulator_shared_recovery_without_combat() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
+        let cancelled = AtomicBool::new(false);
+        for home_only in [false, true] {
+            let mut calls = 0;
+            let mut selected = None;
+            let result = super::super::recovery::run(
+                &serial,
+                &cancelled,
+                |checkpoint, report| {
+                    calls += 1;
+                    let package = adb::launch_afk_journey(&serial).map_err(|e| e.to_string())?;
+                    navigate_to_select(&serial, &cancelled, &mut |line| println!("{line}"))?;
+                    let (screen, _) = common::screenshot(&serial)?;
+                    let tower = match selected {
+                        Some(tower) => tower,
+                        None => LegendTower::ALL
+                            .into_iter()
+                            .find(|&tower| !tower_closed(&screen, tower).unwrap())
+                            .expect("an open tower"),
+                    };
+                    selected = Some(tower);
+                    let mode = GameMode::SeasonLegendTrial(tower);
+                    if calls > 1 {
+                        assert_eq!(checkpoint.mode, Some(mode));
+                        let resumed = checkpoint.towers(TowerSelection::default());
+                        for skipped in LegendTower::ALL
+                            .into_iter()
+                            .take_while(|other| *other != tower)
+                        {
+                            assert!(!resumed.selected().contains(&skipped));
+                        }
+                    }
+                    report(ActivityEvent::ModeOpening(mode));
+                    let path = format!("legend_trials/banner_{}.png", tower.slug());
+                    let (_, banner, size) = common::wait_for_match(
+                        &serial,
+                        &[&path],
+                        selection_region(),
+                        Duration::from_secs(20),
+                        &cancelled,
+                    )?;
+                    common::tap_match(&serial, banner, size)?;
+                    common::settle_cancellable(&cancelled)?;
+                    let icon = format!("legend_trials/tower_icon_{}.png", tower.slug());
+                    common::wait_for_match(
+                        &serial,
+                        &[&icon],
+                        Rect {
+                            x: 0,
+                            y: 0,
+                            width: 216,
+                            height: 384,
+                        },
+                        Duration::from_secs(20),
+                        &cancelled,
+                    )?;
+                    report(ActivityEvent::ModeEntered(mode));
+                    if calls == 1 {
+                        if home_only {
+                            adb::shell(&serial, &["input", "keyevent", "KEYCODE_HOME"])
+                                .map_err(|e| e.to_string())?;
+                        } else {
+                            adb::shell(&serial, &["am", "force-stop", &package])
+                                .map_err(|e| e.to_string())?;
+                        }
+                        for _ in 0..2 {
+                            common::settle_cancellable(&cancelled)?;
+                        }
+                        let observed = adb::game_state(&serial).map_err(|e| e.to_string())?;
+                        println!("Induced recovery state: {observed:?}");
+                        assert_ne!(observed, adb::GameState::Running);
+                        if !home_only {
+                            adb::disconnect_for_recovery_test(&serial)
+                                .map_err(|e| e.to_string())?;
+                            println!(
+                                "Disconnected this emulator's ADB transport after the game exit."
+                            );
+                        }
+                        return Err("ADB command failed: ADB command failed: error: closed".into());
+                    }
+                    println!("Returned to the same Legend Trial tower: {}", tower.label());
+                    Ok(0)
+                },
+                |line| println!("{line}"),
+                |event| println!("{event:?}"),
+            );
+            if result.is_err() {
+                let _ = adb::reconnect(&serial);
+            }
+            assert_eq!(result.unwrap(), 0);
+            assert_eq!(calls, 2);
+        }
+    }
+
+    #[test]
     #[ignore = "requires an explicitly selected, connected emulator; navigates only, no battle"]
     fn connected_emulator_navigation() {
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");

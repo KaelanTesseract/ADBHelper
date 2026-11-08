@@ -15,6 +15,25 @@ pub enum GameMode {
     FreeHourglasses,
     DiamondHourglasses,
     StageRewards,
+    SeasonRankingRewards(RankingScope),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RankingScope {
+    District,
+    Server,
+    Guild,
+}
+
+impl RankingScope {
+    pub const ALL: [Self; 3] = [Self::District, Self::Server, Self::Guild];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::District => "District",
+            Self::Server => "Server",
+            Self::Guild => "Guild",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -69,6 +88,15 @@ impl GameMode {
             Self::FreeHourglasses => text("Free hourglasses", "Kostenlose Sanduhren"),
             Self::DiamondHourglasses => text("Diamond hourglasses", "Diamanten-Sanduhren"),
             Self::StageRewards => text("AFK stage rewards", "AFK-Stufenbelohnungen"),
+            Self::SeasonRankingRewards(RankingScope::District) => {
+                text("Season rewards · District", "Season-Belohnungen · District")
+            }
+            Self::SeasonRankingRewards(RankingScope::Server) => {
+                text("Season rewards · Server", "Season-Belohnungen · Server")
+            }
+            Self::SeasonRankingRewards(RankingScope::Guild) => {
+                text("Season rewards · Guild", "Season-Belohnungen · Guild")
+            }
         }
     }
 
@@ -87,6 +115,7 @@ impl GameMode {
                 | Self::FreeHourglasses
                 | Self::DiamondHourglasses
                 | Self::StageRewards
+                | Self::SeasonRankingRewards(_)
         )
     }
 

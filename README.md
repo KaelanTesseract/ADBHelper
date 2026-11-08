@@ -6,9 +6,10 @@ ADBHelper adapts the AFK Journey workflows from [ADBAutoPlayer](https://github.c
 
 Download stable versions and release notes from [GitHub Releases](https://github.com/KaelanTesseract/ADBHelper/releases).
 
-**New in 0.4.4:** build a saved Daily routine with drag and drop, AFK rewards,
-free hourglasses, optional diamond hourglasses, and AFK stage rewards.
-See the [0.4.4 patch notes](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.4.4).
+**New in 0.4.5:** add Season Phase Ranking rewards to your Daily routine, with
+separate District, Server, and Guild collection counters. This release also
+improves automatic recovery, Supreme Arena selection, and Dura's daily Sweeps.
+See the [0.4.5 patch notes](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.4.5).
 
 The app checks for updates at startup and every five minutes, including while
 minimized. A green update icon beside Settings indicates a new release. Click it
@@ -38,6 +39,13 @@ The default routine collects AFK chest rewards twice and claims up to three
 available free Instant AFK hourglasses. Each collection is checked before its
 counter is updated. Once the hourglass button displays a diamond price, the
 free-hourglass step is complete.
+
+The optional **Season Phase Ranking rewards** step opens Season Phase Rankings
+from the AFK page and collects **District**, **Server**, and **Guild** first-clear
+rewards for the available phases. Each reward is counted only after its matching
+stage row is confirmed as **Claimed**. Already claimed and locked rewards are
+skipped. Each scope has its own Activity collection counter; these rewards do not
+count as combat wins or cleared stages. Add the step in the Daily gear popup.
 
 Two additional optional Daily steps are available: **Diamond hourglasses** and
 **AFK stage rewards**. Drag them into the routine to enable them; existing saved
@@ -73,16 +81,39 @@ used; Supreme Arena never purchases extra attempts. Paid or unknown purchase
 prompts are declined. PvP victories appear as wins in counters and graphs and
 never create stage clears. Local Windows OCR support is checked before starting.
 
-During an active action, an unexpectedly missing AFK Journey process triggers
-automatic restart and navigation back to the last mode. Normal AFK stages do not
-restart the completed Season phase; Legend Trial skips previously finished towers.
+During any active action, a missing AFK Journey process or the Android launcher
+appearing instead of the game triggers automatic restart and navigation back to
+the last mode. Normal AFK stages do not restart the completed Season phase;
+Legend Trial skips previously finished towers.
 The game provides its saved stage/floor after navigation. Confirmed counters and
 run duration survive recovery; an interrupted undecided fight remains unclear.
 Arena request/claim checkpoints prevent a restart from resetting the attempt
 budget. The current card shows **RECOVERING** until its mode is re-entered. Stop
-prevents further restarts. Device/ADB connection failures are not treated as game
-crashes. Recovery is limited to three restarts per run and lives in the running
-ADBHelper process.
+prevents further restarts. Temporary ADB transport failures such as **error: closed**
+are rechecked and the affected device is reconnected before deciding whether the
+game needs a restart. If the game is still running in the foreground, the action
+reopens its current mode. Game taps, claims, and purchases are never blindly
+repeated at the ADB-command level. PvE team-attempt budgets survive interruptions;
+Daily collection steps re-enter their verified page before reconciling receipts.
+Recovery is limited to three game restarts per action and a bounded connection
+wait. It lives in the running ADBHelper process.
+
+Arena and Supreme Arena also request recovery when a result cannot be closed or
+a required Arena view/control remains missing after its bounded wait, even while
+the game process is healthy. The saved attempt budget and confirmed wins survive
+the restart. Supreme Arena's **Daily Ranking Rewards** table is closed with Back;
+its Daily Rewards entry is not opened as a way to dismiss a post-battle notice.
+Unverified purchase/confirmation dialogs still stop the action.
+Supreme Arena checks the current selection state after Continue: opponent cards,
+opponent details, and an already open team formation can all be resumed directly.
+The configured opponent position is used, and the formation must be verified
+before combat preparation continues. Only the remaining Next screens are
+advanced; reaching Battle does not require two new Next taps on every retry.
+Live tests from the overview, opponent selection, and opponent details reached
+Battle and resumed the final team page without starting combat or buying attempts.
+Live navigation testing verified both closing the ranking table and restarting
+from an induced result-closing failure, returning to Supreme Arena with two
+reserved attempts preserved. This test did not start a battle or use a ticket.
 
 If no battle result appears within 100 seconds, ADBHelper returns to the active
 mode when attempts remain. The interrupted fight is recorded as unclear and
@@ -129,8 +160,9 @@ number or an unknown confirmation dialog never authorizes Sweep. The state is
 checked again immediately before each Sweep. Extra stock tokens and purchases are
 excluded; the routine stops when daily attempts are gone. Sweep resources are
 counted separately and do not inflate battle attempts, clears or win rate.
-The separate Sweep dialog must show the same trial and floor. ADBHelper uses the
-plus button to set up to six available daily attempts per confirmation. It
+The separate Sweep dialog must show the same trial and floor, including wrapped
+floor labels in Arcane and Focused Treasure. ADBHelper uses the plus button to
+set up to six available daily attempts per confirmation. It
 checks the displayed quantity, total price, and daily token icon after each
 increment and again before confirming. It closes the **Sweep Complete** screen
 and records the batch once the daily counter shows the expected decrease.

@@ -341,7 +341,15 @@ fn run_stage_rewards(
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, String> {
     if cursor.pending.is_some() {
-        finish_stage_claim(serial, cursor, cancelled, report)?;
+        let (screen, _) = common::screenshot(serial)?;
+        if matches!(stage_view(&ocr::recognize(&screen)?), StageView::Loot(_)) {
+            finish_stage_claim(serial, cursor, cancelled, report)?;
+        } else {
+            // A crash can discard the free reward overlay. Its receipt remains
+            // uncounted; revisit the AFK page and check remaining rewards.
+            cursor.pending = None;
+            log(text("An interrupted stage reward was not counted. Checking the remaining free rewards.", "Eine unterbrochene Stufenbelohnung wurde nicht gezählt. Die übrigen kostenlosen Belohnungen werden geprüft.").into());
+        }
     }
     common::navigate_to_afk_stages(serial, cancelled, log)?;
     report(ActivityEvent::ModeEntered(GameMode::StageRewards));

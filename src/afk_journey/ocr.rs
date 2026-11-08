@@ -33,22 +33,7 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
         Storage::Streams::DataWriter,
         Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
     };
-    fn read(image: &GrayImage) -> windows::core::Result<Vec<TextLine>> {
-        unsafe {
-            RoInitialize(RO_INIT_MULTITHREADED)?;
-        }
-        struct Runtime;
-        impl Drop for Runtime {
-            fn drop(&mut self) {
-                unsafe {
-                    RoUninitialize();
-                }
-            }
-        }
-        let _runtime = Runtime;
-        let engine = Language::CreateLanguage(&HSTRING::from("en-US"))
-            .and_then(|language| OcrEngine::TryCreateFromLanguage(&language))
-            .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages())?;
+    fn read(image: &GrayImage, engine: &OcrEngine) -> windows::core::Result<Vec<TextLine>> {
         let mut pixels = Vec::with_capacity(image.len() * 4);
         for &gray in image.as_raw() {
             pixels.extend_from_slice(&[gray, gray, gray, 255]);
@@ -87,7 +72,69 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
         }
         Ok(lines)
     }
-    read(image).map_err(|error| {
+    struct Runtime;
+    impl Drop for Runtime {
+        fn drop(&mut self) {
+            unsafe {
+                RoUninitialize();
+            }
+        }
+    }
+    struct Request {
+        image: GrayImage,
+        reply: std::sync::mpsc::SyncSender<Result<Vec<TextLine>, String>>,
+    }
+    // Windows-rs caches WinRT activation factories process-wide. Keep their
+    // apartment alive across frames and caller-thread exits, instead of
+    // unloading the runtime after every RecognizeAsync call. All COM objects
+    // stay on this worker; callers receive only owned text and coordinates.
+    // https://learn.microsoft.com/windows/win32/api/roapi/nf-roapi-rouninitialize
+    static WORKER: std::sync::OnceLock<Result<std::sync::mpsc::SyncSender<Request>, String>> =
+        std::sync::OnceLock::new();
+    let outcome = (|| -> Result<Vec<TextLine>, String> {
+        let worker = WORKER
+            .get_or_init(|| {
+                let (sender, receiver) = std::sync::mpsc::sync_channel::<Request>(1);
+                std::thread::Builder::new()
+                    .name("adbhelper-ocr".into())
+                    .spawn(move || {
+                        let runtime = unsafe { RoInitialize(RO_INIT_MULTITHREADED) }
+                            .map(|_| Runtime)
+                            .map_err(|e| e.to_string());
+                        let engine = runtime.as_ref().map_err(Clone::clone).and_then(|_| {
+                            Language::CreateLanguage(&HSTRING::from("en-US"))
+                                .and_then(|language| OcrEngine::TryCreateFromLanguage(&language))
+                                .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages())
+                                .map_err(|e| e.to_string())
+                        });
+                        for request in receiver {
+                            let result = match &engine {
+                                Ok(engine) => {
+                                    read(&request.image, engine).map_err(|e| e.to_string())
+                                }
+                                Err(error) => Err(error.clone()),
+                            };
+                            let _ = request.reply.send(result);
+                        }
+                        // Engine declared after Runtime: it is released before WinRT.
+                    })
+                    .map_err(|e| e.to_string())?;
+                Ok(sender)
+            })
+            .as_ref()
+            .map_err(Clone::clone)?;
+        let (reply, response) = std::sync::mpsc::sync_channel(1);
+        worker
+            .send(Request {
+                image: image.clone(),
+                reply,
+            })
+            .map_err(|_| "Local OCR worker stopped".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "Local OCR worker did not return a result".to_owned())?
+    })();
+    outcome.map_err(|error| {
         format_text!(
             "The action stopped because local Windows OCR is unavailable: {error}.",
             "Lokale Windows-Texterkennung nicht verfügbar: {error}. Die Aktion wurde angehalten."
@@ -172,6 +219,27 @@ pub(super) fn repeated_numeric_patch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "repeated local OCR across short-lived callers; supplied screenshot only, no device input"]
+    fn repeated_local_ocr_across_callers() {
+        let path = std::env::var_os("ADBHELPER_OCR_IMAGE").expect("set screenshot path");
+        let input = image::open(path).unwrap().to_luma8();
+        for _ in 0..3 {
+            let input = input.clone();
+            std::thread::spawn(move || {
+                for _ in 0..8 {
+                    assert!(recognize(&input)
+                        .unwrap()
+                        .iter()
+                        .any(|l| l.text.eq_ignore_ascii_case("Claimed")));
+                }
+            })
+            .join()
+            .unwrap();
+        }
+    }
     #[test]
     #[ignore = "reads an explicitly supplied screenshot using installed Windows OCR"]
     fn local_ocr_diagnostic() {

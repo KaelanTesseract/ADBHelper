@@ -163,6 +163,9 @@ pub fn run_selected(
 fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
     let bytes: &'static [u8] = match relative_path {
         "daily/afk_time.png" => include_bytes!("../../assets/AFKJourney/daily/afk_time.png"),
+        "afk_stages/ranking_button.png" => {
+            include_bytes!("../../assets/AFKJourney/afk_stages/ranking_button.png")
+        }
         "daily/wallet_diamond.png" => {
             include_bytes!("../../assets/AFKJourney/daily/wallet_diamond.png")
         }
@@ -1439,11 +1442,14 @@ fn battle_with_current_team(
             Ok(result) => result,
             Err(error) => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
+                let cursor = TeamCursor {
+                    used: attempt,
+                    ..cursor
+                };
+                // Transport loss and game crashes also consume this attempt.
+                // Preserve its budget before the shared supervisor reopens the mode.
+                super::recovery::save_team_cursor(mode, cursor);
                 if error == super::BATTLE_RESULT_TIMEOUT {
-                    let cursor = TeamCursor {
-                        used: attempt,
-                        ..cursor
-                    };
                     if !cursor.can_resume(settings) {
                         log(text(
                             "No battle result was detected after 100 seconds.",
@@ -1452,7 +1458,6 @@ fn battle_with_current_team(
                         .into());
                         return Ok(StageResult::FormationFailed);
                     }
-                    super::recovery::save_team_cursor(mode, cursor);
                 }
                 return Err(error);
             }
@@ -1742,7 +1747,8 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
             | GameMode::AfkRewards
             | GameMode::FreeHourglasses
             | GameMode::DiamondHourglasses
-            | GameMode::StageRewards => {
+            | GameMode::StageRewards
+            | GameMode::SeasonRankingRewards(_) => {
                 return Err(text("This is not an AFK Stages mode", "Kein AFK-Stages-Modus").into())
             }
         }));

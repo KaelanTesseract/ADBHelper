@@ -235,15 +235,39 @@ pub fn run(
 ) -> Result<u32, String> {
     let mode = collection.mode();
     report(ActivityEvent::ModeOpening(mode));
-    // Verify an interrupted collection before navigating or clicking again.
-    if let Some(pending) = &cursor.pending {
-        verify_pending(serial, pending, cancelled)?;
-        cursor.pending = None;
-        cursor.confirmed += 1;
-        report(ActivityEvent::Collected(mode, 1));
-    }
+    // A restarted game opens outside AFK. Re-enter the verified page before
+    // reconciling a pending receipt, without clicking another hourglass.
     common::navigate_to_afk_stages(serial, cancelled, log)?;
     report(ActivityEvent::ModeEntered(mode));
+    if let Some(pending) = &cursor.pending {
+        let confirmed = match pending {
+            Pending::FreeHourglasses(_) => {
+                verify_pending(serial, pending, cancelled)?;
+                true
+            }
+            Pending::AfkRewards => {
+                let (screen, _) = common::screenshot(serial)?;
+                if !page(&screen)? {
+                    return Err(text(
+                        "The AFK page changed during recovery.",
+                        "Die AFK-Ansicht hat sich während der Wiederherstellung verändert.",
+                    )
+                    .into());
+                }
+                timer_reset(&screen)?
+            }
+        };
+        cursor.pending = None;
+        if confirmed {
+            cursor.confirmed += 1;
+            report(ActivityEvent::Collected(mode, 1));
+        } else {
+            // An old chest timer is no proof of collection after a long restart.
+            // Do not count it. Fresh free chest collections can still complete
+            // the requested daily progress, without buying any hourglass.
+            log(text("An interrupted AFK chest claim could not be counted. Continuing with confirmed free collections.", "Eine unterbrochene AFK-Truhenabholung konnte nicht gezählt werden. Es folgen bestätigte kostenlose Abholungen.").into());
+        }
+    }
     while cursor.confirmed < collection.limit() {
         common::ensure_not_cancelled(cancelled)?;
         match collection {

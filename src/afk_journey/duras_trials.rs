@@ -370,10 +370,12 @@ fn trial_key(title: &str) -> String {
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
-    // OCR reads the oversized R in the Raid overview as a separate word
-    // and can omit it entirely from the Sweep dialog.
+    // OCR can read the decorative initial separately or omit it from the
+    // dialog. Only normalize these observed spellings, never fuzzy-match trials.
     match key.as_str() {
         "aidtreasure" => "raidtreasure".into(),
+        "rcanetreasure" => "arcanetreasure".into(),
+        "ocusedtreasure" => "focusedtreasure".into(),
         _ => key,
     }
 }
@@ -957,25 +959,77 @@ fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<common::Match>, Str
     )
 }
 
-fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match)>, String> {
-    let heading = frame
-        .lines
+fn sweep_dialog_heading(lines: &[super::ocr::TextLine]) -> Option<(String, u32)> {
+    let headings = lines
         .iter()
         .filter_map(|line| {
             let (_, y) = line.center();
             if !(950..=1030).contains(&y) {
                 return None;
             }
-            let compact = line.text.to_lowercase().replace(' ', "");
-            let (trial, floor) = compact.split_once("-floor")?;
-            Some((trial.to_owned(), exact_number(floor)?))
+            let compact: String = line
+                .text
+                .to_lowercase()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let (trial, floor, wrapped_label) = match compact.split_once("-floor") {
+                Some((trial, floor)) => (trial, floor, false),
+                None => (compact.strip_suffix('-')?, "", true),
+            };
+            if trial.is_empty() {
+                return None;
+            }
+            let floor = floor.trim_matches([',', '.', ':', ';']);
+            let stage = if floor.is_empty() {
+                // The next line may contain either just the numeral (Arcane)
+                // or the whole "Floor 25" label (Focused). Require adjacency
+                // to this header so daily counters/rewards cannot supply it.
+                unique_value(lines.iter().filter_map(|number| {
+                    if number.y < line.y + line.height - 4.0
+                        || number.y > line.y + line.height + 55.0
+                        || number.x < line.x - 32.0
+                        || number.x > line.x + 120.0
+                        || !(20.0..=60.0).contains(&number.height)
+                        || number.width > if wrapped_label { 260.0 } else { 140.0 }
+                    {
+                        return None;
+                    }
+                    let compact: String = number
+                        .text
+                        .to_lowercase()
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect();
+                    let value = if wrapped_label {
+                        compact.strip_prefix("floor")?
+                    } else {
+                        &compact
+                    };
+                    exact_number(value.trim_matches([',', '.', ':', ';']))
+                        .filter(|n| (1..=999).contains(n))
+                }))?
+            } else {
+                exact_number(floor).filter(|n| (1..=999).contains(n))?
+            };
+            Some((trial_key(trial), stage))
         })
         .collect::<Vec<_>>();
-    if heading.len() != 1
-        || !frame
-            .lines
-            .iter()
-            .any(|l| l.y > 1100.0 && l.y < 1230.0 && l.text.eq_ignore_ascii_case("Rewards"))
+    if headings.len() == 1 {
+        headings.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match)>, String> {
+    let Some((trial, stage)) = sweep_dialog_heading(&frame.lines) else {
+        return Ok(None);
+    };
+    if !frame
+        .lines
+        .iter()
+        .any(|l| l.y > 1100.0 && l.y < 1230.0 && l.text.eq_ignore_ascii_case("Rewards"))
         || !frame.lines.iter().any(|l| {
             l.y > 1430.0
                 && l.y < 1515.0
@@ -1090,8 +1144,8 @@ fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match
     };
     Ok(Some((
         SweepDialog {
-            trial: heading[0].0.clone(),
-            stage: heading[0].1,
+            trial,
+            stage,
             daily_remaining,
             quantity,
             daily_token,
@@ -1608,6 +1662,104 @@ mod tests {
             battle: false,
             blocked: false,
         }
+    }
+
+    #[test]
+    fn focused_sweep_heading_accepts_the_wrapped_floor_label_without_mixing_trials() {
+        let title = super::super::ocr::TextLine {
+            text: "ocused Treasure -".into(),
+            x: 149.0,
+            y: 933.0,
+            width: 292.0,
+            height: 36.0,
+        };
+        let floor = super::super::ocr::TextLine {
+            text: "Floor 25".into(),
+            x: 137.0,
+            y: 984.0,
+            width: 143.0,
+            height: 36.0,
+        };
+        assert_eq!(
+            sweep_dialog_heading(&[title.clone(), floor.clone()]),
+            Some(("focusedtreasure".into(), 25))
+        );
+        assert_eq!(trial_key("F ocused Treasure"), "focusedtreasure");
+        let mut changed = floor.clone();
+        changed.text = "Floor 24".into();
+        assert_eq!(
+            sweep_dialog_heading(&[title.clone(), floor.clone(), changed.clone()]),
+            None
+        );
+        changed.y = 1300.0;
+        assert_eq!(sweep_dialog_heading(&[title.clone(), changed]), None);
+        let mut misplaced = floor.clone();
+        misplaced.x = 600.0;
+        assert_eq!(sweep_dialog_heading(&[title.clone(), misplaced]), None);
+        let mut unlabeled = floor;
+        unlabeled.text = "25".into();
+        assert_eq!(sweep_dialog_heading(&[title, unlabeled]), None);
+        let permit = CapPermit {
+            stage: 25,
+            daily_remaining: 6,
+            trial: "focusedtreasure".into(),
+        };
+        let mut dialog = SweepDialog {
+            trial: "ocusedtreasure".into(),
+            stage: 25,
+            daily_remaining: 6,
+            quantity: Some(1),
+            daily_token: true,
+            cost: Some(SweepCost {
+                available: 6,
+                cost: 1,
+            }),
+            orange: true,
+        };
+        validate_sweep_dialog(&dialog, &permit, 1).unwrap();
+        dialog.trial = "arcanetreasure".into();
+        assert!(validate_sweep_dialog(&dialog, &permit, 1).is_err());
+        dialog.trial = "ocusedtreasure".into();
+        dialog.stage = 24;
+        assert!(validate_sweep_dialog(&dialog, &permit, 1).is_err());
+    }
+
+    #[test]
+    fn wrapped_arcane_sweep_heading_reads_only_its_adjacent_floor() {
+        let line = |text: &str, x, y, width, height| super::super::ocr::TextLine {
+            text: text.into(),
+            x,
+            y,
+            width,
+            height,
+        };
+        let title = line("rcane Treasure -Floor,", 167.0, 932.0, 379.0, 38.0);
+        let floor = line("25", 159.0, 985.0, 46.0, 34.0);
+        let daily = line("6", 933.0, 19.0, 20.0, 30.0);
+        let reward = line("150", 450.0, 1350.0, 60.0, 32.0);
+        assert_eq!(
+            sweep_dialog_heading(&[title.clone(), floor.clone(), daily.clone(), reward.clone()]),
+            Some(("arcanetreasure".into(), 25))
+        );
+        assert_eq!(trial_key("A rcane Treasure"), "arcanetreasure");
+        assert_eq!(sweep_dialog_heading(&[title.clone(), daily, reward]), None);
+        let mut other = floor.clone();
+        other.text = "24".into();
+        assert_eq!(
+            sweep_dialog_heading(&[title.clone(), floor.clone(), other]),
+            None
+        );
+        let mut far = floor.clone();
+        far.x = 600.0;
+        assert_eq!(sweep_dialog_heading(&[title.clone(), far]), None);
+        let mut distant = floor;
+        distant.y = 1200.0;
+        assert_eq!(sweep_dialog_heading(&[title, distant]), None);
+        let inline = line("aid Treasure -Floor 25", 151.0, 982.0, 389.0, 38.0);
+        assert_eq!(
+            sweep_dialog_heading(&[inline]),
+            Some(("raidtreasure".into(), 25))
+        );
     }
 
     #[test]

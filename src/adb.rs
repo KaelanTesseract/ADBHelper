@@ -247,6 +247,121 @@ pub fn afk_journey_running(serial: &str) -> Result<bool, AdbError> {
     parse_game_process(&String::from_utf8_lossy(&output.stdout))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameState {
+    Running,
+    Missing,
+    Launcher,
+}
+
+/// Only transport failures are retried. Permission/configuration failures and
+/// action-specific recognition errors are not treated as game crashes.
+pub fn is_transport_error(error: &str) -> bool {
+    let message = error.to_ascii_lowercase();
+    [
+        "error: closed",
+        "device offline",
+        "device not found",
+        "no devices/emulators found",
+        "connection reset",
+        "connection refused",
+        "connection aborted",
+        "transport error",
+        "protocol fault",
+        "cannot connect to daemon",
+        "failed to start daemon",
+    ]
+    .iter()
+    .any(|part| message.contains(part))
+        || (message.contains("device '") && message.contains("' not found"))
+}
+
+fn component_package(value: &str) -> Option<String> {
+    value.split_whitespace().find_map(|word| {
+        let (package, _) = word.split_once('/')?;
+        (package.contains('.')
+            && package
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_'))
+        .then(|| package.to_owned())
+    })
+}
+
+fn foreground_package(output: &str) -> Option<String> {
+    // Prefer the modern top-resumed record over older/multi-window records.
+    for marker in [
+        "topResumedActivity=",
+        "mResumedActivity:",
+        "mResumedActivity=",
+        "mFocusedActivity:",
+    ] {
+        if let Some(package) = output
+            .lines()
+            .filter(|line| line.contains(marker))
+            .find_map(component_package)
+        {
+            return Some(package);
+        }
+    }
+    None
+}
+
+pub fn game_state(serial: &str) -> Result<GameState, AdbError> {
+    if !afk_journey_running(serial)? {
+        return Ok(GameState::Missing);
+    }
+    let focus = match run(&["-s", serial, "shell", "dumpsys", "activity", "activities"]) {
+        Ok(output) => foreground_package(&String::from_utf8_lossy(&output.stdout)),
+        Err(error) if is_transport_error(&error.to_string()) => return Err(error),
+        // Some Android builds restrict dumpsys. PID detection still works.
+        Err(_) => None,
+    };
+    if let Some(focus) = focus.filter(|package| !crate::afk_journey::is_supported_package(package))
+    {
+        let home = match run(&[
+            "-s",
+            serial,
+            "shell",
+            "cmd",
+            "package",
+            "resolve-activity",
+            "--brief",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.HOME",
+        ]) {
+            Ok(output) => component_package(&String::from_utf8_lossy(&output.stdout)),
+            Err(error) if is_transport_error(&error.to_string()) => return Err(error),
+            Err(_) => None,
+        };
+        if home.as_deref() == Some(focus.as_str()) {
+            return Ok(GameState::Launcher);
+        }
+    }
+    Ok(GameState::Running)
+}
+
+pub fn reconnect(serial: &str) -> Result<(), AdbError> {
+    // Reconnect only this transport; never kill the shared ADB server or
+    // repeat a tap, purchase, claim, or other game input after an error.
+    if serial.parse::<std::net::SocketAddr>().is_ok() {
+        run(&["connect", serial]).map(|_| ())
+    } else {
+        run(&["-s", serial, "reconnect"]).map(|_| ())
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn disconnect_for_recovery_test(serial: &str) -> Result<(), AdbError> {
+    if serial.parse::<std::net::SocketAddr>().is_err() {
+        return Err(AdbError::Failed(
+            "The recovery integration test requires a TCP emulator".into(),
+        ));
+    }
+    run(&["disconnect", serial]).map(|_| ())
+}
+
 fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
     let Some((pids, status)) = stdout.rsplit_once("ADBHELPER_PID_EXIT:") else {
         return Err(AdbError::InvalidOutput(
@@ -280,6 +395,43 @@ fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
 #[cfg(test)]
 mod process_tests {
     use super::*;
+    #[test]
+    fn transport_failures_and_foreground_records_are_unambiguous() {
+        for value in [
+            "ADB command failed: ADB command failed: error: closed",
+            "error: device offline",
+            "error: device '127.0.0.1:7555' not found",
+            "ADB command failed: adb.exe: device '127.0.0.1:7555' not found",
+            "error: connection reset by peer",
+        ] {
+            assert!(is_transport_error(value), "{value}");
+        }
+        for value in [
+            "The battle closed without a result",
+            "AFK Journey is not installed",
+            "device unauthorized",
+            "permission denied",
+        ] {
+            assert!(!is_transport_error(value), "{value}");
+        }
+        let focus = "mResumedActivity: ActivityRecord{12 u0 app.lawnchair/.LawnchairLauncher t2}\ntopResumedActivity=ActivityRecord{34 u0 com.farlightgames.igame.gp/com.game.Main t7}";
+        assert_eq!(
+            foreground_package(focus).as_deref(),
+            Some("com.farlightgames.igame.gp")
+        );
+        assert_eq!(
+            foreground_package(
+                "topResumedActivity=ActivityRecord{12 u0 app.lawnchair/.LawnchairLauncher t2}"
+            )
+            .as_deref(),
+            Some("app.lawnchair")
+        );
+        assert_eq!(
+            foreground_package("background record com.farlightgames.igame.gp/com.game.Main"),
+            None
+        );
+        assert_eq!(component_package("No activity found"), None);
+    }
     #[test]
     fn missing_process_is_distinct_from_unsupported_or_failed_adb_commands() {
         assert!(parse_game_process("30257\r\r\nADBHELPER_PID_EXIT:0\r\n").unwrap());

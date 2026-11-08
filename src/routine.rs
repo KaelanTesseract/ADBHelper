@@ -15,14 +15,16 @@ pub enum Action {
     FreeHourglasses,
     DiamondHourglasses,
     StageRewards,
+    SeasonRankingRewards,
 }
 
 impl Action {
-    pub const DAILY_STEPS: [Self; 10] = [
+    pub const DAILY_STEPS: [Self; 11] = [
         Self::AfkRewards,
         Self::FreeHourglasses,
         Self::DiamondHourglasses,
         Self::StageRewards,
+        Self::SeasonRankingRewards,
         Self::AfkStages,
         Self::SeasonLegendTrial,
         Self::UnionCampaign,
@@ -44,6 +46,7 @@ impl Action {
             Self::FreeHourglasses => 8,
             Self::DiamondHourglasses => 9,
             Self::StageRewards => 10,
+            Self::SeasonRankingRewards => 11,
         }
     }
 
@@ -63,6 +66,10 @@ impl Action {
             ),
             Self::DiamondHourglasses => text("Diamond hourglasses", "Diamanten-Sanduhren"),
             Self::StageRewards => text("AFK stage rewards", "AFK-Stufenbelohnungen"),
+            Self::SeasonRankingRewards => text(
+                "Season Phase Ranking rewards",
+                "Season-Phase-Ranglistenbelohnungen",
+            ),
         }
     }
 }

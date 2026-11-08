@@ -1,0 +1,32 @@
+Tool: built-in image_gen. Intent: compositing the existing ADBHelper logo into a release announcement infographic.
+
+Final prompt:
+Use case: ads-marketing.
+Asset type: polished release announcement infographic for GitHub and Discord, landscape 1536 x 1024.
+Edit/compositing input: the provided image is the existing ADBHelper logo. Preserve that turquoise AH/play monogram faithfully, use it as a small brand mark in the new poster. Replace the empty background with the complete release graphic. Do not use the logo as a giant centerpiece.
+Visual direction: match ADBHelper's charcoal desktop app, almost black graphite background, crisp off-white modern sans-serif type, restrained luminous turquoise lines and soft cyan glow. Premium clean software release design, strong readable hierarchy, generous margins. No game artwork, no robot mascot, no fake app screenshot, no browser frames. Use simple tasteful line icons for reward gift, reconnect/restart, opponent selection, and six sweeps.
+Composition: small brand row at top with logo and ADBHelper; turquoise release pill 0.4.5. Large headline followed by a balanced 2-by-2 grid of four concise feature cards. First card tagged NEW; other three tagged FIXED. Clear flat view with razor-sharp text, no perspective. Subtle turquoise connection lines may connect the recovery card's three words. All copy must be exactly as below, with no additional claims or extra text.
+Text (verbatim):
+"ADBHelper"
+"RELEASE 0.4.5"
+"More rewards. Smoother runs."
+"AFK Journey automation"
+"NEW"
+"Season ranking rewards"
+"District · Server · Guild"
+"Add it to your Daily routine"
+"FIXED"
+"Automatic recovery"
+"Reconnect · Restart · Resume"
+"Keep your confirmed progress"
+"FIXED"
+"Supreme Arena"
+"Continue → Opponent → Battle"
+"Resume the current formation"
+"FIXED"
+"Dura’s Trials"
+"Verified cap · Up to 6 daily Sweeps"
+"Arcane & Focused Treasure"
+"130 automated tests passed"
+"Windows x64"
+Constraints: emphasize release 0.4.5, spell ADBHelper correctly with uppercase ADB and H. Keep all the four card titles and their copy readable at Discord attachment width. Use turquoise glow as an accent, not a haze over text. No claim of full PvP combat validation. No watermark.

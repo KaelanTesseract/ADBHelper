@@ -250,6 +250,12 @@ fn dismiss_notice(
     screen: &GrayImage,
     size: (u32, u32),
 ) -> Result<bool, String> {
+    if kind == Kind::Supreme && ranking_rewards(&ocr::recognize(screen)?) {
+        // This is the reward table, not the post-battle result or a claim.
+        // Leave it with Back instead of opening Daily Rewards again.
+        adb::press_back(serial).map_err(|e| e.to_string())?;
+        return Ok(true);
+    }
     if let Some(close) = find(screen, "tap_to_close.png", common::lower_screen())? {
         common::tap_match(serial, close, size)?;
         return Ok(true);
@@ -266,17 +272,25 @@ fn dismiss_notice(
         adb::press_back(serial).map_err(|e| e.to_string())?;
         return Ok(true);
     }
-    if kind == Kind::Supreme {
-        if let Some(rewards) = find(
-            screen,
-            "supreme_arena/daily_rewards.png",
-            common::lower_screen(),
-        )? {
-            common::tap_match(serial, rewards, size)?;
-            return Ok(true);
-        }
-    }
     Ok(false)
+}
+
+fn ranking_rewards(lines: &[TextLine]) -> bool {
+    let heading = lines.iter().any(|line| {
+        let (x, y) = line.center();
+        // The decorative D is read as O (or omitted) in real screenshots.
+        x < 850
+            && y < 200
+            && matches!(
+                result_text(&line.text).as_str(),
+                "dailyrankingrewards" | "oailyrankingrewards" | "ailyrankingrewards"
+            )
+    });
+    let tabs = lines.iter().any(|line| {
+        let (_, y) = line.center();
+        (220..=450).contains(&y) && result_text(&line.text) == "leaguepoints"
+    });
+    heading && tabs
 }
 
 fn wait_home(
@@ -301,10 +315,13 @@ fn wait_home(
         dismiss_notice(serial, kind, &screen, size)?;
         common::settle_cancellable(cancelled)?;
     }
-    Err(format_text!(
-        "The {} overview was not detected.",
-        "{}-Übersicht nicht erkannt.",
-        kind.mode().label()
+    Err(super::recovery::restart_required(
+        serial,
+        format_text!(
+            "The {} overview was not detected.",
+            "{}-Übersicht nicht erkannt.",
+            kind.mode().label()
+        ),
     ))
 }
 
@@ -449,6 +466,109 @@ enum Choice {
     Ready,
     Exhausted,
 }
+
+#[derive(Debug)]
+enum SupremeSelectionView {
+    Overview(Match),
+    Opponents,
+    Details(Match),
+    Formation,
+    Exhausted,
+    Unknown,
+}
+
+fn supreme_formation_header(lines: &[TextLine]) -> bool {
+    lines.iter().any(|line| {
+        let (x, y) = line.center();
+        (300..=800).contains(&x) && y < 180 && result_text(&line.text) == "supremearena"
+    })
+}
+
+fn supreme_details(lines: &[TextLine]) -> bool {
+    ["team1", "team2", "team3"].iter().all(|expected| {
+        lines.iter().any(|line| {
+            let (x, y) = line.center();
+            let label: String = line
+                .text
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect();
+            x < 400 && (800..=1700).contains(&y) && label == *expected
+        })
+    })
+}
+
+fn supreme_opponent_heading(lines: &[TextLine]) -> bool {
+    let has = |label: &str, region: Rect| {
+        lines.iter().any(|line| {
+            let (x, y) = line.center();
+            x >= region.x
+                && x < region.x + region.width
+                && y >= region.y
+                && y < region.y + region.height
+                && result_text(&line.text).starts_with(label)
+        })
+    };
+    has(
+        "selectopponent",
+        Rect {
+            x: 0,
+            y: 180,
+            width: 1080,
+            height: 420,
+        },
+    ) && has(
+        "myrank",
+        Rect {
+            x: 0,
+            y: 0,
+            width: 400,
+            height: 180,
+        },
+    ) && has("refresh", footer())
+}
+
+fn supreme_selection_view(screen: &GrayImage) -> Result<SupremeSelectionView, String> {
+    if let Some((path, button)) = home_control(screen, Kind::Supreme)? {
+        return Ok(
+            if path == Kind::Supreme.challenge() && challenge_attempts(screen)? == Some(0) {
+                SupremeSelectionView::Exhausted
+            } else {
+                SupremeSelectionView::Overview(button)
+            },
+        );
+    }
+    if find(
+        screen,
+        "supreme_arena/select_opponent.png",
+        Rect {
+            x: 0,
+            y: 0,
+            width: 1080,
+            height: 700,
+        },
+    )?
+    .is_some()
+    {
+        return Ok(SupremeSelectionView::Opponents);
+    }
+    let lines = ocr::recognize(screen)?;
+    if supreme_opponent_heading(&lines) {
+        return Ok(SupremeSelectionView::Opponents);
+    }
+    if supreme_formation_header(&lines)
+        && common::get_match(screen, &["next.png", "arena/battle.png"], footer(), 0.85)?.is_some()
+    {
+        return Ok(SupremeSelectionView::Formation);
+    }
+    if supreme_details(&lines) {
+        if let Some(button) = find(screen, "supreme_arena/challenge_detail.png", footer())? {
+            return Ok(SupremeSelectionView::Details(button));
+        }
+    }
+    Ok(SupremeSelectionView::Unknown)
+}
 trait Driver {
     fn choose(&mut self) -> Result<Choice, String>;
     fn battle(&mut self) -> Result<BattleOutcome, String>;
@@ -555,6 +675,101 @@ struct AdbDriver<'a, P> {
 }
 
 impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
+    fn choose_supreme(&mut self) -> Result<Choice, String> {
+        let mut sent = [false; 3];
+        for _ in 0..24 {
+            common::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = common::screenshot(self.serial)?;
+            if purchase_popup(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                return Ok(Choice::Exhausted);
+            }
+            if confirmation(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                return Err(text(
+                    "The Arena confirmation could not be verified. No purchase was made.",
+                    "Arena-Bestätigung ist nicht eindeutig; kein Kauf.",
+                )
+                .into());
+            }
+            let view = supreme_selection_view(&screen)?;
+            common::ensure_not_cancelled(self.cancelled)?;
+            match view {
+                SupremeSelectionView::Formation => return Ok(Choice::Ready),
+                SupremeSelectionView::Exhausted => return Ok(Choice::Exhausted),
+                SupremeSelectionView::Overview(button) if !sent[0] => {
+                    common::tap_match(self.serial, button, size)?;
+                    sent[0] = true;
+                }
+                SupremeSelectionView::Opponents if !sent[1] => {
+                    let (x, y) = self.settings.opponent().point();
+                    adb::tap_game_point(self.serial, x, y, size).map_err(|e| e.to_string())?;
+                    sent[1] = true;
+                }
+                SupremeSelectionView::Details(button) if !sent[2] => {
+                    common::tap_match(self.serial, button, size)?;
+                    sent[2] = true;
+                }
+                SupremeSelectionView::Unknown => {
+                    dismiss_notice(self.serial, Kind::Supreme, &screen, size)?;
+                }
+                _ => {}
+            }
+            // Wait for the verified destination of each tap, including the
+            // formation loading screen. A repeated frame must not repeat input.
+            common::settle_cancellable(self.cancelled)?;
+        }
+        Err(super::recovery::restart_required(
+            self.serial,
+            text(
+                "Supreme Arena could not reach the selected opponent's formation.",
+                "Supreme Arena konnte die Aufstellung des ausgewählten Gegners nicht öffnen.",
+            )
+            .into(),
+        ))
+    }
+
+    fn prepare_supreme_battle(&mut self) -> Result<(Match, (u32, u32)), String> {
+        // Continue may resume any of the three formations. Advance only while
+        // Next is actually present; an existing Battle screen needs no Next taps.
+        let mut advances = 0;
+        for _ in 0..24 {
+            common::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = common::screenshot(self.serial)?;
+            if purchase_popup(&screen)? || confirmation(&screen)? {
+                adb::press_back(self.serial).map_err(|e| e.to_string())?;
+                return Err(text(
+                    "An unexpected Arena dialog appeared. No confirmation or purchase was made.",
+                    "Unerwarteter Arena-Dialog; keine Bestätigung oder zusätzlicher Kauf.",
+                )
+                .into());
+            }
+            if supreme_formation_header(&ocr::recognize(&screen)?) {
+                if let Some((path, button)) =
+                    common::get_match(&screen, &["arena/battle.png", "next.png"], footer(), 0.85)?
+                {
+                    if path == "arena/battle.png" {
+                        return Ok((button, size));
+                    }
+                    if advances < 2 {
+                        common::ensure_not_cancelled(self.cancelled)?;
+                        common::tap_match(self.serial, button, size)?;
+                        advances += 1;
+                    }
+                }
+            }
+            common::settle_cancellable(self.cancelled)?;
+        }
+        Err(super::recovery::restart_required(
+            self.serial,
+            text(
+                "The Supreme Arena Battle button was not reached after preparing the teams.",
+                "Der Supreme-Arena-Kampfbutton wurde nach der Teamvorbereitung nicht erreicht.",
+            )
+            .into(),
+        ))
+    }
+
     fn wait_control(&self, path: &str, roi: Rect) -> Result<(Match, (u32, u32)), String> {
         for _ in 0..14 {
             common::ensure_not_cancelled(self.cancelled)?;
@@ -572,9 +787,12 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             }
             common::settle_cancellable(self.cancelled)?;
         }
-        Err(format_text!(
-            "Arena control {path} was not detected.",
-            "Arena-Steuerelement {path} nicht erkannt."
+        Err(super::recovery::restart_required(
+            self.serial,
+            format_text!(
+                "Arena control {path} was not detected.",
+                "Arena-Steuerelement {path} nicht erkannt."
+            ),
         ))
     }
 
@@ -625,11 +843,14 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             }
             common::settle_cancellable(self.cancelled)?;
         }
-        Err(text(
-            "The Arena result screen could not be closed. The run stopped.",
-            "Arena-Ergebnis nicht geschlossen; kein weiterer Kampf gestartet.",
-        )
-        .into())
+        Err(super::recovery::restart_required(
+            self.serial,
+            text(
+                "The Arena result screen could not be closed.",
+                "Die Arena-Ergebnisansicht ließ sich nicht schließen.",
+            )
+            .into(),
+        ))
     }
 }
 
@@ -640,6 +861,9 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
     fn choose(&mut self) -> Result<Choice, String> {
         common::ensure_not_cancelled(self.cancelled)?;
         let kind = self.settings.kind();
+        if kind == Kind::Supreme {
+            return self.choose_supreme();
+        }
         let (screen, size) = wait_home(self.serial, kind, self.cancelled)?;
         let (path, challenge) = home_control(&screen, kind)?.ok_or(text(
             "Arena Challenge button not detected",
@@ -681,50 +905,27 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
                     common::settle_cancellable(self.cancelled)?;
                     return Ok(Choice::Ready);
                 }
-            } else if find(
-                &screen,
-                "supreme_arena/select_opponent.png",
-                Rect {
-                    x: 0,
-                    y: 0,
-                    width: 1080,
-                    height: 700,
-                },
-            )?
-            .is_some()
-            {
-                let (x, y) = self.settings.opponent().point();
-                adb::tap_game_point(self.serial, x, y, size).map_err(|e| e.to_string())?;
-                common::settle_cancellable(self.cancelled)?;
-                let (detail, size) =
-                    self.wait_control("supreme_arena/challenge_detail.png", footer())?;
-                common::ensure_not_cancelled(self.cancelled)?;
-                common::tap_match(self.serial, detail, size)?;
-                common::settle_cancellable(self.cancelled)?;
-                return Ok(Choice::Ready);
             }
             dismiss_notice(self.serial, kind, &screen, size)?;
             common::settle_cancellable(self.cancelled)?;
         }
-        Err(text(
-            "The Arena opponent selection was not detected.",
-            "Arena-Gegnerauswahl nicht erkannt.",
-        )
-        .into())
+        Err(super::recovery::restart_required(
+            self.serial,
+            text(
+                "The Arena opponent selection was not detected.",
+                "Arena-Gegnerauswahl nicht erkannt.",
+            )
+            .into(),
+        ))
     }
 
     fn battle(&mut self) -> Result<BattleOutcome, String> {
         let kind = self.settings.kind();
-        // Supreme Arena has exactly three existing formations: Next, Next, Battle.
-        if kind == Kind::Supreme {
-            for _ in 0..2 {
-                let (next, size) = self.wait_control("next.png", footer())?;
-                common::ensure_not_cancelled(self.cancelled)?;
-                common::tap_match(self.serial, next, size)?;
-                common::settle_cancellable(self.cancelled)?;
-            }
-        }
-        let (battle, size) = self.wait_control("arena/battle.png", footer())?;
+        let (battle, size) = if kind == Kind::Supreme {
+            self.prepare_supreme_battle()?
+        } else {
+            self.wait_control("arena/battle.png", footer())?
+        };
         common::ensure_not_cancelled(self.cancelled)?;
         let mode = kind.mode();
         (self.progress)(ActivityEvent::BattleStarted(mode));
@@ -867,6 +1068,285 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires captured Supreme Arena Continue and opponent-selection views"]
+    fn captured_supreme_opponent_selection() {
+        let folder = std::path::PathBuf::from(
+            std::env::var_os("ADBHELPER_TEST_SUPREME_OPPONENT").expect("capture folder"),
+        );
+        for name in [
+            "before.png",
+            "after-continue.png",
+            "detail.png",
+            "formation-loaded.png",
+        ] {
+            let (screen, _) =
+                common::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap()).unwrap();
+            println!(
+                "{name}: home={:?}, purchase={}, confirmation={}",
+                home_control(&screen, Kind::Supreme).unwrap(),
+                purchase_popup(&screen).unwrap(),
+                confirmation(&screen).unwrap()
+            );
+            for path in [
+                "supreme_arena/label.png",
+                "supreme_arena/challenge.png",
+                "arena/continue.png",
+                "supreme_arena/select_opponent.png",
+            ] {
+                println!(
+                    "{path}: {:?}",
+                    common::find_template(&screen, path, common::full_screen(), 0.0).unwrap()
+                );
+            }
+            let view = supreme_selection_view(&screen).unwrap();
+            println!("Selection state: {view:?}");
+            assert!(match name {
+                "before.png" => matches!(view, SupremeSelectionView::Overview(_)),
+                "after-continue.png" => matches!(view, SupremeSelectionView::Opponents),
+                "detail.png" => matches!(view, SupremeSelectionView::Details(_)),
+                _ => matches!(view, SupremeSelectionView::Formation),
+            });
+            assert!(!purchase_popup(&screen).unwrap());
+            assert!(!confirmation(&screen).unwrap());
+        }
+    }
+
+    #[test]
+    fn supreme_views_require_their_own_headings_and_anchors() {
+        assert!(supreme_details(&[
+            line("Team 1", 925.0, 30.0),
+            line("Team 2", 1189.0, 30.0),
+            line("Team 3", 1452.0, 30.0)
+        ]));
+        assert!(!supreme_details(&[
+            line("Team 1", 925.0, 30.0),
+            line("Team 2", 1189.0, 30.0)
+        ]));
+        let grid = [
+            line("My Rank:", 20.0, 30.0),
+            line("Select Opponent", 270.0, 100.0),
+            line("Refresh: 5/5", 1800.0, 30.0),
+        ];
+        assert!(supreme_opponent_heading(&grid));
+        assert!(!supreme_opponent_heading(&grid[1..]));
+        assert!(supreme_formation_header(&[line(
+            "Supreme Arena",
+            40.0,
+            40.0
+        )]));
+        assert!(!supreme_formation_header(&[line(
+            "Supreme Arena",
+            1100.0,
+            40.0
+        )]));
+        assert!(!supreme_formation_header(&[line("Arena", 40.0, 40.0)]));
+    }
+
+    #[test]
+    fn stop_prevents_supreme_selection_and_formation_input() {
+        let cancelled = AtomicBool::new(true);
+        let expected = common::ensure_not_cancelled(&cancelled).unwrap_err();
+        let mut driver = AdbDriver {
+            serial: "not-a-device",
+            settings: Settings::Supreme(SupremeSettings::default()),
+            cancelled: &cancelled,
+            progress: &mut |_| panic!("no battle event"),
+        };
+        assert_eq!(driver.choose_supreme().unwrap_err(), expected);
+        assert_eq!(driver.prepare_supreme_battle().unwrap_err(), expected);
+    }
+
+    #[test]
+    #[ignore = "opens a Supreme Arena opponent and its formation; does not start a battle or buy attempts"]
+    fn connected_emulator_supreme_formation_without_combat() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
+        let cancelled = AtomicBool::new(false);
+        for start in ["overview", "opponents", "details"] {
+            navigate(&serial, Kind::Supreme, &cancelled, &mut |m| println!("{m}")).unwrap();
+            if start != "overview" {
+                let (screen, size) = wait_home(&serial, Kind::Supreme, &cancelled).unwrap();
+                let (_, button) = home_control(&screen, Kind::Supreme).unwrap().unwrap();
+                common::tap_match(&serial, button, size).unwrap();
+                common::wait_for_match(
+                    &serial,
+                    &["supreme_arena/select_opponent.png"],
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: 1080,
+                        height: 700,
+                    },
+                    Duration::from_secs(20),
+                    &cancelled,
+                )
+                .unwrap();
+                if start == "details" {
+                    let (_, size) = common::screenshot(&serial).unwrap();
+                    let (x, y) = OpponentPosition::Left.point();
+                    adb::tap_game_point(&serial, x, y, size).unwrap();
+                    common::wait_for_match(
+                        &serial,
+                        &["supreme_arena/challenge_detail.png"],
+                        footer(),
+                        Duration::from_secs(20),
+                        &cancelled,
+                    )
+                    .unwrap();
+                }
+            }
+            std::fs::write(
+                ".update-test/supreme-opponent/choose-before.png",
+                adb::screenshot(&serial).unwrap(),
+            )
+            .unwrap();
+            let mut driver = AdbDriver {
+                serial: &serial,
+                settings: Settings::Supreme(SupremeSettings::default()),
+                cancelled: &cancelled,
+                progress: &mut |_| panic!("no battle may start"),
+            };
+            let result = driver.choose();
+            std::fs::write(
+                ".update-test/supreme-opponent/choose-after.png",
+                adb::screenshot(&serial).unwrap(),
+            )
+            .unwrap();
+            println!("Opponent selection result: {result:?}");
+            assert_eq!(result.unwrap(), Choice::Ready);
+            driver.wait_control("next.png", footer()).unwrap();
+            println!("First Supreme Arena formation reached; no battle started.");
+            driver.prepare_supreme_battle().unwrap();
+            // Re-entering from the final formation must not require two more Next taps.
+            assert_eq!(driver.choose().unwrap(), Choice::Ready);
+            driver.prepare_supreme_battle().unwrap();
+            println!("Started from {start}: selected opponent, prepared all three teams, and resumed final formation; Battle was not tapped.");
+        }
+    }
+
+    #[test]
+    fn ranking_table_is_identified_separately_from_results_and_notices() {
+        let heading = line("Daily Ranking Rewards", 50.0, 60.0);
+        let tab = line("League Points", 330.0, 30.0);
+        assert!(ranking_rewards(&[heading.clone(), tab.clone()]));
+        assert!(ranking_rewards(&[
+            line("OailyRanking Rewards", 50.0, 60.0),
+            tab.clone()
+        ]));
+        assert!(ranking_rewards(&[
+            line("aily Ranking Rewards", 50.0, 60.0),
+            tab.clone()
+        ]));
+        assert!(!ranking_rewards(&[
+            line("Daily Rewards", 50.0, 60.0),
+            tab.clone()
+        ]));
+        assert!(!ranking_rewards(&[heading]));
+        assert!(!ranking_rewards(&[tab]));
+        assert!(!ranking_rewards(&[
+            line("Victory", 50.0, 60.0),
+            line("League Points", 330.0, 30.0),
+        ]));
+        assert!(!ranking_rewards(&[
+            line("Daily Ranking Rewards", 950.0, 60.0),
+            line("League Points", 330.0, 30.0),
+        ]));
+    }
+
+    #[test]
+    #[ignore = "requires a captured Supreme Arena ranking-rewards image"]
+    fn captured_supreme_ranking_rewards() {
+        let path = std::env::var_os("ADBHELPER_TEST_SUPREME_RANKING").expect("capture path");
+        let (screen, _) = common::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        let lines = ocr::recognize(&screen).unwrap();
+        println!("Ranking rewards OCR: {lines:?}");
+        assert!(ranking_rewards(&lines));
+        assert!(battle_result(&screen, true).unwrap().is_none());
+    }
+
+    #[test]
+    #[ignore = "requires a selected emulator; opens/closes rewards and restarts, without battles or purchases"]
+    fn connected_emulator_supreme_result_recovery_without_combat() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
+        let cancelled = AtomicBool::new(false);
+        navigate(&serial, Kind::Supreme, &cancelled, &mut |m| println!("{m}")).unwrap();
+        let (home, size) = wait_home(&serial, Kind::Supreme, &cancelled).unwrap();
+        let rewards = find(
+            &home,
+            "supreme_arena/daily_rewards.png",
+            common::lower_screen(),
+        )
+        .unwrap()
+        .expect("Daily Rewards entry on Supreme Arena home");
+        common::tap_match(&serial, rewards, size).unwrap();
+        common::settle_cancellable(&cancelled).unwrap();
+        let (table, _) = common::screenshot(&serial).unwrap();
+        std::fs::write(
+            ".update-test/supreme-recovery/live-ranking.png",
+            adb::screenshot(&serial).unwrap(),
+        )
+        .unwrap();
+        assert!(ranking_rewards(&ocr::recognize(&table).unwrap()));
+        let settings = Settings::Supreme(SupremeSettings::default());
+        let mut outcome = BattleOutcome::Unclear;
+        AdbDriver {
+            serial: &serial,
+            settings,
+            cancelled: &cancelled,
+            progress: &mut |_| {},
+        }
+        .finish_result(&mut outcome)
+        .unwrap();
+        println!("Daily Ranking Rewards closed; Supreme Arena home verified.");
+        assert!(matches!(outcome, BattleOutcome::Unclear));
+
+        let mut calls = 0;
+        let result = super::super::recovery::run(
+            &serial,
+            &cancelled,
+            |checkpoint, report| {
+                calls += 1;
+                report(ActivityEvent::ModeOpening(GameMode::SupremeArena));
+                navigate(&serial, Kind::Supreme, &cancelled, &mut |m| println!("{m}"))?;
+                report(ActivityEvent::ModeEntered(GameMode::SupremeArena));
+                if calls == 1 {
+                    super::super::recovery::save_arena_cursor(
+                        &serial,
+                        Cursor {
+                            initial: 2,
+                            ..Cursor::default()
+                        },
+                    );
+                    // Simulate an unrelated in-game page after a result, while
+                    // retaining the real finish-result timeout and restart path.
+                    common::navigate_to_battle_modes(&serial, &cancelled, &mut |m| {
+                        println!("{m}")
+                    })?;
+                    assert_eq!(
+                        adb::game_state(&serial).map_err(|e| e.to_string())?,
+                        adb::GameState::Running
+                    );
+                    return AdbDriver {
+                        serial: &serial,
+                        settings,
+                        cancelled: &cancelled,
+                        progress: &mut |_| {},
+                    }
+                    .finish_result(&mut BattleOutcome::Unclear)
+                    .map(|()| 0);
+                }
+                assert_eq!(checkpoint.mode, Some(GameMode::SupremeArena));
+                assert_eq!(checkpoint.arena.initial, 2);
+                println!("Returned to Supreme Arena with two reserved attempts preserved; no battle started.");
+                Ok(0)
+            },
+            |m| println!("{m}"),
+            |e| println!("{e:?}"),
+        );
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(calls, 2);
+    }
 
     #[test]
     fn challenge_ratio_reads_the_available_count_without_guessing() {

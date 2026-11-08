@@ -102,6 +102,9 @@ impl RunSettings {
             StageAction::FreeHourglasses => Some(GameMode::FreeHourglasses),
             StageAction::DiamondHourglasses => Some(GameMode::DiamondHourglasses),
             StageAction::StageRewards => Some(GameMode::StageRewards),
+            StageAction::SeasonRankingRewards => Some(GameMode::SeasonRankingRewards(
+                crate::activity::RankingScope::District,
+            )),
             StageAction::Daily => None,
         }
     }
@@ -126,6 +129,7 @@ fn run_step(
     };
     let mut collection = crate::afk_journey::daily::Cursor::default();
     let mut extras = crate::afk_journey::daily_extras::Cursor::default();
+    let mut ranking = crate::afk_journey::phase_rewards::Cursor::default();
     crate::afk_journey::recovery::run(
         serial,
         cancelled,
@@ -203,6 +207,13 @@ fn run_step(
                         report,
                     )
                 }
+                StageAction::SeasonRankingRewards => crate::afk_journey::phase_rewards::run(
+                    serial,
+                    &mut ranking,
+                    cancelled,
+                    &mut log,
+                    report,
+                ),
                 StageAction::Daily => Err("A Daily routine cannot contain itself.".into()),
             }
         },
@@ -1342,7 +1353,7 @@ impl PlayerApp {
                                     });
                                     ui.label(text("Uses your three in-game teams. Selects Next twice, then Battle.", "Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf."));
                                 }
-                                StageAction::Daily | StageAction::AfkRewards | StageAction::FreeHourglasses | StageAction::DiamondHourglasses | StageAction::StageRewards => {}
+                                StageAction::Daily | StageAction::AfkRewards | StageAction::FreeHourglasses | StageAction::DiamondHourglasses | StageAction::StageRewards | StageAction::SeasonRankingRewards => {}
                             }
                             if !matches!(action,StageAction::Arena|StageAction::SupremeArena) && action != StageAction::UnionCampaign {
                                 ui.add_space(SpaceTokens::MD);

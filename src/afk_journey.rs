@@ -17,6 +17,7 @@ pub mod daily_extras;
 pub mod duras_trials;
 pub mod legend_trial;
 mod ocr;
+pub mod phase_rewards;
 pub mod recovery;
 pub mod union_campaign;
 
