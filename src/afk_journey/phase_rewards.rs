@@ -28,7 +28,13 @@ struct Stage {
 struct Receipt {
     phase: u32,
     scope: RankingScope,
-    stage: Stage,
+    claim: Claim,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Claim {
+    Stage(Stage),
+    Quick,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,15 +261,20 @@ fn reward_badge(frame: &Frame, scope: RankingScope) -> bool {
         RankingScope::Guild => 1025,
     };
     let mut orange = 0;
-    for y in (1740..1780).step_by(2) {
+    let mut gold = 0;
+    for y in (1740..1784).step_by(2) {
         for x in (center - 20..center + 20).step_by(2) {
             let [r, g, b] = frame.color.get_pixel(x, y).0;
             if r > 220 && (70..210).contains(&g) && b < 110 {
                 orange += 1;
             }
+            // The yellow gift glyph sits inside the orange badge.
+            if r >= 235 && g >= 195 && (70..=150).contains(&b) {
+                gold += 1;
+            }
         }
     }
-    orange > 60
+    orange > 60 && gold > 20
 }
 
 fn rows(frame: &Frame) -> Result<Vec<Row>, String> {
@@ -319,13 +330,30 @@ fn rows(frame: &Frame) -> Result<Vec<Row>, String> {
     Ok(result)
 }
 
-fn quick_claim(frame: &Frame) -> bool {
-    frame.lines.iter().any(|l| {
-        l.x > 600.0
-            && (1500.0..1700.0).contains(&l.y)
-            && compact(&l.text) == "quickclaim"
-            && green_control(&frame.color, l)
-    })
+fn quick_claim(frame: &Frame) -> Option<(u32, u32)> {
+    frame
+        .lines
+        .iter()
+        .find(|l| {
+            l.x > 600.0
+                && (1500.0..1700.0).contains(&l.y)
+                && compact(&l.text) == "quickclaim"
+                && green_control(&frame.color, l)
+        })
+        .map(ocr::TextLine::center)
+}
+
+fn claim_control(frame: &Frame) -> Result<Option<(Claim, (u32, u32))>, String> {
+    let quick = quick_claim(frame).map(|point| (Claim::Quick, point));
+    match rows(frame) {
+        Ok(rows) => Ok(rows
+            .into_iter()
+            .find(|row| row.status == Status::Claimable)
+            .map(|row| (Claim::Stage(row.stage), row.point))
+            .or(quick)),
+        Err(_) if quick.is_some() => Ok(quick),
+        Err(error) => Err(error),
+    }
 }
 
 fn loot_close(lines: &[ocr::TextLine]) -> Option<(u32, u32)> {
@@ -536,15 +564,32 @@ fn finish_claim(
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<(), String> {
     let receipt = cursor.pending.clone().ok_or("No pending ranking reward")?;
+    let mut badge_absent = false;
     for attempt in 0..18 {
         let frame = read(serial, cancelled)?;
         if let Some(point) = loot_close(&frame.lines) {
+            badge_absent = false;
             tap(serial, point, &frame, cancelled)?;
         } else if first_clear(&frame) == Some((receipt.phase, receipt.scope)) {
+            let Claim::Stage(stage) = &receipt.claim else {
+                let absent = !reward_badge(&frame, receipt.scope);
+                if absent && badge_absent {
+                    cursor.pending = None;
+                    cursor.collected += 1;
+                    report(ActivityEvent::Collected(
+                        GameMode::SeasonRankingRewards(receipt.scope),
+                        1,
+                    ));
+                    return Ok(());
+                }
+                badge_absent = absent;
+                common::settle_cancellable(cancelled)?;
+                continue;
+            };
             let candidates = rows(&frame)?;
             if candidates
                 .iter()
-                .any(|r| r.stage == receipt.stage && r.status == Status::Claimed)
+                .any(|r| r.stage == *stage && r.status == Status::Claimed)
             {
                 cursor.pending = None;
                 cursor.collected += 1;
@@ -554,21 +599,17 @@ fn finish_claim(
                 ));
                 return Ok(());
             }
-            if attempt >= 4 && !candidates.iter().any(|r| r.stage == receipt.stage) {
+            if attempt >= 4 && !candidates.iter().any(|r| r.stage == *stage) {
                 let same_kind: Vec<_> = candidates
                     .iter()
-                    .filter(|r| r.stage.kind == receipt.stage.kind)
+                    .filter(|r| r.stage.kind == stage.kind)
                     .collect();
                 let direction = if !same_kind.is_empty()
-                    && same_kind
-                        .iter()
-                        .all(|r| r.stage.number < receipt.stage.number)
+                    && same_kind.iter().all(|r| r.stage.number < stage.number)
                 {
                     Some(((540, 1510), (540, 930)))
                 } else if !same_kind.is_empty()
-                    && same_kind
-                        .iter()
-                        .all(|r| r.stage.number > receipt.stage.number)
+                    && same_kind.iter().all(|r| r.stage.number > stage.number)
                 {
                     Some(((540, 930), (540, 1510)))
                 } else {
@@ -580,6 +621,8 @@ fn finish_claim(
                         .map_err(|e| e.to_string())?;
                 }
             }
+        } else {
+            badge_absent = false;
         }
         common::settle_cancellable(cancelled)?;
     }
@@ -609,33 +652,16 @@ fn collect_scope(
             )
             .into());
         }
-        let candidates = rows(&frame)?;
-        if let Some(row) = candidates.iter().find(|r| r.status == Status::Claimable) {
-            quiet = 0;
-            common::settle_cancellable(cancelled)?;
-            let fresh = read(serial, cancelled)?;
-            if first_clear(&fresh) != Some((phase, scope)) {
-                return Err("Ranking reward selection changed.".into());
+        if !reward_badge(&frame, scope) {
+            quiet += 1;
+            if quiet >= 2 {
+                return Ok(());
             }
-            let fresh_rows = rows(&fresh)?;
-            let selected = fresh_rows
-                .iter()
-                .find(|r| r.stage == row.stage && r.status == Status::Claimable)
-                .ok_or(text(
-                    "The ranking claim button changed.",
-                    "Die Abholschaltfläche hat sich verändert.",
-                ))?;
-            cursor.pending = Some(Receipt {
-                phase,
-                scope,
-                stage: selected.stage.clone(),
-            });
-            tap(serial, selected.point, &fresh, cancelled)?;
-            finish_claim(serial, cursor, cancelled, report)?;
-        } else if quick_claim(&frame) || reward_badge(&frame, scope) {
-            // Quick Claim proves more rewards exist, but individual rows give
-            // independently verifiable receipts and accurate collection counts.
-            quiet = 0;
+            common::settle_cancellable(cancelled)?;
+            continue;
+        }
+        quiet = 0;
+        let Some((claim, _)) = claim_control(&frame)? else {
             if scrolls >= 30 {
                 return Err(text(
                     "Claimable ranking rewards could not be located.",
@@ -648,19 +674,29 @@ fn collect_scope(
                 .map_err(|e| e.to_string())?;
             scrolls += 1;
             common::settle_cancellable(cancelled)?;
-        } else if !candidates.is_empty() {
-            quiet += 1;
-            if quiet >= 2 {
-                return Ok(());
-            }
-            common::settle_cancellable(cancelled)?;
-        } else {
-            return Err(text(
-                "Ranking reward status could not be read.",
-                "Der Status der Ranglistenbelohnungen konnte nicht gelesen werden.",
-            )
-            .into());
+            continue;
+        };
+        common::settle_cancellable(cancelled)?;
+        let fresh = read(serial, cancelled)?;
+        if first_clear(&fresh) != Some((phase, scope)) {
+            return Err("Ranking reward selection changed.".into());
         }
+        if !reward_badge(&fresh, scope) {
+            continue;
+        }
+        let Some((verified, point)) = claim_control(&fresh)? else {
+            continue;
+        };
+        if verified != claim {
+            continue;
+        }
+        cursor.pending = Some(Receipt {
+            phase,
+            scope,
+            claim,
+        });
+        tap(serial, point, &fresh, cancelled)?;
+        finish_claim(serial, cursor, cancelled, report)?;
     }
     Err(text(
         "Ranking rewards reached the collection limit.",
@@ -818,15 +854,41 @@ mod tests {
                 .collect();
             if scope == RankingScope::District {
                 assert!(claimable.is_empty());
-                assert!(!quick_claim(&frame));
+                assert!(quick_claim(&frame).is_none());
                 assert!(!reward_badge(&frame, scope));
             } else {
                 assert_eq!(claimable.len(), 1);
                 assert_eq!(claimable[0].stage.number, 500);
-                assert!(quick_claim(&frame));
+                assert!(quick_claim(&frame).is_some());
                 assert!(reward_badge(&frame, scope));
             }
         }
+    }
+    #[test]
+    #[ignore = "reads the Server reward view before and after Quick Claim; no device input"]
+    fn captured_quick_claim_with_offscreen_rewards() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("ADBHELPER_TEST_PHASE_REWARDS").expect("capture folder"),
+        );
+        let load = |name: &str| decode(&std::fs::read(root.join(name)).unwrap()).unwrap();
+        let before = load("current-badge.png");
+        let after = load("quick-claim-result.png");
+        for frame in [&before, &after] {
+            assert_eq!(first_clear(frame), Some((2, RankingScope::Server)));
+            assert!(!reward_badge(frame, RankingScope::District));
+            assert!(reward_badge(frame, RankingScope::Guild));
+            assert!(rows(frame)
+                .unwrap()
+                .iter()
+                .all(|row| row.status != Status::Claimable));
+        }
+        assert!(reward_badge(&before, RankingScope::Server));
+        let Some((Claim::Quick, (x, y))) = claim_control(&before).unwrap() else {
+            panic!("Quick Claim must be available for the off-screen rewards");
+        };
+        assert!((642..1045).contains(&x) && (1580..1690).contains(&y));
+        assert!(!reward_badge(&after, RankingScope::Server));
+        assert_eq!(claim_control(&after).unwrap(), None);
     }
     #[test]
     #[ignore = "collects free Season Phase first-clear rewards on a connected emulator, then reruns to check that claimed rows are skipped"]

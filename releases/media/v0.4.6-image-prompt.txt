@@ -1,0 +1,15 @@
+Tool: built-in image_gen
+
+Use case: ads-marketing.
+Asset: landscape 3:2 ADBHelper v0.4.6 release graphic for GitHub and Discord.
+Reference image: ADBHelper-v0.4.5.png is the previous release and visual style reference. Make a new coordinated release graphic with the same turquoise AH mark, nearly black backdrop, turquoise highlights, fine rounded outlines, white high-contrast sans-serif type and 2-by-2 feature layout. Use generous margins, a restrained glow, and one simple turquoise line icon per card: reorder grip with down arrow, gift, shield with pause mark, and two stacked stage cards. Make the title and feature labels readable in Discord previews. This is a changelog graphic, no screenshots or mock application UI.
+Render only the following exact English text, with clean kerning and no duplicate text:
+Top: "ADBHelper" and "RELEASE 0.4.6"
+Headline: "Easier Daily routines"
+Subtitle: "AFK Journey automation"
+Top left: "Daily routine" / "Drop or move steps to the end"
+Top right: "Season ranking rewards" / "Gift badges and Quick Claim"
+Bottom left: "Supreme Arena" / "Skip during Off Season"
+Bottom right: "Dura’s Trials" / "Cooperative and Ironwall fixes"
+Footer: "Windows x64"
+No text or symbols from the previous release beyond the brand, no watermarks, no filler badges.

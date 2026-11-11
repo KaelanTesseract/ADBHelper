@@ -1120,14 +1120,17 @@ impl PlayerApp {
         let mut close = false;
         let mut placement = None;
         let mut remove = None;
+        let reveal_id = egui::Id::unique("daily-reveal-last-step");
+        let reveal_last =
+            context.data_mut(|data| data.remove_temp::<bool>(reveal_id)) == Some(true);
         let response = egui::Modal::new(egui::Id::unique("daily-routine-editor"))
             .frame(design_system::panel_frame())
             .show(context, |ui| {
                 ui.set_width((context.content_rect().width() - 64.0).clamp(520.0, 760.0));
                 ui.heading(text("Daily routine", "Daily-Routine"));
                 ui.label(text(
-                    "Drag actions into your routine and arrange them in the order they should run.",
-                    "Ziehe Aktionen in deine Routine und sortiere sie in der gewünschten Reihenfolge.",
+                    "Drag actions to add or reorder them.",
+                    "Ziehe Aktionen zum Hinzufügen oder Sortieren.",
                 ));
                 ui.small(text(
                     "Each step uses the settings from its action card.",
@@ -1137,35 +1140,48 @@ impl PlayerApp {
                 if self.busy {
                     ui.small(text("Stop the current run to edit the routine.", "Beende den aktuellen Lauf, um die Routine zu bearbeiten."));
                 }
-                egui::ScrollArea::vertical()
-                    .id_salt("daily-editor-scroll")
-                    .max_height((context.content_rect().height() - 260.0).clamp(140.0, 520.0))
-                    .show(ui, |ui| {
-                        ui.add_enabled_ui(!self.busy, |ui| {
-                            ui.columns(2, |columns| {
-                                columns[0].strong(text("Available actions", "Verfügbare Aktionen"));
-                                columns[0].add_space(SpaceTokens::SM);
+                let list_height = (context.content_rect().height() - 320.0).clamp(110.0, 462.0);
+                let count = self.daily_routine.steps.len();
+                ui.add_enabled_ui(!self.busy, |ui| {
+                    ui.columns(2, |columns| {
+                        columns[0].strong(text("Available actions", "Verfügbare Aktionen"));
+                        columns[0].add_space(SpaceTokens::SM);
+                        egui::ScrollArea::vertical()
+                            .id_salt("daily-available-actions")
+                            .max_height(list_height)
+                            .show(&mut columns[0], |ui| {
                                 for action in StageAction::DAILY_STEPS {
                                     if self.daily_routine.steps.contains(&action) { continue; }
-                                    design_system::panel_frame().show(&mut columns[0], |ui| {
+                                    design_system::panel_frame().show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.dnd_drag_source(egui::Id::unique(("daily-source", action.index())), action, |ui| {
-                                                ui.label(action.label());
+                                                daily_drag_label(ui, action.label());
                                             });
-                                            if ui.small_button("+").on_hover_text(text("Add step", "Schritt hinzufügen")).clicked() {
-                                                placement = Some((action, self.daily_routine.steps.len()));
+                                            if ui.small_button("+").on_hover_text(text("Add to end", "Ans Ende hinzufügen")).clicked() {
+                                                placement = Some((action, count));
                                             }
                                         });
                                     });
-                                    columns[0].add_space(SpaceTokens::SM);
+                                    ui.add_space(SpaceTokens::SM);
                                 }
-                                columns[1].strong(text("Run in this order", "In dieser Reihenfolge ausführen"));
-                                columns[1].add_space(SpaceTokens::SM);
-                                let count = self.daily_routine.steps.len();
+                            });
+                        let routine = &mut columns[1];
+                        routine.strong(text("Run in this order", "In dieser Reihenfolge ausführen"));
+                        routine.add_space(SpaceTokens::SM);
+                        egui::ScrollArea::vertical()
+                            .id_salt("daily-routine-steps")
+                            .max_height(list_height)
+                            .auto_shrink([false, false])
+                            .animated(false)
+                            .show_viewport(routine, |ui, viewport| {
+                                if count == 0 {
+                                    ui.label(text("Your routine is empty.", "Deine Routine ist leer."));
+                                }
                                 for (index, action) in self.daily_routine.steps.iter().copied().enumerate() {
-                                    let row = design_system::panel_frame().show(&mut columns[1], |ui| {
+                                    let row = design_system::panel_frame().show(ui, |ui| {
+                                        ui.set_min_width(ui.available_width());
                                         ui.dnd_drag_source(egui::Id::unique(("daily-step", action.index())), action, |ui| {
-                                            ui.label(format!("{}  {}", index + 1, action.label()));
+                                            daily_drag_label(ui, &format!("{}  {}", index + 1, action.label()));
                                         });
                                         if action == StageAction::DiamondHourglasses {
                                             ui.horizontal(|ui| {
@@ -1178,20 +1194,26 @@ impl PlayerApp {
                                             });
                                             ui.small(text("Total limit per run. Free hourglasses should run first.", "Gesamtlimit pro Lauf. Kostenlose Sanduhren sollten zuerst laufen."));
                                         }
-                                        ui.horizontal(|ui| {
+                                        ui.horizontal_wrapped(|ui| {
                                             if ui.add_enabled(index > 0, egui::Button::new(text("Up", "Hoch")).small()).clicked() {
                                                 placement = Some((action, index - 1));
                                             }
                                             if ui.add_enabled(index + 1 < count, egui::Button::new(text("Down", "Runter")).small()).clicked() {
                                                 placement = Some((action, index + 2));
                                             }
+                                            if ui.add_enabled(index + 1 < count, egui::Button::new(text("To end", "Ans Ende")).small()).clicked() {
+                                                placement = Some((action, count));
+                                            }
                                             if ui.small_button(text("Remove", "Entfernen")).clicked() { remove = Some(index); }
                                         });
                                     }).response;
-                                    if row.dnd_hover_payload::<StageAction>().is_some() {
+                                    if reveal_last && index + 1 == count {
+                                        row.scroll_to_me(Some(egui::Align::BOTTOM));
+                                    }
+                                    if ui.is_enabled() && row.dnd_hover_payload::<StageAction>().is_some() {
                                         let before = context.pointer_latest_pos().is_none_or(|p| p.y < row.rect.center().y);
                                         let y = if before { row.rect.top() } else { row.rect.bottom() };
-                                        columns[1].painter().line_segment(
+                                        ui.painter().line_segment(
                                             [egui::pos2(row.rect.left(), y), egui::pos2(row.rect.right(), y)],
                                             egui::Stroke::new(2.0, ColorTokens::GLOW),
                                         );
@@ -1199,19 +1221,32 @@ impl PlayerApp {
                                             placement = Some((*action, index + usize::from(!before)));
                                         }
                                     }
-                                    columns[1].add_space(SpaceTokens::SM);
+                                    ui.add_space(SpaceTokens::SM);
                                 }
-                                let (_, dropped) = columns[1].dnd_drop_zone::<StageAction, _>(
-                                    design_system::panel_frame(),
-                                    |ui| {
-                                        ui.set_min_size(egui::vec2(ui.available_width(), 32.0));
-                                        ui.label(text("Drop a step here", "Schritt hier ablegen"));
-                                    },
-                                );
-                                if let Some(action) = dropped { placement = Some((*action, count)); }
+                                scroll_daily_drag(ui, viewport);
                             });
-                        });
+                        routine.add_space(SpaceTokens::SM);
+                        let mut drop_area = design_system::panel_frame()
+                            .fill(ColorTokens::BG_SECTION)
+                            .inner_margin(egui::Margin::symmetric(12, 6))
+                            .begin(routine);
+                        let ui = &mut drop_area.content_ui;
+                        ui.add_sized(
+                            [ui.available_width(), 30.0],
+                            egui::Label::new(text("Drop here to place last", "Hier ans Ende ziehen"))
+                                .halign(egui::Align::Center),
+                        );
+                        let target = drop_area.allocate_space(routine);
+                        if routine.is_enabled() && target.dnd_hover_payload::<StageAction>().is_some() {
+                            drop_area.frame.fill = ColorTokens::BG_ACTIVE;
+                            drop_area.frame.stroke = egui::Stroke::new(1.0, ColorTokens::GLOW);
+                            if let Some(action) = target.dnd_release_payload::<StageAction>() {
+                                placement = Some((*action, count));
+                            }
+                        }
+                        drop_area.paint(routine);
                     });
+                });
                 ui.add_space(SpaceTokens::MD);
                 ui.separator();
                 if let Some(error) = &self.daily_settings_error {
@@ -1229,6 +1264,10 @@ impl PlayerApp {
         self.daily_routine.diamond_hourglasses = diamond_settings;
         if let Some((action, index)) = placement {
             self.daily_routine.place(action, index);
+            if self.daily_routine.steps.last() == Some(&action) {
+                context.data_mut(|data| data.insert_temp(reveal_id, true));
+                context.request_repaint();
+            }
         }
         if self.daily_routine != previous {
             self.daily_settings_error = self.daily_routine.save().err();
@@ -1711,6 +1750,59 @@ impl eframe::App for PlayerApp {
             self.show_action_settings_dialog(ui.ctx());
         }
     }
+}
+
+fn daily_drag_label(ui: &mut egui::Ui, label: &str) {
+    ui.horizontal(|ui| {
+        let (grip, _) = ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
+        for x in [-2.0, 2.0] {
+            for y in [-4.0, 0.0, 4.0] {
+                ui.painter()
+                    .circle_filled(grip.center() + egui::vec2(x, y), 1.15, MUTED);
+            }
+        }
+        ui.label(label);
+    });
+}
+
+fn scroll_daily_drag(ui: &egui::Ui, viewport: egui::Rect) {
+    let context = ui.ctx();
+    if !ui.is_enabled() || !egui::DragAndDrop::has_payload_of_type::<StageAction>(context) {
+        return;
+    }
+    let area = viewport.translate(ui.max_rect().min.to_vec2());
+    let Some(pointer) = context
+        .pointer_latest_pos()
+        .filter(|_| ui.rect_contains_pointer(area))
+    else {
+        return;
+    };
+    let edge = (area.height() * 0.25).min(44.0);
+    let from_top = pointer.y - area.top();
+    let from_bottom = area.bottom() - pointer.y;
+    let content_height = ui.min_rect().bottom() - ui.max_rect().top();
+    let amount = if from_top < edge && viewport.top() > 0.5 {
+        1.0 - from_top / edge
+    } else if from_bottom < edge && viewport.bottom() < content_height - 0.5 {
+        from_bottom / edge - 1.0
+    } else {
+        return;
+    };
+    let dt = ui.input(|input| {
+        if input.pointer.primary_down() {
+            input.stable_dt.min(1.0 / 30.0)
+        } else {
+            0.0
+        }
+    });
+    if dt == 0.0 {
+        return;
+    }
+    ui.scroll_with_delta_animation(
+        egui::vec2(0.0, 500.0 * amount * dt),
+        egui::style::ScrollAnimation::none(),
+    );
+    context.request_repaint();
 }
 
 fn show_battle_options(ui: &mut egui::Ui, options: &mut ActionBattleOptions) {

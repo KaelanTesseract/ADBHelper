@@ -175,6 +175,50 @@ fn home_control(screen: &GrayImage, kind: Kind) -> Result<Option<(String, Match)
     )
 }
 
+fn off_season_text(lines: &[TextLine]) -> bool {
+    let status = lines.iter().any(|line| {
+        let (x, y) = line.center();
+        x < 400 && (220..=440).contains(&y) && result_text(&line.text) == "offseason"
+    });
+    let disabled_action = lines.iter().any(|line| {
+        let (x, y) = line.center();
+        (400..=1040).contains(&x) && (1700..=1870).contains(&y)
+            // OCR reads the decorative O as @ in the supplied Off Season button.
+            && matches!(result_text(&line.text).as_str(), "offseason" | "ffseason")
+    });
+    status && disabled_action
+}
+
+fn supreme_off_season(screen: &GrayImage) -> Result<bool, String> {
+    if find(
+        screen,
+        "supreme_arena/label.png",
+        Rect {
+            x: 0,
+            y: 0,
+            width: 790,
+            height: 180,
+        },
+    )?
+    .is_none()
+    {
+        return Ok(false);
+    }
+    Ok(off_season_text(&ocr::recognize(screen)?))
+}
+
+fn skip_off_season(serial: &str, kind: Kind, log: &mut impl FnMut(String)) -> Result<bool, String> {
+    if kind == Kind::Supreme && supreme_off_season(&common::screenshot(serial)?.0)? {
+        log(text(
+            "Supreme Arena is in Off Season. Skipping this step.",
+            "Supreme Arena ist in der Offseason. Dieser Schritt wird übersprungen.",
+        )
+        .into());
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 fn attempt_count(value: &str) -> Option<u32> {
     let compact: String = value.chars().filter(|c| !c.is_whitespace()).collect();
     let (remaining, cost) = compact.split_once('/')?;
@@ -309,7 +353,9 @@ fn wait_home(
             )
             .into());
         }
-        if home_control(&screen, kind)?.is_some() {
+        if home_control(&screen, kind)?.is_some()
+            || (kind == Kind::Supreme && supreme_off_season(&screen)?)
+        {
             return Ok((screen, size));
         }
         dismiss_notice(serial, kind, &screen, size)?;
@@ -530,6 +576,9 @@ fn supreme_opponent_heading(lines: &[TextLine]) -> bool {
 }
 
 fn supreme_selection_view(screen: &GrayImage) -> Result<SupremeSelectionView, String> {
+    if supreme_off_season(screen)? {
+        return Ok(SupremeSelectionView::Exhausted);
+    }
     if let Some((path, button)) = home_control(screen, Kind::Supreme)? {
         return Ok(
             if path == Kind::Supreme.challenge() && challenge_attempts(screen)? == Some(0) {
@@ -729,13 +778,16 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
         ))
     }
 
-    fn prepare_supreme_battle(&mut self) -> Result<(Match, (u32, u32)), String> {
+    fn prepare_supreme_battle(&mut self) -> Result<Option<(Match, (u32, u32))>, String> {
         // Continue may resume any of the three formations. Advance only while
         // Next is actually present; an existing Battle screen needs no Next taps.
         let mut advances = 0;
         for _ in 0..24 {
             common::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = common::screenshot(self.serial)?;
+            if supreme_off_season(&screen)? {
+                return Ok(None);
+            }
             if purchase_popup(&screen)? || confirmation(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
                 return Err(text(
@@ -749,7 +801,7 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                     common::get_match(&screen, &["arena/battle.png", "next.png"], footer(), 0.85)?
                 {
                     if path == "arena/battle.png" {
-                        return Ok((button, size));
+                        return Ok(Some((button, size)));
                     }
                     if advances < 2 {
                         common::ensure_not_cancelled(self.cancelled)?;
@@ -827,7 +879,9 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                 )
                 .into());
             }
-            if home_control(&screen, self.settings.kind())?.is_some() {
+            if home_control(&screen, self.settings.kind())?.is_some()
+                || (self.settings.kind() == Kind::Supreme && supreme_off_season(&screen)?)
+            {
                 return Ok(());
             }
             let lines = ocr::recognize(&screen)?;
@@ -922,7 +976,10 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
     fn battle(&mut self) -> Result<BattleOutcome, String> {
         let kind = self.settings.kind();
         let (battle, size) = if kind == Kind::Supreme {
-            self.prepare_supreme_battle()?
+            let Some(control) = self.prepare_supreme_battle()? else {
+                return Ok(BattleOutcome::Unclear);
+            };
+            control
         } else {
             self.wait_control("arena/battle.png", footer())?
         };
@@ -936,6 +993,10 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
         while started.elapsed() < Duration::from_secs(super::BATTLE_TIMEOUT_SECONDS) {
             common::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = common::screenshot(self.serial)?;
+            if kind == Kind::Supreme && supreme_off_season(&screen)? {
+                (self.progress)(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
+                return Ok(BattleOutcome::Unclear);
+            }
             if purchase_popup(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
                 return Err(text(
@@ -1043,7 +1104,13 @@ pub fn run(
     for _ in 0..3 {
         common::settle_cancellable(cancelled)?;
     }
+    if skip_off_season(serial, kind, &mut log)? {
+        return Ok(0);
+    }
     navigate(serial, kind, cancelled, &mut log)?;
+    if skip_off_season(serial, kind, &mut log)? {
+        return Ok(0);
+    }
     progress(ActivityEvent::ModeEntered(kind.mode()));
     let mut cursor = super::recovery::arena_cursor(serial);
     let wins = attempts_from(
@@ -1068,6 +1135,113 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn off_season_requires_both_the_status_and_the_disabled_footer_action() {
+        let status = TextLine {
+            text: "Off Season".into(),
+            x: 56.0,
+            y: 288.0,
+            width: 127.0,
+            height: 23.0,
+        };
+        let button = TextLine {
+            text: "@ffSeason".into(),
+            x: 587.0,
+            y: 1762.0,
+            width: 274.0,
+            height: 50.0,
+        };
+        assert!(off_season_text(&[status.clone(), button.clone()]));
+        let mut ordinary = button.clone();
+        ordinary.text = "Off Season".into();
+        assert!(off_season_text(&[status.clone(), ordinary]));
+        assert!(!off_season_text(&[status.clone()]));
+        assert!(!off_season_text(&[button.clone()]));
+        let mut active = button.clone();
+        active.text = "Continue".into();
+        assert!(!off_season_text(&[status.clone(), active]));
+        let mut calculation = status.clone();
+        calculation.text = "Calculation Time".into();
+        assert!(!off_season_text(&[calculation, button.clone()]));
+        let mut elsewhere = button;
+        elsewhere.y = 900.0;
+        assert!(!off_season_text(&[status, elsewhere]));
+    }
+
+    #[test]
+    #[ignore = "reads a supplied Supreme Arena Off Season capture; no device input"]
+    fn captured_supreme_off_season() {
+        let path = std::env::var_os("ADBHELPER_TEST_OFF_SEASON").expect("capture path");
+        let (screen, _) = common::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        assert!(supreme_off_season(&screen).unwrap());
+        assert!(matches!(
+            supreme_selection_view(&screen).unwrap(),
+            SupremeSelectionView::Exhausted
+        ));
+        assert!(home_control(&screen, Kind::Supreme).unwrap().is_none());
+    }
+
+    #[test]
+    #[ignore = "requires Supreme Arena Off Season; verifies Daily continuation and entry points, without battles or purchases"]
+    fn connected_emulator_off_season_continues_daily() {
+        use crate::routine::{Action, Routine};
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
+        let cancelled = AtomicBool::new(false);
+        assert!(supreme_off_season(&common::screenshot(&serial).unwrap().0).unwrap());
+        let routine = Routine {
+            steps: vec![Action::SupremeArena, Action::AfkRewards],
+            ..Routine::default()
+        };
+        let mut seen = Vec::new();
+        let mut events = Vec::new();
+        let result = routine
+            .run(&cancelled, |_, action| {
+                seen.push(action);
+                if action == Action::SupremeArena {
+                    super::super::recovery::run(
+                        &serial,
+                        &cancelled,
+                        |_, report| {
+                            run(
+                                &serial,
+                                Settings::Supreme(SupremeSettings::default()),
+                                &cancelled,
+                                |m| println!("{m}"),
+                                report,
+                            )
+                        },
+                        |m| panic!("Off Season must not trigger recovery: {m}"),
+                        |e| events.push(e),
+                    )
+                } else {
+                    // Confirm that Daily reaches its next step without claiming
+                    // anything on the user's account during this diagnostic.
+                    println!("Daily advanced to its next action (dry run).");
+                    Ok(42)
+                }
+            })
+            .unwrap();
+        assert_eq!(result, 42);
+        assert_eq!(seen, [Action::SupremeArena, Action::AfkRewards]);
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            ActivityEvent::BattleStarted(_)
+                | ActivityEvent::BattleFinished(_, _)
+                | ActivityEvent::StageCleared(_)
+        )));
+        navigate(&serial, Kind::Supreme, &cancelled, &mut |m| println!("{m}")).unwrap();
+        let mut driver = AdbDriver {
+            serial: &serial,
+            settings: Settings::Supreme(SupremeSettings::default()),
+            cancelled: &cancelled,
+            progress: &mut |_| panic!("no battle event"),
+        };
+        assert_eq!(driver.choose().unwrap(), Choice::Exhausted);
+        assert!(driver.prepare_supreme_battle().unwrap().is_none());
+        driver.finish_result(&mut BattleOutcome::Unclear).unwrap();
+        println!("Off Season skipped: Daily continued, navigation succeeded, and no battle, purchase, or recovery was triggered.");
+    }
 
     #[test]
     #[ignore = "requires captured Supreme Arena Continue and opponent-selection views"]
@@ -1217,10 +1391,10 @@ mod tests {
             assert_eq!(result.unwrap(), Choice::Ready);
             driver.wait_control("next.png", footer()).unwrap();
             println!("First Supreme Arena formation reached; no battle started.");
-            driver.prepare_supreme_battle().unwrap();
+            assert!(driver.prepare_supreme_battle().unwrap().is_some());
             // Re-entering from the final formation must not require two more Next taps.
             assert_eq!(driver.choose().unwrap(), Choice::Ready);
-            driver.prepare_supreme_battle().unwrap();
+            assert!(driver.prepare_supreme_battle().unwrap().is_some());
             println!("Started from {start}: selected opponent, prepared all three teams, and resumed final formation; Battle was not tapped.");
         }
     }

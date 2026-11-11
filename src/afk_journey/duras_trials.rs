@@ -160,6 +160,7 @@ fn selected_card(image: &image::RgbImage) -> Option<SelectedCard> {
         return None;
     }
     let mut edges = Vec::<u32>::new();
+    let mut last_green = None;
     for x in 0..image.width() {
         let green = (1130..1520)
             .filter(|&y| {
@@ -167,8 +168,12 @@ fn selected_card(image: &image::RgbImage) -> Option<SelectedCard> {
                 g >= 100 && u16::from(g) > u16::from(r) + 30 && u16::from(g) > u16::from(b) + 20
             })
             .count();
-        if green >= 250 && edges.last().is_none_or(|&last| x > last + 5) {
-            edges.push(x);
+        if green >= 250 {
+            // A thick border is one edge, not several edges six pixels apart.
+            if last_green.is_none_or(|last| x > last + 3) {
+                edges.push(x);
+            }
+            last_green = Some(x);
         }
     }
     let pairs: Vec<_> = edges
@@ -212,6 +217,141 @@ fn unique_value(values: impl Iterator<Item = u32>) -> Option<u32> {
     } else {
         None
     }
+}
+
+fn repeated_stage(text: &str) -> Option<u32> {
+    let text: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if ![3, 6, 9].contains(&text.len()) || !text.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let width = text.len() / 3;
+    if text[..width] != text[width..width * 2] || text[..width] != text[width * 2..] {
+        return None;
+    }
+    exact_number(&text[..width]).filter(|n| (1..=999).contains(n))
+}
+
+fn clean_stage_numeral(mask: &image::GrayImage) -> Option<image::GrayImage> {
+    let (width, height) = mask.dimensions();
+    if width < 3 || height < 60 {
+        return None;
+    }
+    let index = |x: u32, y: u32| (y * width + x) as usize;
+    // Opening removes hairline portrait outlines that otherwise attach to a
+    // numeral. Keep only tall connected strokes; tiny hair/armour fragments
+    // must not become a quote or an extra digit in the OCR word.
+    let mut eroded = vec![false; (width * height) as usize];
+    for y in 1..height - 1 {
+        for x in 1..width - 1 {
+            eroded[index(x, y)] = (y - 1..=y + 1)
+                .all(|ny| (x - 1..=x + 1).all(|nx| mask.get_pixel(nx, ny).0[0] == 0));
+        }
+    }
+    let mut opened = vec![false; eroded.len()];
+    for y in 0..height {
+        for x in 0..width {
+            opened[index(x, y)] = (y.saturating_sub(1)..=(y + 1).min(height - 1)).any(|ny| {
+                (x.saturating_sub(1)..=(x + 1).min(width - 1)).any(|nx| eroded[index(nx, ny)])
+            });
+        }
+    }
+    let mut seen = vec![false; opened.len()];
+    let mut clean = image::GrayImage::from_pixel(width, height, image::Luma([255]));
+    let mut kept = 0;
+    for start in 0..opened.len() {
+        if !opened[start] || seen[start] {
+            continue;
+        }
+        let mut stack = vec![start];
+        let mut pixels = Vec::new();
+        let (mut left, mut top, mut right, mut bottom) = (width, height, 0, 0);
+        seen[start] = true;
+        while let Some(at) = stack.pop() {
+            let (x, y) = (at as u32 % width, at as u32 / width);
+            left = left.min(x);
+            right = right.max(x);
+            top = top.min(y);
+            bottom = bottom.max(y);
+            pixels.push((x, y));
+            for (nx, ny) in [
+                (x.saturating_sub(1), y),
+                ((x + 1).min(width - 1), y),
+                (x, y.saturating_sub(1)),
+                (x, (y + 1).min(height - 1)),
+            ] {
+                let next = index(nx, ny);
+                if opened[next] && !seen[next] {
+                    seen[next] = true;
+                    stack.push(next);
+                }
+            }
+        }
+        if bottom - top + 1 >= 60 && right - left + 1 >= 8 {
+            if left == 0 || top == 0 || right == width - 1 || bottom == height - 1 {
+                return None;
+            }
+            kept += 1;
+            if kept > 3 {
+                return None;
+            }
+            for (x, y) in pixels {
+                clean.put_pixel(x, y, image::Luma([0]));
+            }
+        }
+    }
+    (kept > 0).then_some(clean)
+}
+
+fn isolated_selected_stage(
+    color: &image::RgbImage,
+    card: SelectedCard,
+) -> Result<Option<u32>, String> {
+    // Keep the complete italic numeral inside THIS green card. Portraits and
+    // pale yellow backgrounds can defeat grayscale OCR, so isolate the warm
+    // dark numeral and repeat the captured pixels; never infer a stage from
+    // its neighbour, the bottom trial tabs, or the daily limit.
+    let left = card.left + 140;
+    let (width, height) = (210, 140);
+    if left + width >= card.right || color.dimensions() != (1080, 1920) {
+        return Ok(None);
+    }
+    // Some pale armour portraits share the numeral's warm hue. Retry with a
+    // stricter dark-ink mask if they remain attached to the captured glyphs.
+    // Every candidate must still contain complete strokes and three matching
+    // readings; no number is inferred from Max or the daily-limit banner.
+    for maximum_red in [190, 165] {
+        let mut mask = image::GrayImage::from_pixel(width, height, image::Luma([255]));
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b] = color.get_pixel(left + x, 1150 + y).0.map(u16::from);
+                let ink = (45..maximum_red).contains(&r)
+                    && r > g + 3
+                    && r - g < 30
+                    && r > b + 5
+                    && g >= b
+                    && g - b < 65;
+                if ink {
+                    mask.put_pixel(x, y, image::Luma([0]));
+                }
+            }
+        }
+        let Some(clean) = clean_stage_numeral(&mask) else {
+            continue;
+        };
+        let mut word =
+            image::GrayImage::from_pixel(width * 3 + 76, height + 60, image::Luma([255]));
+        for copy in 0..3 {
+            image::imageops::replace(&mut word, &clean, i64::from(30 + copy * (width + 8)), 30);
+        }
+        if let Some(stage) = unique_value(
+            super::ocr::recognize(&word)?
+                .iter()
+                .filter_map(|line| repeated_stage(&line.text)),
+        ) {
+            return Ok(Some(stage));
+        }
+    }
+    Ok(None)
 }
 
 fn isolated_daily_counter(gray: &image::GrayImage) -> Result<Option<u32>, String> {
@@ -376,29 +516,45 @@ fn trial_key(title: &str) -> String {
         "aidtreasure" => "raidtreasure".into(),
         "rcanetreasure" => "arcanetreasure".into(),
         "ocusedtreasure" => "focusedtreasure".into(),
+        "ronwalltreasure" | "rronwalltreasure" => "ironwalltreasure".into(),
+        "ooperativetreasure" | "nooperativetreasure" | "ooperaåvetreasure" => {
+            "cooperativetreasure".into()
+        }
         _ => key,
     }
 }
 
 fn overview_trial(lines: &[super::ocr::TextLine]) -> String {
-    let mut titles = lines.iter().filter_map(|line| {
-        let (_, y) = line.center();
-        if !(90..=205).contains(&y)
-            || line.x < 25.0
-            || line.x + line.width > 850.0
-            || line.width <= 120.0
-            || line.height < 40.0
+    let mut titles = lines
+        .iter()
+        .filter(|line| {
+            let (_, y) = line.center();
+            if !(70..=205).contains(&y)
+                || line.x < 25.0
+                || line.x + line.width > 850.0
+                || line.width <= 120.0
+                || line.height < 40.0
+            {
+                return false;
+            }
+            !trial_key(&line.text).is_empty()
+        })
+        .collect::<Vec<_>>();
+    titles.sort_by(|a, b| a.y.total_cmp(&b.y));
+    match titles.as_slice() {
+        [title] if trial_key(&title.text) != "treasure" => trial_key(&title.text),
+        [first, second]
+            if trial_key(&second.text) == "treasure"
+                && !trial_key(&first.text).contains("treasure")
+                && second.y >= first.y + first.height - 8.0
+                && second.y <= first.y + first.height + 35.0
+                && second.x >= first.x - 15.0
+                && second.x <= first.x + 180.0 =>
         {
-            return None;
+            trial_key(&format!("{} {}", first.text, second.text))
         }
-        let title = trial_key(&line.text);
-        (!title.is_empty()).then_some(title)
-    });
-    let title = titles.next().unwrap_or_default();
-    if titles.next().is_some() {
-        return String::new();
+        _ => String::new(),
     }
-    title
 }
 
 fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
@@ -433,33 +589,7 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
     });
     if stage.is_none() {
         if let Some(card) = card {
-            // Decorative portrait backgrounds can hide a digit from full-frame
-            // OCR. Read only the number area of the verified selected card,
-            // with white padding and extra contrast. Never read a neighbour.
-            let left = card.left + 170;
-            let width = 170;
-            if left + width < card.right {
-                let mut number = image::GrayImage::from_pixel(230, 170, image::Luma([255]));
-                for y in 0..110 {
-                    for x in 0..width {
-                        let value = gray.get_pixel(left + x, 1160 + y).0[0];
-                        number.put_pixel(
-                            x + 30,
-                            y + 30,
-                            image::Luma([if value < 160 { 0 } else { 255 }]),
-                        );
-                    }
-                }
-                let number = image::imageops::resize(
-                    &number,
-                    920,
-                    680,
-                    image::imageops::FilterType::Nearest,
-                );
-                stage = unique_value(super::ocr::recognize(&number)?.iter().filter_map(|line| {
-                    exact_number(&line.text).filter(|&n| (1..=99).contains(&n))
-                }));
-            }
+            stage = isolated_selected_stage(&color, card)?;
         }
     }
     let selected_max = if let Some(card) = card {
@@ -1002,7 +1132,15 @@ fn sweep_dialog_heading(lines: &[super::ocr::TextLine]) -> Option<(String, u32)>
                         .filter(|c| !c.is_whitespace())
                         .collect();
                     let value = if wrapped_label {
-                        compact.strip_prefix("floor")?
+                        compact.strip_prefix("floor").or_else(|| {
+                            // The captured Ironwall dialog reads the joined
+                            // italic Fl as n. Keep the adjacent numeric stage
+                            // intact and restrict this observed label variant
+                            // to its independently verified trial identity.
+                            (trial_key(trial) == "ironwalltreasure")
+                                .then(|| compact.strip_prefix("noor"))
+                                .flatten()
+                        })?
                     } else {
                         &compact
                     };
@@ -1467,6 +1605,139 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ironwall_heading_keeps_its_short_first_row_and_rejects_treasure_alone() {
+        let first = super::super::ocr::TextLine {
+            text: "r ronwall".into(),
+            x: 86.0,
+            y: 61.0,
+            width: 296.0,
+            height: 55.0,
+        };
+        let second = super::super::ocr::TextLine {
+            text: "Treasure".into(),
+            x: 191.0,
+            y: 124.0,
+            width: 228.0,
+            height: 47.0,
+        };
+        assert_eq!(
+            overview_trial(&[first.clone(), second.clone()]),
+            "ironwalltreasure"
+        );
+        assert!(overview_trial(&[second.clone()]).is_empty());
+        assert_eq!(trial_key("ronwall Treasure"), "ironwalltreasure");
+        let mut far = second.clone();
+        far.x = 500.0;
+        assert!(overview_trial(&[first.clone(), far]).is_empty());
+        let mut separated = second;
+        separated.y = 200.0;
+        assert_ne!(overview_trial(&[first, separated]), "ironwalltreasure");
+    }
+
+    #[test]
+    fn stage_mask_removes_small_portrait_fragments_and_rejects_clipped_numerals() {
+        let mut patch = image::GrayImage::from_pixel(210, 140, image::Luma([255]));
+        for (left, right) in [(40, 60), (90, 120)] {
+            for y in 20..110 {
+                for x in left..right {
+                    patch.put_pixel(x, y, image::Luma([0]));
+                }
+            }
+        }
+        for y in 4..20 {
+            for x in 5..20 {
+                patch.put_pixel(x, y, image::Luma([0]));
+            }
+        }
+        for y in 20..60 {
+            patch.put_pixel(19, y, image::Luma([0]));
+        }
+        let clean = clean_stage_numeral(&patch).unwrap();
+        assert_eq!(clean.get_pixel(10, 10).0[0], 255);
+        assert_eq!(clean.get_pixel(19, 40).0[0], 255);
+        assert_eq!(clean.get_pixel(45, 40).0[0], 0);
+        assert_eq!(clean.get_pixel(100, 40).0[0], 0);
+        for y in 20..110 {
+            for x in 0..15 {
+                patch.put_pixel(x, y, image::Luma([0]));
+            }
+        }
+        assert!(clean_stage_numeral(&patch).is_none());
+    }
+
+    #[test]
+    fn cooperative_overview_joins_only_the_adjacent_treasure_heading() {
+        let first = super::super::ocr::TextLine {
+            text: "n ooperative".into(),
+            x: 55.0,
+            y: 66.0,
+            width: 405.0,
+            height: 59.0,
+        };
+        let second = super::super::ocr::TextLine {
+            text: "Treasure".into(),
+            x: 191.0,
+            y: 124.0,
+            width: 228.0,
+            height: 47.0,
+        };
+        assert_eq!(
+            overview_trial(&[second.clone(), first.clone()]),
+            "cooperativetreasure"
+        );
+        assert_eq!(trial_key("ooperative Treasure"), "cooperativetreasure");
+        assert_eq!(trial_key("ooperaåve Treasure"), "cooperativetreasure");
+        assert_ne!(trial_key("Arcane Treasure"), "cooperativetreasure");
+        let mut far = second.clone();
+        far.y = 250.0;
+        assert_ne!(overview_trial(&[first.clone(), far]), "cooperativetreasure");
+        let mut wrong = second.clone();
+        wrong.text = "Rewards".into();
+        assert!(overview_trial(&[first.clone(), wrong]).is_empty());
+        assert!(overview_trial(&[first, second.clone(), second]).is_empty());
+    }
+
+    #[test]
+    fn selected_stage_requires_three_identical_numeric_readings_and_cannot_authorize_a_lower_sweep()
+    {
+        for (text, stage) in [("27 27 27", 27), ("30 30 30", 30), ("100100100", 100)] {
+            assert_eq!(repeated_stage(text), Some(stage));
+        }
+        for text in [
+            "27", "2727", "27 28 27", "27/30", "000", "I7I7I7", "30 30 3O",
+        ] {
+            assert_eq!(repeated_stage(text), None, "{text}");
+        }
+        let mut snapshot = capped();
+        snapshot.trial = "cooperativetreasure".into();
+        snapshot.stage = Some(27);
+        snapshot.limit = Some(30);
+        assert!(confirm_cap(&snapshot, &snapshot).is_err());
+        snapshot.battle = true;
+        snapshot.sweep = false;
+        assert!(confirm_cap(&snapshot, &snapshot).is_err());
+    }
+
+    #[test]
+    #[ignore = "reads a captured Dura stage below its daily limit; no device input"]
+    fn captured_dura_stage_below_cap() {
+        let path = std::env::var_os("ADBHELPER_TEST_DURA_BELOW_CAP").expect("capture path");
+        let frame = decode_frame(&std::fs::read(path).unwrap()).unwrap();
+        let stage = std::env::var("ADBHELPER_TEST_DURA_STAGE")
+            .unwrap_or_else(|_| "27".into())
+            .parse()
+            .unwrap();
+        let trial = std::env::var("ADBHELPER_TEST_DURA_TRIAL")
+            .unwrap_or_else(|_| "cooperativetreasure".into());
+        assert_eq!(frame.snapshot.trial, trial);
+        assert_eq!(frame.snapshot.stage, Some(stage));
+        assert_eq!(frame.snapshot.limit, Some(30));
+        assert!(frame.snapshot.overview && frame.snapshot.battle && !frame.snapshot.blocked);
+        assert!(!frame.snapshot.sweep);
+        assert!(confirm_cap(&frame.snapshot, &frame.snapshot).is_err());
+    }
+
+    #[test]
     fn batch_rewards_are_closed_before_reading_the_same_trials_daily_counter() {
         use super::super::ocr::TextLine;
         let mut title = TextLine {
@@ -1722,6 +1993,43 @@ mod tests {
         dialog.trial = "ocusedtreasure".into();
         dialog.stage = 24;
         assert!(validate_sweep_dialog(&dialog, &permit, 1).is_err());
+    }
+
+    #[test]
+    fn ironwall_sweep_heading_reads_the_observed_italic_floor_label() {
+        let title = super::super::ocr::TextLine {
+            text: "ronwall Treasure -".into(),
+            x: 128.0,
+            y: 932.0,
+            width: 307.0,
+            height: 37.0,
+        };
+        let floor = super::super::ocr::TextLine {
+            text: "noor30".into(),
+            x: 119.0,
+            y: 983.0,
+            width: 141.0,
+            height: 37.0,
+        };
+        assert_eq!(
+            sweep_dialog_heading(&[title.clone(), floor.clone()]),
+            Some(("ironwalltreasure".into(), 30))
+        );
+        let mut other_trial = title.clone();
+        other_trial.text = "ocused Treasure -".into();
+        assert_eq!(sweep_dialog_heading(&[other_trial, floor.clone()]), None);
+        let mut distant = floor.clone();
+        distant.y = 1300.0;
+        assert_eq!(sweep_dialog_heading(&[title.clone(), distant]), None);
+        let mut conflict = floor.clone();
+        conflict.text = "Floor 29".into();
+        assert_eq!(
+            sweep_dialog_heading(&[title.clone(), floor.clone(), conflict]),
+            None
+        );
+        let mut unlabeled = floor;
+        unlabeled.text = "30".into();
+        assert_eq!(sweep_dialog_heading(&[title, unlabeled]), None);
     }
 
     #[test]
@@ -2105,6 +2413,20 @@ mod tests {
     fn selected_stage_requires_one_unique_green_card_not_an_unselected_neighbour() {
         let mut image = image::RgbImage::new(1080, 1920);
         for x in [530, 1000] {
+            for y in 1130..1520 {
+                image.put_pixel(x, y, image::Rgb([50, 160, 30]));
+            }
+        }
+        assert_eq!(
+            selected_card(&image),
+            Some(SelectedCard {
+                left: 530,
+                right: 1000
+            })
+        );
+        // Real card outlines occupy several adjacent columns. Keep their
+        // outside edge stable rather than shifting the numeral crop inward.
+        for x in [531, 532, 533, 534, 535, 536, 537, 538] {
             for y in 1130..1520 {
                 image.put_pixel(x, y, image::Rgb([50, 160, 30]));
             }
