@@ -94,7 +94,7 @@ fn read(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
     Ok(frame)
 }
 
-fn green_control(color: &RgbImage, line: &ocr::TextLine) -> bool {
+pub(super) fn green_control(color: &RgbImage, line: &ocr::TextLine) -> bool {
     let left = (line.x as u32).saturating_sub(24);
     let top = (line.y as u32).saturating_sub(18);
     let right = ((line.x + line.width) as u32 + 24).min(color.width());
@@ -356,14 +356,19 @@ fn claim_control(frame: &Frame) -> Result<Option<(Claim, (u32, u32))>, String> {
     }
 }
 
-fn loot_close(lines: &[ocr::TextLine]) -> Option<(u32, u32)> {
+pub(super) fn loot_close(lines: &[ocr::TextLine]) -> Option<(u32, u32)> {
     let title = lines.iter().any(|l| {
         l.y < 1000.0
             && l.x > 40.0
             && l.width > 150.0
             && matches!(
                 compact(&l.text).as_str(),
-                "rewards" | "obtained" | "youreceived" | "youobtained"
+                "rewards"
+                    | "obtained"
+                    | "rewardsobtained"
+                    | "rewardsbtained"
+                    | "youreceived"
+                    | "youobtained"
             )
     });
     if !title {

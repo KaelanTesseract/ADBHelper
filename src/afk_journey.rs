@@ -14,10 +14,13 @@ pub mod afk_stages;
 pub mod arena;
 pub mod daily;
 pub mod daily_extras;
+pub mod dream_realm;
 pub mod duras_trials;
 pub mod legend_trial;
+pub mod menu_rewards;
 mod ocr;
 pub mod phase_rewards;
+pub mod progression;
 pub mod recovery;
 pub mod union_campaign;
 

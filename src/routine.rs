@@ -16,23 +16,74 @@ pub enum Action {
     DiamondHourglasses,
     StageRewards,
     SeasonRankingRewards,
+    DreamRealm,
+    FriendRewards,
+    MailRewards,
+    BattlePassRewards,
+    DailyQuestRewards,
+    GuildQuestRewards,
+    CollectAffinity,
+    LevelUpHeroes,
+    EquipNewEquipment,
+    Emporium,
+    SinglePull,
+    EssenceSwap,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DailyCategory {
+    Rewards,
+    Battles,
+    Heroes,
+    Shop,
+}
+
+impl DailyCategory {
+    pub const ALL: [Self; 4] = [Self::Rewards, Self::Battles, Self::Heroes, Self::Shop];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rewards => text("Rewards", "Belohnungen"),
+            Self::Battles => text("Battles", "Kämpfe"),
+            Self::Heroes => text("Heroes", "Helden"),
+            Self::Shop => text("Shop", "Shop"),
+        }
+    }
+
+    pub fn actions(self) -> &'static [Action] {
+        match self {
+            Self::Rewards => &[
+                Action::AfkRewards,
+                Action::FreeHourglasses,
+                Action::DiamondHourglasses,
+                Action::StageRewards,
+                Action::SeasonRankingRewards,
+                Action::FriendRewards,
+                Action::MailRewards,
+                Action::BattlePassRewards,
+                Action::DailyQuestRewards,
+                Action::GuildQuestRewards,
+            ],
+            Self::Battles => &[
+                Action::AfkStages,
+                Action::SeasonLegendTrial,
+                Action::UnionCampaign,
+                Action::DurasTrials,
+                Action::Arena,
+                Action::SupremeArena,
+                Action::DreamRealm,
+            ],
+            Self::Heroes => &[
+                Action::CollectAffinity,
+                Action::LevelUpHeroes,
+                Action::EquipNewEquipment,
+            ],
+            Self::Shop => &[Action::Emporium, Action::SinglePull, Action::EssenceSwap],
+        }
+    }
 }
 
 impl Action {
-    pub const DAILY_STEPS: [Self; 11] = [
-        Self::AfkRewards,
-        Self::FreeHourglasses,
-        Self::DiamondHourglasses,
-        Self::StageRewards,
-        Self::SeasonRankingRewards,
-        Self::AfkStages,
-        Self::SeasonLegendTrial,
-        Self::UnionCampaign,
-        Self::DurasTrials,
-        Self::Arena,
-        Self::SupremeArena,
-    ];
-
     pub fn index(self) -> usize {
         match self {
             Self::AfkStages => 0,
@@ -47,6 +98,18 @@ impl Action {
             Self::DiamondHourglasses => 9,
             Self::StageRewards => 10,
             Self::SeasonRankingRewards => 11,
+            Self::DreamRealm => 12,
+            Self::FriendRewards => 13,
+            Self::MailRewards => 14,
+            Self::BattlePassRewards => 15,
+            Self::DailyQuestRewards => 16,
+            Self::GuildQuestRewards => 17,
+            Self::CollectAffinity => 18,
+            Self::LevelUpHeroes => 19,
+            Self::EquipNewEquipment => 20,
+            Self::Emporium => 21,
+            Self::SinglePull => 22,
+            Self::EssenceSwap => 23,
         }
     }
 
@@ -58,6 +121,18 @@ impl Action {
             Self::DurasTrials => "Dura’s Trials",
             Self::Arena => "Arena",
             Self::SupremeArena => "Supreme Arena",
+            Self::DreamRealm => GameMode::DreamRealm.label(),
+            Self::FriendRewards => GameMode::FriendRewards.label(),
+            Self::MailRewards => GameMode::MailRewards.label(),
+            Self::BattlePassRewards => GameMode::BattlePassRewards.label(),
+            Self::DailyQuestRewards => GameMode::DailyQuestRewards.label(),
+            Self::GuildQuestRewards => GameMode::GuildQuestRewards.label(),
+            Self::CollectAffinity => GameMode::CollectAffinity.label(),
+            Self::LevelUpHeroes => GameMode::LevelUpHeroes.label(),
+            Self::EquipNewEquipment => GameMode::EquipNewEquipment.label(),
+            Self::Emporium => GameMode::Emporium.label(),
+            Self::SinglePull => GameMode::SinglePull.label(),
+            Self::EssenceSwap => GameMode::EssenceSwap.label(),
             Self::Daily => "Daily",
             Self::AfkRewards => text("AFK rewards · 2 claims", "AFK-Belohnungen · 2× abholen"),
             Self::FreeHourglasses => text(
@@ -79,6 +154,17 @@ pub struct Routine {
     pub steps: Vec<Action>,
     #[serde(default)]
     pub diamond_hourglasses: DiamondHourglassSettings,
+    #[serde(default)]
+    pub emporium: EmporiumSettings,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmporiumSettings {
+    pub diamonds: u32,
+    pub pal_coins: u32,
+    pub dream_fragments: u32,
+    pub full_price_affinity: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +198,7 @@ impl Default for Routine {
         Self {
             steps: vec![Action::AfkRewards, Action::FreeHourglasses],
             diamond_hourglasses: DiamondHourglassSettings::default(),
+            emporium: EmporiumSettings::default(),
         }
     }
 }

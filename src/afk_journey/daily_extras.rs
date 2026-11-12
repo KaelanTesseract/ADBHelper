@@ -21,7 +21,7 @@ enum Receipt {
     StageReward,
 }
 
-fn exact_amount(value: &str) -> Option<u32> {
+pub(super) fn exact_amount(value: &str) -> Option<u32> {
     let value = value.trim();
     if value.is_empty() || !value.bytes().all(|c| c.is_ascii_digit() || c == b',') {
         return None;
@@ -35,7 +35,7 @@ fn exact_amount(value: &str) -> Option<u32> {
     value.replace(',', "").parse().ok()
 }
 
-fn amount(screen: &GrayImage, rect: common::Rect) -> Result<Option<u32>, String> {
+pub(super) fn amount(screen: &GrayImage, rect: common::Rect) -> Result<Option<u32>, String> {
     // The dark badge edge can be mistaken for punctuation. Isolate the white
     // digits, then require agreement at two thresholds rather than fixing OCR.
     let mut previous = None;

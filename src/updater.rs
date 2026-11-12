@@ -42,12 +42,22 @@ fn watch_with(
     }
 }
 const MAX_SIZE: u64 = 250 * 1024 * 1024;
+const MAX_ARTWORK_SIZE: u64 = 5 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Release {
     pub version: String,
     pub notes: String,
     pub url: String,
+    pub artwork: Option<ReleaseArtwork>,
+    download: String,
+    size: u64,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReleaseArtwork {
+    pub markdown_url: String,
     download: String,
     size: u64,
     sha256: String,
@@ -97,7 +107,7 @@ fn parse_release(json: &str, current: &str) -> Result<Option<Release>, String> {
     }
     let asset = release
         .assets
-        .into_iter()
+        .iter()
         .find(|a| a.name == ASSET_NAME)
         .ok_or(text(
             "The release has no Windows x64 executable.",
@@ -110,7 +120,8 @@ fn parse_release(json: &str, current: &str) -> Result<Option<Release>, String> {
     }
     let sha256 = asset
         .digest
-        .and_then(|d| d.strip_prefix("sha256:").map(str::to_owned))
+        .as_deref()
+        .and_then(|d| d.strip_prefix("sha256:"))
         .ok_or(text(
             "The release has no SHA-256 checksum.",
             "Das Release enthält keine SHA-256-Prüfsumme.",
@@ -122,14 +133,79 @@ fn parse_release(json: &str, current: &str) -> Result<Option<Release>, String> {
         "The release has no patch notes.",
         "Das Release enthält keine Patchnotes.",
     ))?;
+    let artwork = release_artwork(&release.tag_name, &notes, &release.assets);
     Ok(Some(Release {
         version: version.to_string(),
         notes,
         url: format!("{REPOSITORY_URL}/releases/tag/{}", release.tag_name),
-        download: asset.browser_download_url,
+        artwork,
+        download: asset.browser_download_url.clone(),
         size: asset.size,
-        sha256,
+        sha256: sha256.to_owned(),
     }))
+}
+
+pub fn patch_note_image(line: &str) -> Option<(&str, &str)> {
+    let (alt, url) = line.trim().strip_prefix("![")?.split_once("](")?;
+    Some((alt, url.strip_suffix(')')?))
+}
+
+fn release_artwork(tag: &str, notes: &str, assets: &[GithubAsset]) -> Option<ReleaseArtwork> {
+    let name = format!("ADBHelper-{tag}.png");
+    let download = format!("{REPOSITORY_URL}/releases/download/{tag}/{name}");
+    let source =
+        format!("https://raw.githubusercontent.com/{REPOSITORY}/{tag}/releases/media/{name}");
+    let (_, markdown_url) = notes
+        .lines()
+        .filter_map(patch_note_image)
+        .find(|(_, url)| *url == source || *url == download)?;
+    let asset = assets.iter().find(|asset| {
+        asset.name == name
+            && asset.browser_download_url == download
+            && (1..=MAX_ARTWORK_SIZE).contains(&asset.size)
+    })?;
+    let sha256 = asset.digest.as_deref()?.strip_prefix("sha256:")?;
+    (sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit())).then(|| ReleaseArtwork {
+        markdown_url: markdown_url.to_owned(),
+        download,
+        size: asset.size,
+        sha256: sha256.to_ascii_lowercase(),
+    })
+}
+
+impl ReleaseArtwork {
+    pub fn load(&self) -> Result<image::RgbaImage, String> {
+        let mut response = agent(Duration::from_secs(15))
+            .get(&self.download)
+            .header("User-Agent", &format!("ADBHelper/{VERSION}"))
+            .call()
+            .map_err(|e| e.to_string())?;
+        let bytes = response
+            .body_mut()
+            .with_config()
+            .limit(self.size + 1)
+            .read_to_vec()
+            .map_err(|e| e.to_string())?;
+        self.decode(&bytes)
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<image::RgbaImage, String> {
+        if bytes.len() as u64 != self.size || format!("{:x}", Sha256::digest(bytes)) != self.sha256
+        {
+            return Err("Release artwork does not match the published file.".into());
+        }
+        let mut reader =
+            image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(4096);
+        limits.max_image_height = Some(4096);
+        limits.max_alloc = Some(64 * 1024 * 1024);
+        reader.limits(limits);
+        reader
+            .decode()
+            .map(|image| image.into_rgba8())
+            .map_err(|e| e.to_string())
+    }
 }
 
 fn agent(timeout: Duration) -> ureq::Agent {
@@ -742,6 +818,60 @@ mod tests {
             .unwrap()
             .is_none());
     }
+
+    #[test]
+    fn patch_notes_use_the_verified_release_png_without_requiring_one_for_updates() {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(2, 1, image::Rgba([12, 34, 56, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let png = png.into_inner();
+        let tag = "v0.4.6";
+        let name = "ADBHelper-v0.4.6.png";
+        let source =
+            format!("https://raw.githubusercontent.com/{REPOSITORY}/{tag}/releases/media/{name}");
+        let download = format!("{REPOSITORY_URL}/releases/download/{tag}/{name}");
+        let mut json = release(tag);
+        json["body"] = format!("# ADBHelper\n\n![Highlights]({source})\n\nPatch notes").into();
+        json["assets"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "name": name, "browser_download_url": download, "size": png.len(),
+                "digest": format!("sha256:{:x}", Sha256::digest(&png))
+            }));
+        let parse =
+            |json: &serde_json::Value| parse_release(&json.to_string(), "0.4.5").unwrap().unwrap();
+        let artwork = parse(&json).artwork.unwrap();
+        assert_eq!(artwork.markdown_url, source);
+        assert_eq!(artwork.decode(&png).unwrap().dimensions(), (2, 1));
+        let mut corrupt = png;
+        corrupt[0] ^= 1;
+        assert!(artwork.decode(&corrupt).is_err());
+
+        let mut unrelated = json.clone();
+        unrelated["body"] = "![Tracking pixel](https://example.com/image.png)".into();
+        assert!(parse(&unrelated).artwork.is_none());
+        json["assets"][1]["digest"] = serde_json::Value::Null;
+        assert!(parse(&json).artwork.is_none());
+    }
+
+    #[test]
+    #[ignore = "downloads and verifies the published patch notes graphic from GitHub"]
+    fn published_patch_notes_graphic_loads() {
+        let current = std::env::var("ADBHELPER_TEST_CURRENT_VERSION").expect("installed version");
+        let release = check(&current).unwrap().expect("newer published release");
+        let artwork = release.artwork.expect("published patch notes graphic");
+        let image = artwork.load().unwrap();
+        assert!(image.width() > 0 && image.height() > 0);
+        println!(
+            "Loaded v{} graphic at {} × {}",
+            release.version,
+            image.width(),
+            image.height()
+        );
+    }
+
     #[test]
     fn verifies_download_integrity_and_windows_architecture_before_install() {
         let dir = TestDir::new();

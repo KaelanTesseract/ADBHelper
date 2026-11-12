@@ -1,4 +1,4 @@
-use crate::activity::RunActivity;
+use crate::activity::{GameMode, RunActivity};
 use crate::design_system::{card, ColorTokens as C, SpaceTokens, TypeTokens};
 use crate::localization::{format_text, text};
 use eframe::egui::{self, pos2, vec2, Align2, Color32, FontId, Rect, Sense, Shape, Stroke};
@@ -154,7 +154,7 @@ pub fn mode_comparison(ui: &mut egui::Ui, run: &RunActivity, height: f32) {
     let data: Vec<_> = run
         .modes
         .iter()
-        .filter(|(mode, _)| !mode.is_collection())
+        .filter(|(mode, _)| !mode.is_collection() && **mode != GameMode::DreamRealm)
         .map(|(mode, stats)| ComparisonPoint {
             label: mode.label().to_owned(),
             attempts: stats.attempts,

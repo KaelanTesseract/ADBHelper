@@ -1,0 +1,15 @@
+Tool: built-in image_gen
+
+Use case: ads-marketing.
+Asset: a landscape 3:2 release graphic for ADBHelper v0.4.7, for GitHub and Discord.
+Input: ADBHelper-v0.4.6.png is a style reference only. Preserve the turquoise AH mark and ADBHelper brand. Create a coordinated new graphic with a graphite backdrop, restrained turquoise glow, slim rounded outlines, strong white sans-serif typography and a clean 2-by-2 feature grid. Use generous margins and a simple turquoise line icon per card: tabs, a crescent with a star, a gift, and a sword with a small shop tag. The four cards should have identical alignment and weight. Prioritize readability in a small Discord preview.
+Render only this exact English copy:
+Header: "ADBHelper" and "RELEASE 0.4.7"
+Headline: "Daily routines, organized"
+Subtitle: "AFK Journey automation"
+Top left: "Daily editor" / "Four action categories"
+Top right: "Dream Realm" / "Two battles by default"
+Bottom left: "Daily rewards" / "Friends, mail, quests and more"
+Bottom right: "Heroes & shop" / "Upgrades, gear and purchases"
+Footer: "Windows x64"
+No prior-release text, screenshots, mock UI, watermarks or extra badges.

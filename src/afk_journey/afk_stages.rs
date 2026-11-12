@@ -162,6 +162,24 @@ pub fn run_selected(
 
 fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
     let bytes: &'static [u8] = match relative_path {
+        "dream_realm/label.png" => include_bytes!("../../assets/AFKJourney/dream_realm/label.png"),
+        "dream_realm/dr_ranking.png" => {
+            include_bytes!("../../assets/AFKJourney/dream_realm/dr_ranking.png")
+        }
+        "dream_realm/daily_done.png" => {
+            include_bytes!("../../assets/AFKJourney/dream_realm/daily_done.png")
+        }
+        "dream_realm/done.png" => include_bytes!("../../assets/AFKJourney/dream_realm/done.png"),
+        "dream_realm/buy.png" => include_bytes!("../../assets/AFKJourney/dream_realm/buy.png"),
+        "dream_realm/gold_price.png" => {
+            include_bytes!("../../assets/AFKJourney/dream_realm/gold_price.png")
+        }
+        "dream_realm/battle_ended.png" => {
+            include_bytes!("../../assets/AFKJourney/dream_realm/battle_ended.png")
+        }
+        "dream_realm/skip_formation.png" => {
+            include_bytes!("../../assets/AFKJourney/dream_realm/skip_formation.png")
+        }
         "daily/afk_time.png" => include_bytes!("../../assets/AFKJourney/daily/afk_time.png"),
         "afk_stages/ranking_button.png" => {
             include_bytes!("../../assets/AFKJourney/afk_stages/ranking_button.png")
@@ -171,6 +189,61 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         }
         "daily/timer_reset.png" => include_bytes!("../../assets/AFKJourney/daily/timer_reset.png"),
         "daily/claim.png" => include_bytes!("../../assets/AFKJourney/daily/claim.png"),
+        "back.png" => include_bytes!("../../assets/AFKJourney/back.png"),
+        "resonating_hall/level_up_all.png" => {
+            include_bytes!("../../assets/AFKJourney/resonating_hall/level_up_all.png")
+        }
+        "resonating_hall/equipment.png" => {
+            include_bytes!("../../assets/AFKJourney/resonating_hall/equipment.png")
+        }
+        "resonating_hall/action.png" => {
+            include_bytes!("../../assets/AFKJourney/resonating_hall/action.png")
+        }
+        "resonating_hall/hero_action.png" => {
+            include_bytes!("../../assets/AFKJourney/resonating_hall/hero_action.png")
+        }
+        "dailies/resonating_hall/chippy.png" => {
+            include_bytes!("../../assets/AFKJourney/dailies/resonating_hall/chippy.png")
+        }
+        "equipment/quick_equip.png" => {
+            include_bytes!("../../assets/AFKJourney/equipment/quick_equip.png")
+        }
+        "equipment/open_all.png" => {
+            include_bytes!("../../assets/AFKJourney/equipment/open_all.png")
+        }
+        "dailies/emporium/invite_letter.png" => {
+            include_bytes!("../../assets/AFKJourney/dailies/emporium/invite_letter.png")
+        }
+        "dailies/emporium/discount_affinity.png" => {
+            include_bytes!("../../assets/AFKJourney/dailies/emporium/discount_affinity.png")
+        }
+        "dailies/emporium/other_affinity.png" => {
+            include_bytes!("../../assets/AFKJourney/dailies/emporium/other_affinity.png")
+        }
+        "dailies/emporium/bound_essence.png" => {
+            include_bytes!("../../assets/AFKJourney/dailies/emporium/bound_essence.png")
+        }
+        "dailies/noble_tavern/all_hero_recruit.png" => {
+            include_bytes!("../../assets/AFKJourney/dailies/noble_tavern/all_hero_recruit.png")
+        }
+        "dailies/noble_tavern/maxed_hero_continue.png" => {
+            include_bytes!("../../assets/AFKJourney/dailies/noble_tavern/maxed_hero_continue.png")
+        }
+        "progression/diamond.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/diamond.png")
+        }
+        "progression/pal_coin.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/pal_coin.png")
+        }
+        "progression/dream_fragment.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/dream_fragment.png")
+        }
+        "progression/invite_cost.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/invite_cost.png")
+        }
+        "dailies/hamburger/rewards_available.png" => {
+            include_bytes!("../../assets/AFKJourney/dailies/hamburger/rewards_available.png")
+        }
         "daily/free_hourglass.png" => {
             include_bytes!("../../assets/AFKJourney/daily/free_hourglass.png")
         }
@@ -1748,7 +1821,19 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
             | GameMode::FreeHourglasses
             | GameMode::DiamondHourglasses
             | GameMode::StageRewards
-            | GameMode::SeasonRankingRewards(_) => {
+            | GameMode::DreamRealm
+            | GameMode::SeasonRankingRewards(_)
+            | GameMode::FriendRewards
+            | GameMode::MailRewards
+            | GameMode::BattlePassRewards
+            | GameMode::DailyQuestRewards
+            | GameMode::GuildQuestRewards
+            | GameMode::CollectAffinity
+            | GameMode::LevelUpHeroes
+            | GameMode::EquipNewEquipment
+            | GameMode::Emporium
+            | GameMode::SinglePull
+            | GameMode::EssenceSwap => {
                 return Err(text("This is not an AFK Stages mode", "Kein AFK-Stages-Modus").into())
             }
         }));

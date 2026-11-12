@@ -11,11 +11,23 @@ pub enum GameMode {
     DurasTrials,
     Arena,
     SupremeArena,
+    DreamRealm,
     AfkRewards,
     FreeHourglasses,
     DiamondHourglasses,
     StageRewards,
     SeasonRankingRewards(RankingScope),
+    FriendRewards,
+    MailRewards,
+    BattlePassRewards,
+    DailyQuestRewards,
+    GuildQuestRewards,
+    CollectAffinity,
+    LevelUpHeroes,
+    EquipNewEquipment,
+    Emporium,
+    SinglePull,
+    EssenceSwap,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -84,10 +96,25 @@ impl GameMode {
             Self::DurasTrials => "Dura’s Trials",
             Self::Arena => "Arena",
             Self::SupremeArena => "Supreme Arena",
+            Self::DreamRealm => "Dream Realm",
             Self::AfkRewards => text("AFK rewards", "AFK-Belohnungen"),
             Self::FreeHourglasses => text("Free hourglasses", "Kostenlose Sanduhren"),
             Self::DiamondHourglasses => text("Diamond hourglasses", "Diamanten-Sanduhren"),
             Self::StageRewards => text("AFK stage rewards", "AFK-Stufenbelohnungen"),
+            Self::FriendRewards => text("Friend rewards", "Freundesbelohnungen"),
+            Self::MailRewards => text("Mail rewards", "Postbelohnungen"),
+            Self::BattlePassRewards => text("Battle Pass rewards", "Battle-Pass-Belohnungen"),
+            Self::DailyQuestRewards => text("Daily Quest rewards", "Daily-Questbelohnungen"),
+            Self::GuildQuestRewards => text("Guild Quest rewards", "Gildenquestbelohnungen"),
+            Self::CollectAffinity => text("Collect Affinity", "Affinität sammeln"),
+            Self::LevelUpHeroes => text("Level Up All Heroes", "Alle Helden aufwerten"),
+            Self::EquipNewEquipment => text("Equip New Equipment", "Neue Ausrüstung anlegen"),
+            Self::Emporium => text("Emporium purchases", "Emporium-Einkäufe"),
+            Self::SinglePull => text(
+                "Noble Tavern · Single Pull",
+                "Noble Tavern · Einzelrekrutierung",
+            ),
+            Self::EssenceSwap => text("Essence Swap", "Essenzen tauschen"),
             Self::SeasonRankingRewards(RankingScope::District) => {
                 text("Season rewards · District", "Season-Belohnungen · District")
             }
@@ -116,6 +143,17 @@ impl GameMode {
                 | Self::DiamondHourglasses
                 | Self::StageRewards
                 | Self::SeasonRankingRewards(_)
+                | Self::FriendRewards
+                | Self::MailRewards
+                | Self::BattlePassRewards
+                | Self::DailyQuestRewards
+                | Self::GuildQuestRewards
+                | Self::CollectAffinity
+                | Self::LevelUpHeroes
+                | Self::EquipNewEquipment
+                | Self::Emporium
+                | Self::SinglePull
+                | Self::EssenceSwap
         )
     }
 
@@ -128,6 +166,7 @@ impl GameMode {
 pub enum BattleOutcome {
     Won,
     Lost,
+    Scored,
     Unclear,
 }
 
@@ -148,6 +187,7 @@ pub struct ModeStats {
     pub cleared: u64,
     pub wins: u64,
     pub losses: u64,
+    pub scored: u64,
     pub sweeps: u64,
     pub collected: u64,
     attempts_for_cleared: u64,
@@ -257,6 +297,7 @@ impl RunActivity {
                         cleared = mode.is_pvp();
                     }
                     BattleOutcome::Lost => stats.losses = stats.losses.saturating_add(1),
+                    BattleOutcome::Scored => stats.scored = stats.scored.saturating_add(1),
                     BattleOutcome::Unclear => {}
                 }
             }

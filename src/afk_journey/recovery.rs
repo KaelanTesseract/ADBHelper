@@ -336,7 +336,9 @@ fn supervised_with_driver(
                     if !matches!(outcome, BattleOutcome::Unclear) {
                         transport_recoveries = 0;
                     }
-                    if mode.is_pvp() && matches!(outcome, BattleOutcome::Won) {
+                    if matches!(outcome, BattleOutcome::Scored)
+                        || (mode.is_pvp() && matches!(outcome, BattleOutcome::Won))
+                    {
                         total = total.saturating_add(1);
                     } else if matches!(outcome, BattleOutcome::Won) {
                         pending_clear = Some(mode);

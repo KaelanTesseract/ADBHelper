@@ -56,10 +56,11 @@ No Rust installation is needed to use the downloaded EXE.
 | **Season Legend Trial** | Pushes the selected Lightbearer, Wilder, Graveborn, and Mauler towers. Closed towers are skipped. |
 | **Union Campaign** | Pushes available guild campaign floors. Requires guild membership and an unlocked campaign. |
 | **Dura's Trials** | Pushes free first-clear stages toward the daily limit. Optionally uses daily Sweeps at a verified maximum. |
+| **Dream Realm** | Challenges the boss with your in-game formation and uses Skip when available. The default is up to two battles per run, adjustable in the action settings. Extra Gold attempts are opt-in. As a Daily step, it collects yesterday's ranking reward and can stop early once today's ranking is recorded. |
 | **Arena** | Plays daily Arena battles with your in-game team. Can claim up to two additional attempts when their zero-diamond price is confirmed. |
 | **Supreme Arena** | Plays daily challenges with your three in-game formations and your selected left, middle, or right opponent. |
 
-AFK Stages, Legend Trial, Union Campaign, and Dura's Trials use their own PvE team settings. Arena and Supreme Arena use formations already configured in the game.
+AFK Stages, Legend Trial, Union Campaign, and Dura's Trials use their own PvE team settings. Dream Realm, Arena, and Supreme Arena use formations already configured in the game.
 
 ### Reward steps for Daily
 
@@ -72,10 +73,26 @@ Add these steps through the **Daily** gear popup:
 | **Diamond hourglasses** | Purchases Instant AFK rewards within your configured purchase count and total diamond budget. Optional. |
 | **AFK stage rewards** | Collects available stage-progress rewards. A step with no rewards available completes normally. |
 | **Season Phase Ranking rewards** | Collects available District, Server, and Guild first-clear rewards across the available phases. Each scope has its own counter. |
+| **Friend rewards** | Uses Send & Receive to exchange available gifts with friends. |
+| **Mail rewards** | Uses Read All to collect available mail attachments. |
+| **Battle Pass rewards** | Uses Quick Claim in Noble Path to collect unlocked pass rewards. |
+| **Daily Quest rewards** | Claims completed Daily Quests and unlocked activity milestones. |
+| **Guild Quest rewards** | Uses Quick Claim to collect completed Guild Quest rewards. |
+
+### Hero and shopping steps for Daily
+
+| Step | What it does |
+| --- | --- |
+| **Collect Affinity** | Visits the roster and performs up to three free interactions per hero. |
+| **Level Up All Heroes** | Uses Level Up All in the Resonating Hall, up to 30 confirmed levels per run. |
+| **Equip New Equipment** | Opens available equipment chests and uses Quick Equip for the six equipment classes when available. |
+| **Emporium purchases** | Buys the discounted Invite Letter, affinity items, and hero-bound Temporal Essences within separate Diamond, Pal-Coin, and Dream Fragment budgets. A budget of zero disables that purchase category. Full-price affinity items are optional. |
+| **Noble Tavern · Single Pull** | Uses one existing Invite Letter for All-Hero Recruitment when available. |
+| **Essence Swap** | Exchanges eligible hero-bound Temporal Essences bought by Emporium earlier in the same Daily run. |
 
 ## Daily routines
 
-Open the **Daily** gear to add actions, drag them into order, or use the **Up**, **Down**, and **Remove** controls. The routine is saved automatically and runs from top to bottom using each action's settings.
+Open the **Daily** gear and browse **Rewards**, **Battles**, **Heroes**, or **Shop** for available actions. Drag actions into the routine, or use the **Up**, **Down**, and **Remove** controls to arrange existing steps. The routine is saved automatically and runs from top to bottom using each action's settings.
 
 The default routine contains **AFK rewards → Free hourglasses**. Additional combat and reward steps are optional; new actions are not added to an existing routine automatically.
 
