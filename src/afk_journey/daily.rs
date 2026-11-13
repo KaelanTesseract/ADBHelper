@@ -69,7 +69,7 @@ pub(super) fn page(screen: &GrayImage) -> Result<bool, String> {
         .is_none())
 }
 
-fn claim_control(screen: &GrayImage) -> Result<Option<common::Match>, String> {
+pub(super) fn claim_control(screen: &GrayImage) -> Result<Option<common::Match>, String> {
     if find(
         screen,
         "daily/afk_time.png",
@@ -113,20 +113,39 @@ pub(super) fn crop_lines(
     ocr::recognize(&enlarged)
 }
 
+pub(super) fn hourglass_control(
+    screen: &GrayImage,
+    path: &str,
+) -> Result<Option<common::Match>, String> {
+    let region = if path == "daily/hourglass_zero.png" {
+        common::Rect {
+            x: 920,
+            y: 1448,
+            width: 82,
+            height: 65,
+        }
+    } else {
+        common::Rect {
+            x: 850,
+            y: 1310,
+            width: 200,
+            height: 220,
+        }
+    };
+    find(screen, path, region)
+}
+
 fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, common::Match)>, String> {
     if !page(screen)? {
         return Ok(None);
     }
-    let region = common::Rect {
-        x: 850,
-        y: 1310,
-        width: 200,
-        height: 220,
-    };
-    if let Some(paid) = find(screen, "daily/paid_hourglass.png", region)? {
+    if let Some(paid) = hourglass_control(screen, "daily/paid_hourglass.png")? {
         return Ok(Some((0, paid)));
     }
-    let Some(button) = find(screen, "daily/free_hourglass.png", region)? else {
+    if let Some(exhausted) = hourglass_control(screen, "daily/hourglass_zero.png")? {
+        return Ok(Some((0, exhausted)));
+    }
+    let Some(button) = hourglass_control(screen, "daily/free_hourglass.png")? else {
         return Ok(None);
     };
     let lines = ocr::repeated_numeric_patch(

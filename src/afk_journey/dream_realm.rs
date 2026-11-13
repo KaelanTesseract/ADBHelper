@@ -15,6 +15,8 @@ const MODE: GameMode = GameMode::DreamRealm;
 const FOOTER: common::Rect = region(195, 1680, 885, 212);
 const CLOSE: common::Rect = region(300, 1700, 450, 180);
 const RANKINGS: common::Rect = region(915, 125, 165, 140);
+const RANKING_GIFT: common::Rect = region(1000, 109, 80, 72);
+const RANKING_BACK: common::Rect = region(0, 1740, 220, 180);
 const SHORT_WAIT: Duration = Duration::from_secs(20);
 pub const MAX_BATTLES: u32 = 30;
 const DEFAULT_BATTLES: u32 = 2;
@@ -172,6 +174,20 @@ impl Frame {
             && self
                 .label(region(675, 1835, 395, 85), |s| s == "districtrankings")
                 .is_some()
+    }
+
+    fn ranking_gift(&self) -> Result<bool, String> {
+        Ok(self
+            .point(
+                "dailies/hamburger/rewards_available.png",
+                RANKING_GIFT,
+                0.85,
+            )?
+            .is_some())
+    }
+
+    fn rankings_back(&self) -> Result<Option<(u32, u32)>, String> {
+        self.point("navigation/resonating_hall_back.png", RANKING_BACK, 0.86)
     }
 
     fn close_prompt(&self) -> Result<Option<(u32, u32)>, String> {
@@ -414,6 +430,9 @@ fn navigate(
     if frame.home()?.is_some() {
         return Ok(frame);
     }
+    if frame.rankings() {
+        return return_from_rankings(serial, frame, cancelled);
+    }
     common::navigate_to_battle_modes(serial, cancelled, log)?;
     let (_, entry, size) = common::wait_for_match(
         serial,
@@ -427,6 +446,35 @@ fn navigate(
     wait_home(serial, cancelled)
 }
 
+fn return_from_rankings(
+    serial: &str,
+    mut frame: Frame,
+    cancelled: &AtomicBool,
+) -> Result<Frame, String> {
+    let start = Instant::now();
+    while start.elapsed() < SHORT_WAIT {
+        if let Some(close) = frame.reward_close(true)? {
+            frame.tap(serial, close, cancelled)?;
+        } else if frame.home()?.is_some() {
+            return Ok(frame);
+        } else if frame.rankings() {
+            if let Some(back) = frame.rankings_back()? {
+                frame.tap(serial, back, cancelled)?;
+            } else {
+                common::ensure_not_cancelled(cancelled)?;
+                adb::press_back(serial).map_err(|e| e.to_string())?;
+            }
+        }
+        common::settle_cancellable(cancelled)?;
+        frame = Frame::read(serial, cancelled)?;
+    }
+    Err(text(
+        "Could not return from the rankings to the Dream Realm overview.",
+        "Die Rückkehr von der Rangliste zur Dream-Realm-Übersicht konnte nicht bestätigt werden.",
+    )
+    .into())
+}
+
 fn claim_yesterday(
     serial: &str,
     home: &Frame,
@@ -435,24 +483,25 @@ fn claim_yesterday(
     progress: &mut dyn FnMut(ActivityEvent),
 ) -> Result<Frame, String> {
     let point = home.home()?.ok_or("Dream Realm rankings entry missing.")?;
+    let gift_available = home.ranking_gift()?;
     home.tap(serial, point, cancelled)?;
     let start = Instant::now();
     let mut reward_seen = false;
     while start.elapsed() < SHORT_WAIT {
         common::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
-        if frame.rankings() {
-            if reward_seen {
-                progress(ActivityEvent::Collected(MODE, 1));
-            }
-            cursor.checked_rankings = true;
-            common::ensure_not_cancelled(cancelled)?;
-            adb::press_back(serial).map_err(|e| e.to_string())?;
-            return wait_home(serial, cancelled);
-        }
         if let Some(close) = frame.reward_close(true)? {
             frame.tap(serial, close, cancelled)?;
             reward_seen = true;
+        } else if frame.rankings()
+            || (gift_available && frame.home()?.is_some() && !frame.ranking_gift()?)
+        {
+            let home = return_from_rankings(serial, frame, cancelled)?;
+            if reward_seen || (gift_available && !home.ranking_gift()?) {
+                progress(ActivityEvent::Collected(MODE, 1));
+            }
+            cursor.checked_rankings = true;
+            return Ok(home);
         }
     }
     Err(text(
@@ -688,14 +737,23 @@ mod tests {
             assert!(home.home().unwrap().is_some(), "{name}");
             assert_eq!(home.remaining().unwrap(), Some(10));
             assert_eq!(home.ranked().unwrap(), ranked);
+            assert_eq!(home.ranking_gift().unwrap(), !ranked);
             assert!(home
                 .point("battle/battle.png", FOOTER, 0.8)
                 .unwrap()
                 .is_some());
         }
-        let ranking = load("ranking_table");
-        assert!(ranking.rankings());
-        assert!(ranking.home().unwrap().is_none());
+        for name in ["ranking_table", "immediate_claim_rankings"] {
+            let ranking = load(name);
+            assert!(ranking.rankings(), "{name}");
+            assert!(ranking.home().unwrap().is_none(), "{name}");
+            assert!(ranking.rankings_back().unwrap().is_some(), "{name}");
+            assert!(ranking.reward_close(true).unwrap().is_none(), "{name}");
+        }
+        let home = load("immediate_claim_android_back");
+        assert!(home.home().unwrap().is_some());
+        assert!(!home.ranking_gift().unwrap());
+        assert_eq!(home.remaining().unwrap(), Some(10));
         let reward = load("ranking");
         assert!(reward.reward_close(true).unwrap().is_some());
         let formation = load("formation_or_battle");
@@ -728,6 +786,29 @@ mod tests {
             }
         }
         assert!(purchase.gold_offer().unwrap().is_none());
+    }
+
+    #[test]
+    #[ignore = "checks ranking collection and return to the Dream Realm overview without starting a battle"]
+    fn connected_emulator_dream_ranking_return() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("device serial");
+        let cancelled = AtomicBool::new(false);
+        let mut log = |line| println!("{line}");
+        let home = navigate(&serial, &cancelled, &mut log).unwrap();
+        let mut cursor = Cursor::default();
+        let mut collected = 0;
+        let before = home.ranking_gift().unwrap();
+        let home = claim_yesterday(&serial, &home, &mut cursor, &cancelled, &mut |event| {
+            if let ActivityEvent::Collected(MODE, count) = event {
+                collected += count;
+            }
+        })
+        .unwrap();
+        assert!(cursor.checked_rankings);
+        assert!(home.home().unwrap().is_some());
+        assert!(home.remaining().unwrap().is_some());
+        assert_eq!(collected, u32::from(before));
+        println!("Returned to Dream Realm with {:?} available chances and {collected} confirmed reward(s).", home.remaining().unwrap());
     }
 
     #[test]

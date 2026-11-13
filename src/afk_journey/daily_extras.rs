@@ -12,12 +12,12 @@ use std::sync::atomic::AtomicBool;
 #[derive(Default)]
 pub struct Cursor {
     confirmed: u32,
-    reserved: u32,
     pending: Option<Receipt>,
+    after_purchase: Option<PaidStatus>,
 }
 
 enum Receipt {
-    Purchase { balance: u32, price: u32 },
+    Purchase { price: u32 },
     StageReward,
 }
 
@@ -70,33 +70,41 @@ pub(super) fn amount(screen: &GrayImage, rect: common::Rect) -> Result<Option<u3
     Ok(previous)
 }
 
-fn paid_offer(screen: &GrayImage) -> Result<Option<u32>, String> {
-    if !daily::page(screen)?
-        || common::find_template(
-            screen,
-            "daily/paid_hourglass.png",
-            common::Rect {
-                x: 850,
-                y: 1445,
-                width: 85,
-                height: 65,
-            },
-            0.9,
-        )?
-        .is_none()
-    {
+// The price steps are visible in-game and reset with the daily allowance.
+// An unfamiliar price is not an approved offer.
+const PAID_PRICES: [u32; 4] = [50, 100, 200, 300];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaidStatus {
+    Price(u32),
+    FreeAvailable,
+    Exhausted,
+}
+
+fn paid_status(screen: &GrayImage) -> Result<Option<PaidStatus>, String> {
+    if !daily::page(screen)? {
         return Ok(None);
     }
-    Ok(amount(
-        screen,
-        common::Rect {
-            x: 930,
-            y: 1458,
-            width: 80,
-            height: 46,
-        },
-    )?
-    .filter(|price| (50..=5000).contains(price) && price % 50 == 0))
+    if daily::hourglass_control(screen, "daily/paid_hourglass.png")?.is_some() {
+        return Ok(amount(
+            screen,
+            common::Rect {
+                x: 930,
+                y: 1458,
+                width: 80,
+                height: 46,
+            },
+        )?
+        .filter(|price| PAID_PRICES.contains(price))
+        .map(PaidStatus::Price));
+    }
+    if daily::hourglass_control(screen, "daily/hourglass_zero.png")?.is_some() {
+        return Ok(Some(PaidStatus::Exhausted));
+    }
+    Ok(
+        daily::hourglass_control(screen, "daily/free_hourglass.png")?
+            .map(|_| PaidStatus::FreeAvailable),
+    )
 }
 
 fn wallet(screen: &GrayImage) -> Result<Option<u32>, String> {
@@ -115,13 +123,15 @@ fn wallet(screen: &GrayImage) -> Result<Option<u32>, String> {
     {
         return Ok(None);
     }
+    // The bright scenery above and below the badge can join adjacent
+    // digits into one OCR glyph. Read just the printed balance.
     amount(
         screen,
         common::Rect {
-            x: 794,
-            y: 10,
-            width: 154,
-            height: 53,
+            x: 793,
+            y: 22,
+            width: 132,
+            height: 38,
         },
     )
 }
@@ -130,49 +140,87 @@ fn read_wallet(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<u32, String> {
+) -> Result<Option<u32>, String> {
     let size = common::navigate_to_current_overview(serial, cancelled, log)?;
     common::ensure_not_cancelled(cancelled)?;
     adb::tap_game_point(serial, 330, 1830, size).map_err(|e| e.to_string())?;
     let mut last = None;
-    for _ in 0..16 {
+    for _ in 0..10 {
         common::settle_cancellable(cancelled)?;
         let (screen, _) = common::screenshot(serial)?;
         let current = wallet(&screen)?;
-        if let Some(value) = current.filter(|_| current == last) {
-            return Ok(value);
+        if current.is_some() && current == last {
+            return Ok(current);
         }
         last = current;
     }
-    Err(text(
-        "The exact diamond balance could not be verified. No further purchase was made.",
-        "Der genaue Diamantenbestand konnte nicht bestätigt werden. Kein weiterer Kauf ausgeführt.",
-    )
-    .into())
+    Ok(None)
 }
 
-fn purchase_confirmed(before: u32, after: u32, price: u32) -> bool {
-    price > 0 && before.checked_sub(after) == Some(price)
+fn stable_paid_status(
+    serial: &str,
+    cancelled: &AtomicBool,
+    accept: impl Fn(PaidStatus) -> bool,
+) -> Result<Option<(PaidStatus, (u32, u32))>, String> {
+    let mut last = None;
+    for _ in 0..10 {
+        common::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = common::screenshot(serial)?;
+        let current = paid_status(&screen)?.filter(|status| accept(*status));
+        if let Some(status) = current.filter(|_| current == last) {
+            return Ok(Some((status, size)));
+        }
+        last = current;
+        common::settle_cancellable(cancelled)?;
+    }
+    Ok(None)
+}
+
+fn confirms_purchase(price: u32, status: PaidStatus) -> bool {
+    let Some(index) = PAID_PRICES.iter().position(|candidate| *candidate == price) else {
+        return false;
+    };
+    match status {
+        PaidStatus::Price(next) => PAID_PRICES.get(index + 1) == Some(&next),
+        PaidStatus::Exhausted => true,
+        PaidStatus::FreeAvailable => false,
+    }
 }
 
 fn finish_purchase(
     serial: &str,
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
-    log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
-    let Some(Receipt::Purchase { balance, price }) = cursor.pending else {
+) -> Result<(PaidStatus, (u32, u32)), String> {
+    let Some(Receipt::Purchase { price }) = cursor.pending else {
         return Err("No pending hourglass purchase.".into());
     };
-    let after = read_wallet(serial, cancelled, log)?;
-    if !purchase_confirmed(balance, after, price) {
-        return Err(text("The diamond charge could not be confirmed. No additional hourglass will be purchased.", "Der Diamantenverbrauch konnte nicht bestätigt werden. Es wird keine weitere Sanduhr gekauft.").into());
-    }
+    let confirmed = stable_paid_status(serial, cancelled, |status| confirms_purchase(price, status))?
+        .ok_or_else(|| text(
+            "The hourglass purchase could not be verified. Check Instant AFK before retrying.",
+            "Der Sanduhrenkauf konnte nicht bestätigt werden. Prüfe Instant AFK vor einem erneuten Versuch.",
+        ).to_owned())?;
     cursor.pending = None;
+    cursor.after_purchase = Some(confirmed.0);
     cursor.confirmed += 1;
     report(ActivityEvent::Collected(GameMode::DiamondHourglasses, 1));
-    Ok(after)
+    Ok(confirmed)
+}
+
+fn allowed_price(status: PaidStatus, settings: DiamondHourglassSettings) -> Option<u32> {
+    let PaidStatus::Price(price) = status else {
+        return None;
+    };
+    // The next price identifies how many purchases the game has counted
+    // today, including manual purchases and those made by a previous run.
+    let bought = PAID_PRICES
+        .iter()
+        .position(|candidate| *candidate == price)?;
+    let spent = PAID_PRICES[..bought].iter().sum();
+    settings
+        .permits(bought as u32, spent, price)
+        .then_some(price)
 }
 
 fn run_paid(
@@ -183,60 +231,72 @@ fn run_paid(
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, String> {
-    if cursor.pending.is_some() {
-        finish_purchase(serial, cursor, cancelled, log, report)?;
-    }
-    // Adding the optional step is the opt-in; zero budget disables spending.
-    if settings.purchases == 0 || settings.budget == 0 {
+    if cursor.pending.is_none() && (settings.purchases == 0 || settings.budget == 0) {
         report(ActivityEvent::ModeEntered(GameMode::DiamondHourglasses));
         return Ok(cursor.confirmed);
     }
-    let mut balance = read_wallet(serial, cancelled, log)?;
-    loop {
-        common::navigate_to_afk_stages(serial, cancelled, log)?;
-        report(ActivityEvent::ModeEntered(GameMode::DiamondHourglasses));
-        let (screen, _) = common::screenshot(serial)?;
-        let Some(price) = paid_offer(&screen)? else {
-            return Err(text("No verified diamond hourglass price. Run free hourglasses first and check the AFK page.", "Kein bestätigter Diamantenpreis für Sanduhren. Führe zuerst die kostenlosen Sanduhren aus und prüfe die AFK-Ansicht.").into());
-        };
-        if !settings.permits(cursor.confirmed, cursor.reserved, price) || price > balance {
-            log(text(
-                "The diamond hourglass limit has been reached.",
-                "Das Limit für Diamanten-Sanduhren ist erreicht.",
-            )
-            .into());
+    common::navigate_to_afk_stages(serial, cancelled, log)?;
+    report(ActivityEvent::ModeEntered(GameMode::DiamondHourglasses));
+    let state = if cursor.pending.is_some() {
+        Some(finish_purchase(serial, cursor, cancelled, report)?)
+    } else {
+        stable_paid_status(serial, cancelled, |_| true)?
+    };
+    let Some((status, _)) = state else {
+        log(text(
+            "Skipped diamond hourglasses because the Instant AFK offer could not be verified.",
+            "Diamanten-Sanduhren übersprungen, weil das Instant-AFK-Angebot nicht eindeutig erkannt wurde.",
+        ).into());
+        return Ok(cursor.confirmed);
+    };
+    if cursor
+        .after_purchase
+        .is_some_and(|expected| expected != status)
+    {
+        log(text(
+            "The Instant AFK allowance changed during this run.",
+            "Das Instant-AFK-Kontingent hat sich während des Laufs verändert.",
+        )
+        .into());
+        return Ok(cursor.confirmed);
+    }
+    if allowed_price(status, settings).is_none() {
+        log(match status {
+            PaidStatus::Exhausted => text("No Instant AFK attempts remain.", "Keine Instant-AFK-Versuche mehr verfügbar."),
+            PaidStatus::FreeAvailable => text("Free Instant AFK attempts are available. Skipping diamond hourglasses.", "Kostenlose Instant-AFK-Versuche sind verfügbar. Diamanten-Sanduhren werden übersprungen."),
+            PaidStatus::Price(_) => text("The daily hourglass count or diamond budget has been reached.", "Die Tagesanzahl der Sanduhren oder das Diamantenbudget ist erreicht."),
+        }.into());
+        return Ok(cursor.confirmed);
+    }
+    let Some(mut balance) = read_wallet(serial, cancelled, log)? else {
+        log(text(
+            "Skipped diamond hourglasses because the exact diamond balance could not be read.",
+            "Diamanten-Sanduhren übersprungen, weil der genaue Diamantenbestand nicht gelesen werden konnte.",
+        ).into());
+        return Ok(cursor.confirmed);
+    };
+    common::navigate_to_afk_stages(serial, cancelled, log)?;
+    let Some(mut offer) = stable_paid_status(serial, cancelled, |value| value == status)? else {
+        log(text(
+            "The Instant AFK offer changed. Skipping diamond hourglasses.",
+            "Das Instant-AFK-Angebot hat sich verändert. Diamanten-Sanduhren werden übersprungen.",
+        )
+        .into());
+        return Ok(cursor.confirmed);
+    };
+    while let Some(price) = allowed_price(offer.0, settings) {
+        if price > balance {
             break;
         }
-        common::settle_cancellable(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
-        if paid_offer(&screen)? != Some(price) {
-            return Err(text(
-                "The hourglass price changed. No purchase was made.",
-                "Der Sanduhrenpreis hat sich verändert. Kein Kauf ausgeführt.",
-            )
-            .into());
-        }
-        // This button may immediately spend diamonds. Reserve the budget and
-        // receipt BEFORE the only purchase tap, including across crash recovery.
         common::ensure_not_cancelled(cancelled)?;
-        cursor.reserved += price;
-        cursor.pending = Some(Receipt::Purchase { balance, price });
-        adb::tap_game_point(serial, 965, 1410, size).map_err(|e| e.to_string())?;
-        for _ in 0..3 {
-            common::settle_cancellable(cancelled)?;
-        }
-        let (screen, _) = common::screenshot(serial)?;
-        if !daily::page(&screen)? {
-            return Err(text("The paid hourglass opened an unexpected dialog. No further purchase was made.", "Die Diamanten-Sanduhr hat einen unerwarteten Dialog geöffnet. Kein weiterer Kauf ausgeführt.").into());
-        }
-        balance = finish_purchase(serial, cursor, cancelled, log, report)?;
-        if cursor.confirmed >= settings.purchases.min(10)
-            || cursor.reserved >= settings.budget.min(5000)
-        {
-            // Leave the game at the AFK page for the next Daily step.
-            common::navigate_to_afk_stages(serial, cancelled, log)?;
-            break;
-        }
+        // Record the pending purchase before input. On recovery, confirm the
+        // game's next price or exhausted state before attempting another.
+        cursor.pending = Some(Receipt::Purchase { price });
+        adb::tap_game_point(serial, 965, 1410, offer.1).map_err(|e| e.to_string())?;
+        // The game advances the daily price after a purchase. This receipt
+        // also works when AFK loot credits diamonds to the same wallet.
+        offer = finish_purchase(serial, cursor, cancelled, report)?;
+        balance -= price;
     }
     Ok(cursor.confirmed)
 }
@@ -473,11 +533,61 @@ mod tests {
         for bad in ["143K", "1,00", "50 100", "l00", "50 Diamonds", "", "-50"] {
             assert_eq!(exact_amount(bad), None, "{bad}");
         }
-        assert!(purchase_confirmed(143981, 143881, 100));
-        assert!(!purchase_confirmed(143981, 143981, 100));
-        assert!(!purchase_confirmed(143981, 143781, 100));
-        assert!(!purchase_confirmed(10, 20, 100));
-        assert!(!purchase_confirmed(0, 0, 0));
+        assert!(confirms_purchase(50, PaidStatus::Price(100)));
+        assert!(confirms_purchase(100, PaidStatus::Price(200)));
+        assert!(confirms_purchase(200, PaidStatus::Price(300)));
+        assert!(confirms_purchase(300, PaidStatus::Exhausted));
+        assert!(!confirms_purchase(100, PaidStatus::Price(100)));
+        assert!(!confirms_purchase(100, PaidStatus::Price(300)));
+        assert!(!confirms_purchase(300, PaidStatus::Price(50)));
+        assert!(!confirms_purchase(300, PaidStatus::FreeAvailable));
+        assert!(!confirms_purchase(400, PaidStatus::Exhausted));
+    }
+
+    #[test]
+    fn remaining_hourglasses_respect_total_daily_limits() {
+        let settings = DiamondHourglassSettings {
+            purchases: 4,
+            budget: 650,
+        };
+        let final_offer = PaidStatus::Price(300);
+        assert_eq!(allowed_price(final_offer, settings), Some(300));
+        assert_eq!(
+            allowed_price(
+                final_offer,
+                DiamondHourglassSettings {
+                    budget: 649,
+                    ..settings
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            allowed_price(
+                final_offer,
+                DiamondHourglassSettings {
+                    purchases: 3,
+                    ..settings
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            allowed_price(
+                PaidStatus::Price(100),
+                DiamondHourglassSettings {
+                    purchases: 2,
+                    budget: 150
+                }
+            ),
+            Some(100)
+        );
+        assert_eq!(
+            allowed_price(PaidStatus::Price(50), DiamondHourglassSettings::default()),
+            Some(50)
+        );
+        assert_eq!(allowed_price(PaidStatus::FreeAvailable, settings), None);
+        assert_eq!(allowed_price(PaidStatus::Exhausted, settings), None);
     }
 
     #[test]
@@ -513,8 +623,14 @@ mod tests {
                 .unwrap()
                 .0
         };
-        assert_eq!(paid_offer(&load("before.png")).unwrap(), Some(50));
-        assert_eq!(paid_offer(&load("stage-reward.png")).unwrap(), Some(100));
+        assert_eq!(
+            paid_status(&load("before.png")).unwrap(),
+            Some(PaidStatus::Price(50))
+        );
+        assert_eq!(
+            paid_status(&load("stage-reward.png")).unwrap(),
+            Some(PaidStatus::Price(100))
+        );
         let house = load("mystical-house.png");
         println!(
             "wallet icon: {:?}",
@@ -553,16 +669,105 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads captures of the reported balance and the used-up Instant AFK allowance"]
+    fn captured_already_used_hourglasses() {
+        let folder = std::path::PathBuf::from(
+            std::env::var_os("ADBHELPER_TEST_DAILY_MENU").expect("capture folder"),
+        );
+        let load = |name: &str| {
+            let bytes = std::fs::read(folder.join(name)).unwrap();
+            common::normalize_screenshot(&bytes).unwrap().0
+        };
+        assert_eq!(wallet(&load("skip_fix_initial.png")).unwrap(), Some(156690));
+        let after = paid_status(&load("skip_fix_afk_stable.png"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(after, PaidStatus::Price(300));
+        let settings = DiamondHourglassSettings {
+            purchases: 4,
+            budget: 650,
+        };
+        assert_eq!(allowed_price(after, settings), Some(300));
+        assert!(confirms_purchase(200, after));
+        assert_eq!(
+            paid_status(&load("skip_fix_hourglass_zero.png")).unwrap(),
+            Some(PaidStatus::Exhausted)
+        );
+    }
+
+    #[test]
     #[ignore = "navigates to the diamond wallet and AFK page, without purchasing any hourglass"]
     fn connected_emulator_wallet_and_offer_readonly() {
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
         let cancelled = AtomicBool::new(false);
-        let balance = read_wallet(&serial, &cancelled, &mut |line| println!("{line}")).unwrap();
-        assert!(balance > 100);
-        let (screen, _) =
-            common::navigate_to_afk_stages(&serial, &cancelled, &mut |line| println!("{line}"))
-                .unwrap();
-        assert_eq!(paid_offer(&screen).unwrap(), Some(100));
+        let mut log = |line| println!("{line}");
+        let settings = DiamondHourglassSettings {
+            purchases: 4,
+            budget: 650,
+        };
+        common::navigate_to_afk_stages(&serial, &cancelled, &mut log).unwrap();
+        let (status, _) = stable_paid_status(&serial, &cancelled, |_| true)
+            .unwrap()
+            .expect("verified Instant AFK offer");
+        let price = allowed_price(status, settings).expect("remaining eligible paid offer");
+        let balance = read_wallet(&serial, &cancelled, &mut log).unwrap();
+        assert!(balance.is_some_and(|amount| amount >= price));
+        common::navigate_to_afk_stages(&serial, &cancelled, &mut log).unwrap();
+        assert!(
+            stable_paid_status(&serial, &cancelled, |offer| offer == status)
+                .unwrap()
+                .is_some()
+        );
+        println!("Eligible after checking the diamond balance: {price} diamonds.");
+    }
+
+    #[test]
+    #[ignore = "checks a previously purchased Instant AFK allowance without spending diamonds"]
+    fn connected_emulator_daily_continues_after_paid_hourglasses() {
+        use crate::routine::{Action, Routine};
+
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
+        let cancelled = AtomicBool::new(false);
+        let mut cursor = Cursor::default();
+        // Keep the test non-spending even if the game rolls over to a new day.
+        let settings = DiamondHourglassSettings {
+            purchases: 4,
+            budget: 49,
+        };
+        let routine = Routine {
+            steps: vec![Action::DiamondHourglasses, Action::StageRewards],
+            diamond_hourglasses: settings,
+            ..Routine::default()
+        };
+        let mut logs = Vec::new();
+        let mut next_step = false;
+        let collected = routine
+            .run(&cancelled, |_, action| {
+                if action == Action::StageRewards {
+                    next_step = true;
+                    return Ok(0);
+                }
+                run(
+                    &serial,
+                    GameMode::DiamondHourglasses,
+                    settings,
+                    &mut cursor,
+                    &cancelled,
+                    &mut |line| {
+                        println!("{line}");
+                        logs.push(line);
+                    },
+                    &mut |_| {},
+                )
+            })
+            .unwrap();
+        assert!(logs
+            .iter()
+            .any(|line| line == "The daily hourglass count or diamond budget has been reached."));
+        assert_eq!(collected, 0);
+        assert!(cursor.pending.is_none());
+        assert!(cursor.after_purchase.is_none());
+        assert!(next_step);
     }
 
     #[test]

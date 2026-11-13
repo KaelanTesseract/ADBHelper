@@ -190,6 +190,15 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         "daily/timer_reset.png" => include_bytes!("../../assets/AFKJourney/daily/timer_reset.png"),
         "daily/claim.png" => include_bytes!("../../assets/AFKJourney/daily/claim.png"),
         "back.png" => include_bytes!("../../assets/AFKJourney/back.png"),
+        "progression/hero_model_eye.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/hero_model_eye.png")
+        }
+        "progression/hero_profile_tab.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/hero_profile_tab.png")
+        }
+        "progression/hero_affinity_icon.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/hero_affinity_icon.png")
+        }
         "resonating_hall/level_up_all.png" => {
             include_bytes!("../../assets/AFKJourney/resonating_hall/level_up_all.png")
         }
@@ -211,6 +220,14 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         "equipment/open_all.png" => {
             include_bytes!("../../assets/AFKJourney/equipment/open_all.png")
         }
+        "equipment/support.png" => include_bytes!("../../assets/AFKJourney/equipment/support.png"),
+        "equipment/mage.png" => include_bytes!("../../assets/AFKJourney/equipment/mage.png"),
+        "equipment/warrior.png" => include_bytes!("../../assets/AFKJourney/equipment/warrior.png"),
+        "equipment/rogue.png" => include_bytes!("../../assets/AFKJourney/equipment/rogue.png"),
+        "equipment/marksman.png" => {
+            include_bytes!("../../assets/AFKJourney/equipment/marksman.png")
+        }
+        "equipment/tank.png" => include_bytes!("../../assets/AFKJourney/equipment/tank.png"),
         "dailies/emporium/invite_letter.png" => {
             include_bytes!("../../assets/AFKJourney/dailies/emporium/invite_letter.png")
         }
@@ -246,6 +263,9 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         }
         "daily/free_hourglass.png" => {
             include_bytes!("../../assets/AFKJourney/daily/free_hourglass.png")
+        }
+        "daily/hourglass_zero.png" => {
+            include_bytes!("../../assets/AFKJourney/daily/hourglass_zero.png")
         }
         "daily/paid_hourglass.png" => {
             include_bytes!("../../assets/AFKJourney/daily/paid_hourglass.png")
@@ -315,9 +335,6 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         }
         "duras_trials/no_next.png" => {
             include_bytes!("../../assets/AFKJourney/duras_trials/no_next.png")
-        }
-        "duras_trials/max_badge.png" => {
-            include_bytes!("../../assets/AFKJourney/duras_trials/max_badge.png")
         }
         "duras_trials/sweep_quantity_one.png" => {
             include_bytes!("../../assets/AFKJourney/duras_trials/sweep_quantity_one.png")
@@ -439,6 +456,12 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         }
         "navigation/resonating_hall_label.png" => {
             include_bytes!("../../assets/AFKJourney/navigation/resonating_hall_label.png")
+        }
+        "navigation/hamburger_menu.png" => {
+            include_bytes!("../../assets/AFKJourney/navigation/hamburger_menu.png")
+        }
+        "navigation/apex_stage_shortcut.png" => {
+            include_bytes!("../../assets/AFKJourney/navigation/apex_stage_shortcut.png")
         }
         "arcane_labyrinth/select_a_crest.png" => {
             include_bytes!("../../assets/AFKJourney/arcane_labyrinth/select_a_crest.png")
@@ -1420,7 +1443,7 @@ impl ResultDriver for AdbResultDriver<'_> {
         ensure_not_cancelled(self.cancelled)?;
         if self.mode == GameMode::DurasTrials {
             // Dura result screens may offer a paid Repeat. Only Back is safe
-            // here; Sweep is reserved for the independently verified cap gate.
+            // here; Sweep is only handled from the Dura stage screen.
             return adb::press_back(self.serial).map_err(|e| e.to_string());
         }
         adb::tap_game_point(self.serial, 950, 1800, self.size).map_err(|e| e.to_string())
@@ -1982,6 +2005,7 @@ type GameScreen = (GrayImage, (u32, u32));
 
 trait AfkNavigator {
     fn overview(&mut self) -> Result<(), String>;
+    fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, String>;
     fn battle_modes(&mut self) -> Result<bool, String>;
     fn afk_page(&mut self) -> Result<Option<GameScreen>, String>;
 }
@@ -1991,6 +2015,9 @@ fn enter_afk_page(navigator: &mut impl AfkNavigator) -> Result<GameScreen, Strin
     // A battle/Records/result screen must never be accepted as the AFK selector.
     for _ in 0..3 {
         navigator.overview()?;
+        if let Some(screen) = navigator.afk_shortcut()? {
+            return Ok(screen);
+        }
         if navigator.battle_modes()? {
             if let Some(screen) = navigator.afk_page()? {
                 return Ok(screen);
@@ -2000,6 +2027,20 @@ fn enter_afk_page(navigator: &mut impl AfkNavigator) -> Result<GameScreen, Strin
     Err(text("Could not open the AFK page. Check the game connection and unlocked modes.", "Die AFK-Seite konnte nicht automatisch geöffnet werden. Bitte Spielverbindung und freigeschaltete Spielmodi prüfen.").into())
 }
 
+fn apex_stage_shortcut(screen: &GrayImage) -> Result<Option<Match>, String> {
+    find_template(
+        screen,
+        "navigation/apex_stage_shortcut.png",
+        Rect {
+            x: 0,
+            y: 1815,
+            width: 200,
+            height: 90,
+        },
+        0.9,
+    )
+}
+
 struct AdbAfkNavigator<'a, L> {
     serial: &'a str,
     cancelled: &'a AtomicBool,
@@ -2007,10 +2048,39 @@ struct AdbAfkNavigator<'a, L> {
     size: (u32, u32),
 }
 
+impl<L: FnMut(String)> AdbAfkNavigator<'_, L> {
+    fn wait_for_afk_page(&self, timeout: Duration) -> Result<Option<GameScreen>, String> {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = screenshot(self.serial)?;
+            if super::daily::claim_control(&screen)?.is_some() {
+                // The idle reward popup closes on a tap outside its controls.
+                adb::tap_game_point(self.serial, 150, 1070, size)
+                    .map_err(|error| error.to_string())?;
+            } else if afk_stages_visible(&screen)? && super::daily::page(&screen)? {
+                return Ok(Some((screen, size)));
+            }
+            settle_cancellable(self.cancelled)?;
+        }
+        Ok(None)
+    }
+}
+
 impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
     fn overview(&mut self) -> Result<(), String> {
         self.size = navigate_to_current_overview(self.serial, self.cancelled, self.log)?;
         settle_cancellable(self.cancelled)
+    }
+
+    fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, String> {
+        ensure_not_cancelled(self.cancelled)?;
+        let (screen, size) = screenshot(self.serial)?;
+        let Some(shortcut) = apex_stage_shortcut(&screen)? else {
+            return Ok(None);
+        };
+        tap_match(self.serial, shortcut, size)?;
+        self.wait_for_afk_page(Duration::from_secs(10))
     }
 
     fn battle_modes(&mut self) -> Result<bool, String> {
@@ -2038,8 +2108,7 @@ impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
     }
 
     fn afk_page(&mut self) -> Result<Option<GameScreen>, String> {
-        // Retry the tile while visible, then confirm the destination label as
-        // AdbAutoPlayer does before dismissing the idle-reward overlay.
+        // Retry while the tile is still visible, then verify the selector.
         for _ in 0..3 {
             ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = screenshot(self.serial)?;
@@ -2052,36 +2121,7 @@ impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
                 break;
             }
         }
-        let label_roi = Rect {
-            x: 324,
-            y: 1728,
-            width: 432,
-            height: 192,
-        };
-        if poll_for_match(
-            self.serial,
-            &["navigation/resonating_hall_label.png"],
-            label_roi,
-            Duration::from_secs(20),
-            self.cancelled,
-        )?
-        .is_none()
-        {
-            return Ok(None);
-        }
-        let (_, size) = screenshot(self.serial)?;
-        adb::tap_game_point(self.serial, 550, 1080, size).map_err(|error| error.to_string())?;
-        settle_cancellable(self.cancelled)?;
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(20) {
-            ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = screenshot(self.serial)?;
-            if afk_stages_visible(&screen)? {
-                return Ok(Some((screen, size)));
-            }
-            thread::sleep(Duration::from_millis(400));
-        }
-        Ok(None)
+        self.wait_for_afk_page(Duration::from_secs(20))
     }
 }
 
@@ -2391,6 +2431,7 @@ mod tests {
         trace: Vec<&'static str>,
         failures: u32,
         fail_overview: bool,
+        shortcut: bool,
     }
 
     impl AfkNavigator for FakeNavigation {
@@ -2400,6 +2441,12 @@ mod tests {
                 return Err("Stop".into());
             }
             Ok(())
+        }
+        fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, String> {
+            self.trace.push("afk_shortcut");
+            Ok(self
+                .shortcut
+                .then(|| (GrayImage::new(1, 1), BASE_RESOLUTION)))
         }
         fn battle_modes(&mut self) -> Result<bool, String> {
             self.trace.push("battle_modes");
@@ -2421,6 +2468,7 @@ mod tests {
             trace: vec![],
             failures: 0,
             fail_overview: false,
+            shortcut: false,
         };
         run_sequence(StageSelection::default(), &AtomicBool::new(false), |_| {
             enter_afk_page(&mut navigator)?;
@@ -2434,9 +2482,11 @@ mod tests {
             navigator.trace,
             vec![
                 "overview",
+                "afk_shortcut",
                 "battle_modes",
                 "afk_page",
                 "overview",
+                "afk_shortcut",
                 "battle_modes",
                 "afk_page"
             ]
@@ -2449,14 +2499,17 @@ mod tests {
             trace: vec![],
             failures: 1,
             fail_overview: false,
+            shortcut: false,
         };
         enter_afk_page(&mut navigator).unwrap();
         assert_eq!(
             navigator.trace,
             vec![
                 "overview",
+                "afk_shortcut",
                 "battle_modes",
                 "overview",
+                "afk_shortcut",
                 "battle_modes",
                 "afk_page"
             ]
@@ -2465,6 +2518,78 @@ mod tests {
         navigator.fail_overview = true;
         assert_eq!(enter_afk_page(&mut navigator).unwrap_err(), "Stop");
         assert_eq!(navigator.trace, vec!["overview"]);
+    }
+
+    #[test]
+    fn world_shortcut_reaches_afk_without_opening_battle_modes() {
+        let mut navigator = FakeNavigation {
+            trace: vec![],
+            failures: 0,
+            fail_overview: false,
+            shortcut: true,
+        };
+        enter_afk_page(&mut navigator).unwrap();
+        assert_eq!(navigator.trace, vec!["overview", "afk_shortcut"]);
+    }
+
+    #[test]
+    #[ignore = "checks captured world, reward popup, selector, and formation screens"]
+    fn captured_afk_world_navigation() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("ADBHELPER_TEST_PROGRESSION_CAPTURES").unwrap(),
+        );
+        let load = |name: &str| {
+            normalize_screenshot(&std::fs::read(root.join(format!("{name}.png"))).unwrap())
+                .unwrap()
+                .0
+        };
+        let world = load("afk_world_report_current");
+        assert!(matches!(
+            overview_action(&world).unwrap(),
+            OverviewAction::Reached
+        ));
+        assert!(apex_stage_shortcut(&world).unwrap().is_some());
+        let reward = load("afk_world_via_shortcut");
+        assert!(super::super::daily::claim_control(&reward)
+            .unwrap()
+            .is_some());
+        for name in ["afk_world_selector_settled", "afk_world_dismiss_rewards"] {
+            let selector = load(name);
+            assert!(afk_stages_visible(&selector).unwrap());
+            assert!(super::super::daily::page(&selector).unwrap());
+            assert!(apex_stage_shortcut(&selector).unwrap().is_none());
+            assert!(stage_entry_point(&selector, GameMode::AfkStages)
+                .unwrap()
+                .is_some());
+            assert!(stage_entry_point(&selector, GameMode::SeasonAfkStages)
+                .unwrap()
+                .is_some());
+        }
+    }
+
+    #[test]
+    #[ignore = "opens both AFK team formations through production navigation without starting battles"]
+    fn connected_emulator_afk_stage_navigation() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
+        let cancelled = AtomicBool::new(false);
+        let mut log = |message| println!("{message}");
+        for mode in [GameMode::SeasonAfkStages, GameMode::AfkStages] {
+            let (screen, size) = navigate_to_afk_stages(&serial, &cancelled, &mut log).unwrap();
+            let (x, y) = stage_entry_point(&screen, mode)
+                .unwrap()
+                .expect("stage entry");
+            adb::tap_game_point(&serial, x, y, size).unwrap();
+            let formation = poll_for_match(
+                &serial,
+                &["battle/records.png", "battle/battle.png"],
+                lower_screen(),
+                Duration::from_secs(25),
+                &cancelled,
+            )
+            .unwrap();
+            assert!(formation.is_some(), "{}", mode.label());
+            println!("{} formation reached.", mode.label());
+        }
     }
 
     #[test]

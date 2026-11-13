@@ -306,7 +306,7 @@ pub struct PlayerApp {
     stage_cancel: Option<Arc<AtomicBool>>,
     stage_selection: StageSelection,
     tower_selection: TowerSelection,
-    dura_sweep_after_cap: bool,
+    dura_sweep_when_available: bool,
     dream_spend_gold: bool,
     dream_battle_limit: u32,
     dream_battle_limit_error: Option<String>,
@@ -316,6 +316,7 @@ pub struct PlayerApp {
     supreme_settings: SupremeSettings,
     action_settings_dialog: Option<StageAction>,
     recovery_notice: Option<String>,
+    daily_notice: Option<String>,
     logo: egui::TextureHandle,
     activity: RunActivity,
     action_error: Option<(StageAction, String)>,
@@ -376,7 +377,7 @@ impl PlayerApp {
             stage_cancel: None,
             stage_selection: StageSelection::default(),
             tower_selection: TowerSelection::default(),
-            dura_sweep_after_cap: true,
+            dura_sweep_when_available: true,
             dream_spend_gold: false,
             dream_battle_limit,
             dream_battle_limit_error,
@@ -386,6 +387,7 @@ impl PlayerApp {
             supreme_settings: SupremeSettings::default(),
             action_settings_dialog: None,
             recovery_notice: None,
+            daily_notice: None,
             logo,
             activity: RunActivity::default(),
             action_error: None,
@@ -690,6 +692,9 @@ impl PlayerApp {
         }
         self.action_error = None;
         self.recovery_notice = None;
+        if action == StageAction::Daily {
+            self.daily_notice = None;
+        }
         self.daily_step = None;
         let steps = if action == StageAction::Daily {
             self.daily_routine.steps.clone()
@@ -710,7 +715,7 @@ impl PlayerApp {
         let settings = RunSettings {
             selection: self.stage_selection,
             towers: self.tower_selection,
-            dura_sweep: self.dura_sweep_after_cap,
+            dura_sweep: self.dura_sweep_when_available,
             dream_spend_gold: self.dream_spend_gold,
             dream_battle_limit: self.dream_battle_limit,
             battle: self.battle_options,
@@ -828,6 +833,14 @@ impl PlayerApp {
                     self.recovery_notice = Some(message);
                 }
                 Event::Activity(event) => {
+                    if let ActivityEvent::InviteLetterOverBudget { price, budget } = event {
+                        let notice = format_text!(
+                            "Invite Letter skipped. Price {price} diamonds · budget {budget}.",
+                            "Invite Letter übersprungen. Preis {price} Diamanten · Budget {budget}."
+                        );
+                        self.log(&notice);
+                        self.daily_notice = Some(notice);
+                    }
                     if matches!(event, ActivityEvent::ModeEntered(_)) {
                         self.recovery_notice = None;
                     }
@@ -1076,7 +1089,7 @@ impl PlayerApp {
                                 && self.stage_cancel.is_some();
                             design_system::state_card(ui, dura_active, |ui| {
                                 self.show_action_header(ui, StageAction::DurasTrials, dura_active);
-                                ui.label(text("Push stages · Sweep at the verified cap", "Stufen pushen · Sweep nur am bestätigten Maximum"));
+                                ui.label(text("Push stages · Sweep when available", "Stufen pushen · Sweep bei Verfügbarkeit"));
                                 ui.add_space(SpaceTokens::SM);
                                 ui.horizontal(|ui| {
                                     if ui
@@ -1184,7 +1197,7 @@ impl PlayerApp {
                             ui.horizontal(|ui| {
                                 if mode.is_collection() {
                                     let label = match mode {
-                                        GameMode::CollectAffinity => text("HEROES WITH GAINS", "HELDEN MIT ZUWACHS"),
+                                        GameMode::CollectAffinity => text("HEROES VISITED", "HELDEN BESUCHT"),
                                         GameMode::LevelUpHeroes => text("LEVELS GAINED", "STUFEN GEWONNEN"),
                                         GameMode::EquipNewEquipment => text("CLASSES EQUIPPED", "KLASSEN AUSGERÜSTET"),
                                         GameMode::Emporium => text("PURCHASES", "KÄUFE"),
@@ -1306,6 +1319,9 @@ impl PlayerApp {
             if let Some((StageAction::Daily, error)) = &self.action_error {
                 ui.colored_label(ColorTokens::CLOSE_HOVER, error);
             }
+            if let Some(notice) = &self.daily_notice {
+                ui.colored_label(ColorTokens::TEXT_SECONDARY, notice);
+            }
         });
     }
 
@@ -1411,18 +1427,18 @@ impl PlayerApp {
                                         });
                                         if action == StageAction::DiamondHourglasses {
                                             ui.horizontal(|ui| {
-                                                ui.label(text("Purchases", "Käufe"));
+                                                ui.label(text("Daily purchases", "Käufe pro Tag"));
                                                 ui.add(egui::DragValue::new(&mut diamond_settings.purchases).range(1..=10));
                                             });
                                             ui.horizontal(|ui| {
-                                                ui.label(text("Diamond budget", "Diamantenbudget"));
+                                                ui.label(text("Daily diamond budget", "Diamantenbudget pro Tag"));
                                                 ui.add(egui::DragValue::new(&mut diamond_settings.budget).range(0..=5000).speed(10));
                                             });
-                                            ui.small(text("Total limit per run. Free hourglasses should run first.", "Gesamtlimit pro Lauf. Kostenlose Sanduhren sollten zuerst laufen."));
+                                            ui.small(text("Earlier purchases today count toward both limits. Run free hourglasses first.", "Heutige Käufe zählen zu beiden Limits. Kostenlose Sanduhren zuerst ausführen."));
                                         }
                                         if action == StageAction::Emporium {
                                             for (label, budget) in [
-                                                (text("Diamonds · Invite Letter", "Diamanten · Invite Letter"), &mut emporium_settings.diamonds),
+                                                (text("Invite Letter · Diamond budget", "Invite Letter · Diamantenbudget"), &mut emporium_settings.diamonds),
                                                 (text("Pal-Coins · Affinity", "Pal-Coins · Affinität"), &mut emporium_settings.pal_coins),
                                                 (text("Dream Fragments · Essences", "Traumfragmente · Essenzen"), &mut emporium_settings.dream_fragments),
                                             ] {
@@ -1432,7 +1448,7 @@ impl PlayerApp {
                                                 });
                                             }
                                             ui.checkbox(&mut emporium_settings.full_price_affinity, text("Include full-price affinity items", "Auch Affinitätsartikel zum Vollpreis"));
-                                            ui.small(text("Budgets apply per run. A budget of 0 disables the purchase.", "Budgets gelten pro Lauf. 0 deaktiviert den Kauf."));
+                                            ui.small(text("Enter the maximum amount of each currency to spend per run. For example, a 210-diamond Invite Letter requires a budget of at least 210. Set a budget to 0 to skip that purchase.", "Gib pro Währung den Höchstbetrag pro Lauf ein. Ein Invite Letter für 210 Diamanten braucht zum Beispiel ein Budget von mindestens 210. Mit 0 überspringst du den jeweiligen Kauf."));
                                         }
                                         if action == StageAction::EssenceSwap {
                                             ui.small(text("Place after Emporium to exchange essences bought in this run.", "Nach Emporium einfügen, um in diesem Lauf gekaufte Essenzen zu tauschen."));
@@ -1603,9 +1619,9 @@ impl PlayerApp {
                                 }
                                 StageAction::DurasTrials => {
                                     ui.strong(text("Daily sweeps", "Tägliche Sweeps"));
-                                    design_system::active_checkbox(ui, &mut self.dura_sweep_after_cap,
-                                        text("Run daily sweeps once the stage cap is verified", "Nach bestätigter Maximalstufe tägliche Sweeps ausführen"));
-                                    ui.small(text("Sweeps require a verified current stage cap and use daily attempts only.", "Nur an der eindeutig bestätigten aktuellen Maximalstufe. Bei unklarer Erkennung wird nicht gesweept. Zusätzliche Vorratstoken werden nicht verwendet."));
+                                    design_system::active_checkbox(ui, &mut self.dura_sweep_when_available,
+                                        text("Run daily sweeps when Sweep is available", "Tägliche Sweeps ausführen, wenn Sweep verfügbar ist"));
+                                    ui.small(text("Uses daily attempts after verifying the quantity and token cost.", "Verwendet tägliche Versuche nach Prüfung von Menge und Token-Kosten."));
                                 }
                                 StageAction::UnionCampaign => {}
                                 StageAction::DreamRealm => {

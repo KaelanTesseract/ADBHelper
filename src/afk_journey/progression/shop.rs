@@ -1,5 +1,6 @@
 use super::{common, key, text, Driver, Point, Progress, Screen};
 use crate::{
+    activity::ActivityEvent,
     afk_journey::{
         daily_extras::{amount, exact_amount},
         ocr, phase_rewards,
@@ -48,20 +49,23 @@ impl Store {
     }
 
     fn wallet(self, screen: &Screen, offer: bool) -> Result<Option<u32>, String> {
-        let x = if self == Self::Guild && !offer {
-            570
-        } else {
-            862
-        };
-        amount(
-            &screen.gray,
+        let region = if self == Self::Guild && !offer {
+            // Keep the wallet's comma and digits clear of the surrounding banner.
             common::Rect {
-                x,
+                x: 565,
+                y: 21,
+                width: 160,
+                height: 34,
+            }
+        } else {
+            common::Rect {
+                x: 862,
                 y: 13,
                 width: 155,
                 height: 53,
-            },
-        )
+            }
+        };
+        amount(&screen.gray, region)
     }
 }
 
@@ -140,6 +144,12 @@ struct Offer {
     price: u32,
     balance: u32,
     button: Point,
+}
+
+impl Offer {
+    fn fits_budget(&self, budget: u32) -> bool {
+        self.price <= budget && self.price <= self.balance
+    }
 }
 
 fn has_discount(screen: &Screen) -> bool {
@@ -265,6 +275,13 @@ fn read_offer(
     }))
 }
 
+fn sold_out(label: &str) -> bool {
+    matches!(
+        label,
+        "soldout" | "sold0ut" | "soldut" | "soldput" | "solput"
+    )
+}
+
 fn product_slot(
     screen: &Screen,
     store: Store,
@@ -283,10 +300,7 @@ fn product_slot(
         Store::Friendship => (955..1032, &["dailies/emporium/discount_affinity.png"]),
         Store::Dream => (650..925, &["dailies/emporium/bound_essence.png"]),
     };
-    if screen
-        .line(x - 72..x + 72, y.clone(), |value| value == "soldout")
-        .is_some()
-    {
+    if screen.line(x - 72..x + 72, y.clone(), sold_out).is_some() {
         return Ok(None);
     }
     for template in templates {
@@ -303,6 +317,15 @@ fn product_slot(
 
 fn confirmed_charge(before: u32, after: u32, price: u32) -> bool {
     price > 0 && before.checked_sub(after) == Some(price)
+}
+
+fn purchase_charged(screen: &Screen, store: Store, offer: &Offer) -> Result<bool, String> {
+    let store_open = selected(screen, store);
+    let offer_open = screen.point(460..810, 1740..1820, "purchase").is_some();
+    Ok((store_open || offer_open)
+        && store
+            .wallet(screen, !store_open)?
+            .is_some_and(|after| confirmed_charge(offer.balance, after, offer.price)))
 }
 
 fn confirming_purchase(screen: &Screen, store: Store, offer: &Offer) -> Option<Point> {
@@ -347,20 +370,14 @@ fn commit_purchase(
             driver.tap(&current, close)?;
             continue;
         }
-        let store_open = selected(&current, store);
-        let same_offer = current.point(460..810, 1740..1820, "purchase").is_some();
-        if (store_open || same_offer)
-            && store
-                .wallet(&current, !store_open)?
-                .is_some_and(|after| confirmed_charge(offer.balance, after, offer.price))
-        {
+        if purchase_charged(&current, store, offer)? {
             if let Product::BoundEssence(hero) = &offer.product {
                 progress.state.purchased_essences.push(hero.clone());
             }
             *progress.state.shop.spent.entry(store).or_default() += offer.price;
             progress.state.shop.slots.insert((store, slot));
             progress.completed();
-            if store_open {
+            if selected(&current, store) {
                 return Ok(current);
             }
             driver.back()?;
@@ -405,6 +422,21 @@ pub(super) fn purchase(
         progress.entered();
         return Ok(());
     }
+    if progress.count() == 0
+        && crate::afk_journey::menu_rewards::emporium_already_purchased(
+            driver.serial,
+            driver.cancelled,
+            log,
+        )?
+    {
+        progress.entered();
+        log(text(
+            "Emporium purchases were already made today.",
+            "Heute wurde bereits im Emporium eingekauft.",
+        )
+        .into());
+        return Ok(());
+    }
     let mut screen = shop_entry(driver, log)?;
     progress.entered();
     for store in [Store::Guild, Store::Friendship, Store::Dream] {
@@ -444,20 +476,24 @@ pub(super) fn purchase(
             driver.tap(&screen, point)?;
             let detail = driver.wait_for(|frame| {
                 frame.point(460..810, 1740..1820, "purchase").is_some()
-                    || frame
-                        .line(450..830, 1740..1860, |value| value == "soldout")
-                        .is_some()
+                    || frame.line(450..830, 1740..1860, sold_out).is_some()
             })?;
             if let Some(detail) = detail {
-                if let Some(offer) = read_offer(&detail, store, settings.full_price_affinity)?
-                    .filter(|offer| offer.price <= remaining && offer.price <= offer.balance)
-                {
-                    screen = commit_purchase(driver, &detail, store, x, &offer, progress)?;
-                    remaining -= offer.price;
-                    if store == Store::Guild || remaining == 0 {
-                        break;
+                if let Some(offer) = read_offer(&detail, store, settings.full_price_affinity)? {
+                    if offer.fits_budget(remaining) {
+                        screen = commit_purchase(driver, &detail, store, x, &offer, progress)?;
+                        remaining -= offer.price;
+                        if store == Store::Guild || remaining == 0 {
+                            break;
+                        }
+                        continue;
                     }
-                    continue;
+                    if offer.product == Product::InviteLetter && offer.price > remaining {
+                        (progress.report)(ActivityEvent::InviteLetterOverBudget {
+                            price: offer.price,
+                            budget: remaining,
+                        });
+                    }
                 }
                 driver.back()?;
                 screen = driver
@@ -762,6 +798,37 @@ mod tests {
         assert!(!confirmed_charge(1008, 858, 120));
         assert!(!confirmed_charge(1008, 1008, 0));
         assert!(!confirmed_charge(888, 1008, 120));
+    }
+
+    #[test]
+    #[ignore = "verifies the reported Invite Letter price against the configured diamond budget"]
+    fn captured_invite_letter_budget() {
+        let screen = captured("invite_offer_live");
+        let offer = read_offer(&screen, Store::Guild, false).unwrap().unwrap();
+        assert_eq!(offer.product, Product::InviteLetter);
+        assert_eq!(offer.price, 210);
+        assert!(!offer.fits_budget(1));
+        assert!(!offer.fits_budget(209));
+        assert!(offer.fits_budget(210));
+    }
+
+    #[test]
+    #[ignore = "checks the Invite Letter purchase using before and after emulator captures"]
+    fn captured_invite_letter_charge() {
+        let offer = read_offer(&captured("invite_offer_live"), Store::Guild, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!((offer.balance, offer.price), (157_976, 210));
+        let before = captured("invite_guild_live");
+        let after = captured("invite_purchase_sold_live");
+        assert_eq!(Store::Guild.wallet(&after, false).unwrap(), Some(157_766));
+        assert!(!purchase_charged(&before, Store::Guild, &offer).unwrap());
+        assert!(purchase_charged(&after, Store::Guild, &offer).unwrap());
+        assert!(
+            product_slot(&after, Store::Guild, 326, EmporiumSettings::default())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

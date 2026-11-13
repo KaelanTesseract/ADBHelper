@@ -179,6 +179,7 @@ pub enum ActivityEvent {
     StageCleared(GameMode),
     Swept(GameMode, u32),
     Collected(GameMode, u32),
+    InviteLetterOverBudget { price: u32, budget: u32 },
 }
 
 #[derive(Default, Debug)]
@@ -272,6 +273,7 @@ impl RunActivity {
             | ActivityEvent::BattleFinished(mode, _)
             | ActivityEvent::StageCleared(mode) => mode,
             ActivityEvent::Swept(mode, _) | ActivityEvent::Collected(mode, _) => mode,
+            ActivityEvent::InviteLetterOverBudget { .. } => return,
             ActivityEvent::ModeEntered(_) | ActivityEvent::ModeOpening(_) => unreachable!(),
         };
         let stats = self.modes.entry(mode).or_default();

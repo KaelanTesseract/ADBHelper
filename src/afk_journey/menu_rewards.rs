@@ -9,6 +9,13 @@ use std::sync::atomic::AtomicBool;
 
 type Point = (u32, u32);
 
+const MENU_BUTTON: common::Rect = common::Rect {
+    x: 885,
+    y: 1760,
+    width: 195,
+    height: 160,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
     Menu,
@@ -89,6 +96,16 @@ impl Frame {
         };
         self.line(x, y, |value| value == label)
             .map(ocr::TextLine::center)
+    }
+
+    fn main_menu_button(&self) -> Result<Option<Point>, String> {
+        Ok(common::find_template(
+            &self.gray,
+            "navigation/hamburger_menu.png",
+            MENU_BUTTON,
+            0.9,
+        )?
+        .map(|button| button.center()))
     }
 
     fn page(&self) -> Option<Page> {
@@ -195,6 +212,30 @@ impl Frame {
         }))
     }
 
+    fn quest_complete(&self, labels: &[&str]) -> Option<bool> {
+        if self.page() != Some(Page::Daily) {
+            return None;
+        }
+        let title = self.line(240..850, 415..1440, |label| labels.contains(&label))?;
+        let bottom = (title.y + title.height) as u32;
+        // The progress bar stays visible after the reward is collected.
+        let mut empty_bar = false;
+        for y in bottom + 4..bottom + 32 {
+            let mut green = 0;
+            let mut gray = 0;
+            for x in (260..989).step_by(24) {
+                let [r, g, b] = self.color.get_pixel(x, y).0;
+                green += usize::from(g.saturating_sub(r) >= 7 && g.saturating_sub(b) >= 4);
+                gray += usize::from(r < 190 && b < 190 && r.saturating_sub(g) >= 5);
+            }
+            if green >= 29 {
+                return Some(true);
+            }
+            empty_bar |= gray >= 29;
+        }
+        empty_bar.then_some(false)
+    }
+
     fn receipt_close(&self) -> Option<Point> {
         phase_rewards::loot_close(&self.lines).or_else(|| {
             self.line(260..820, 195..630, |value| {
@@ -241,6 +282,31 @@ impl Session<'_> {
         common::settle_cancellable(self.cancelled)
     }
 
+    fn open_main_menu(&self, log: &mut impl FnMut(String)) -> Result<(), String> {
+        let size = common::navigate_to_current_overview(self.serial, self.cancelled, log)?;
+        common::ensure_not_cancelled(self.cancelled)?;
+        adb::tap_game_point(self.serial, 990, 1840, size).map_err(|error| error.to_string())?;
+        common::settle_cancellable(self.cancelled)
+    }
+
+    fn leave_reward_page(&self, frame: &Frame) -> Result<(), String> {
+        let back = common::find_template(
+            &frame.gray,
+            "back.png",
+            common::Rect {
+                x: 0,
+                y: 1710,
+                width: 210,
+                height: 190,
+            },
+            0.88,
+        )?;
+        match back {
+            Some(back) => self.tap(frame, back.center()),
+            None => self.back(),
+        }
+    }
+
     fn reset_pass_tabs(&self, frame: &Frame) -> Result<Frame, String> {
         common::ensure_not_cancelled(self.cancelled)?;
         adb::swipe_game_points(self.serial, (270, 1805), (1010, 1805), frame.size, 400)
@@ -273,8 +339,9 @@ impl Session<'_> {
             self.tap(&frame, close)?;
             frame = self.read()?;
         }
-        for _ in 0..5 {
-            match frame.page() {
+        for _ in 0..8 {
+            let page = frame.page();
+            match page {
                 Some(current) if current == target => return Ok(frame),
                 Some(Page::QuestHub) if matches!(target, Page::Daily | Page::Guild) => {
                     self.tap(&frame, (275, 1840))?;
@@ -294,19 +361,10 @@ impl Session<'_> {
                         break;
                     }
                 }
-                Some(_) => self.back()?,
-                None => {
-                    let size =
-                        common::navigate_to_current_overview(self.serial, self.cancelled, log)?;
-                    common::ensure_not_cancelled(self.cancelled)?;
-                    adb::tap_game_point(self.serial, 990, 1840, size)
-                        .map_err(|error| error.to_string())?;
-                    common::settle_cancellable(self.cancelled)?;
-                }
+                Some(_) => self.leave_reward_page(&frame)?,
+                None => self.open_main_menu(log)?,
             }
-            let Some(next) =
-                self.wait_for(|next| next.page().is_some() && next.page() != frame.page())?
-            else {
+            let Some(next) = self.wait_for_page_change(page)? else {
                 break;
             };
             frame = next;
@@ -316,6 +374,25 @@ impl Session<'_> {
             "Die Belohnungsansicht konnte nicht eindeutig erkannt werden.",
         )
         .into())
+    }
+
+    fn wait_for_page_change(&self, previous: Option<Page>) -> Result<Option<Frame>, String> {
+        for _ in 0..8 {
+            let frame = self.read()?;
+            let page = frame.page();
+            if page.is_some() && page != previous {
+                return Ok(Some(frame));
+            }
+            if page.is_none() && matches!(previous, Some(Page::Pass | Page::Friends | Page::Mail)) {
+                // The Back control can close directly onto the world.
+                if let Some(menu) = frame.main_menu_button()? {
+                    self.tap(&frame, menu)?;
+                    return self.wait_for(|frame| frame.page() == Some(Page::Menu));
+                }
+            }
+            common::settle_cancellable(self.cancelled)?;
+        }
+        Ok(None)
     }
 
     fn confirm(
@@ -375,6 +452,15 @@ mod tests {
         let load = |name| {
             Frame::decode(&std::fs::read(root.join(format!("{name}.png"))).unwrap()).unwrap()
         };
+        assert_eq!(load("guild_after_pass_reported").page(), Some(Page::Pass));
+        assert!(load("guild_after_pass_reported")
+            .main_menu_button()
+            .unwrap()
+            .is_none());
+        assert_eq!(load("guild_check_on_screen_back").page(), Some(Page::Menu));
+        let world = load("guild_pass_second_back");
+        assert_eq!(world.page(), None);
+        assert!(world.main_menu_button().unwrap().is_some());
         assert_eq!(load("menu").page(), Some(Page::Menu));
         assert_eq!(load("live_daily_failure").page(), Some(Page::QuestHub));
         for (name, page) in [
@@ -406,6 +492,22 @@ mod tests {
                 receipt.lines
             );
         }
+    }
+
+    #[test]
+    #[ignore = "verifies the transition from an open Battle Pass to Guild Quests without claiming"]
+    fn connected_emulator_pass_to_guild_quests() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let session = Session {
+            serial: &serial,
+            cancelled: &cancelled,
+        };
+        let log = &mut |message| println!("{message}");
+        session.open(Page::Pass, log).unwrap();
+        let frame = session.open(Page::Guild, log).unwrap();
+        assert_eq!(frame.page(), Some(Page::Guild));
+        println!("Guild Quests reached from the Battle Pass.");
     }
 
     #[test]
@@ -445,6 +547,53 @@ mod tests {
             assert!(result.is_ok(), "{name}: {result:?}");
         }
     }
+}
+
+const EMPORIUM_QUEST: &[&str] = &["purchasefromemporiumx1", "purchasefromemporiumxl"];
+
+#[test]
+#[ignore = "verifies open and completed Daily Quest progress from a supplied AFK Journey capture"]
+fn captured_daily_quest_progress() {
+    let folder = std::path::PathBuf::from(
+        std::env::var_os("ADBHELPER_TEST_DAILY_MENU").expect("capture folder"),
+    );
+    let frame =
+        Frame::decode(&std::fs::read(folder.join("skip_fix_quest_mid.png")).unwrap()).unwrap();
+    assert_eq!(frame.quest_complete(EMPORIUM_QUEST), Some(false));
+    assert_eq!(
+        frame.quest_complete(&["participateindreamrealmxl", "participateindreamrealmx1"]),
+        Some(true)
+    );
+    assert_eq!(frame.quest_complete(&["questnotonscreen"]), None);
+}
+
+pub(super) fn emporium_already_purchased(
+    serial: &str,
+    cancelled: &AtomicBool,
+    log: &mut impl FnMut(String),
+) -> Result<bool, String> {
+    let session = Session { serial, cancelled };
+    let mut frame = session.open(Page::Daily, log)?;
+    // The quest list remembers its scroll position. Completed rows may be
+    // below unfinished rows after their rewards have been collected.
+    for (from, to) in [((540, 550), (540, 1460)), ((540, 1460), (540, 550))] {
+        for _ in 0..5 {
+            if let Some(done) = frame.quest_complete(EMPORIUM_QUEST) {
+                if !done || session.read()?.quest_complete(EMPORIUM_QUEST) == Some(true) {
+                    return Ok(done);
+                }
+            }
+            if frame.page() != Some(Page::Daily) {
+                return Ok(false);
+            }
+            common::ensure_not_cancelled(cancelled)?;
+            adb::swipe_game_points(serial, from, to, frame.size, 380)
+                .map_err(|error| error.to_string())?;
+            common::settle_cancellable(cancelled)?;
+            frame = session.read()?;
+        }
+    }
+    Ok(false)
 }
 
 pub fn run(

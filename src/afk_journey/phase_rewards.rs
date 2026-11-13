@@ -194,6 +194,14 @@ fn phase_tabs(lines: &[ocr::TextLine]) -> BTreeMap<u32, (u32, u32)> {
         .collect()
 }
 
+fn ranking_control(frame: &Frame, label: &str, top: std::ops::Range<f32>) -> Option<f32> {
+    frame
+        .lines
+        .iter()
+        .find(|line| line.x > 850.0 && top.contains(&line.y) && compact(&line.text) == label)
+        .map(|line| line.y)
+}
+
 fn ranking(frame: &Frame) -> bool {
     first_clear_header(&frame.lines).is_none()
         && !frame.lines.iter().any(|l| {
@@ -209,14 +217,8 @@ fn ranking(frame: &Frame) -> bool {
             .iter()
             .any(|l| l.y > 1800.0 && compact(&l.text) == "phaserankings")
         && !phase_tabs(&frame.lines).is_empty()
-        && frame
-            .lines
-            .iter()
-            .any(|l| l.x > 850.0 && l.y > 100.0 && l.y < 300.0 && compact(&l.text) == "phase")
-        && frame
-            .lines
-            .iter()
-            .any(|l| l.x > 850.0 && l.y > 300.0 && l.y < 570.0 && compact(&l.text) == "season")
+        && ranking_control(frame, "phase", 100.0..300.0).is_some()
+        && ranking_control(frame, "season", 300.0..570.0).is_some()
 }
 
 fn selected_phase(frame: &Frame) -> Option<u32> {
@@ -225,18 +227,19 @@ fn selected_phase(frame: &Frame) -> Option<u32> {
         .iter()
         .filter_map(|(&number, &point)| {
             let line = frame.lines.iter().find(|l| l.center() == point)?;
-            let mut green = 0;
-            let mut total = 0;
-            for y in (line.y as u32..(line.y + line.height) as u32).step_by(2) {
-                for x in (line.x as u32..(line.x + line.width) as u32).step_by(2) {
-                    let [r, g, b] = frame.color.get_pixel(x, y).0;
-                    total += 1;
-                    if u16::from(g) > u16::from(r) + 18 && u16::from(g) > u16::from(b) + 15 {
-                        green += 1;
-                    }
-                }
-            }
-            (total > 0 && green * 100 > total * 8).then_some(number)
+            // The active tab's underline has a green segment left of the label.
+            // The lettering itself changes color across ranking views.
+            let left = line.x as u32;
+            let green = (792..804).step_by(2).any(|y| {
+                (left.saturating_sub(90)..left.saturating_sub(4))
+                    .filter(|&x| {
+                        let [r, g, b] = frame.color.get_pixel(x, y).0;
+                        u16::from(g) > u16::from(r) + 18 && u16::from(g) > u16::from(b) + 15
+                    })
+                    .count()
+                    >= 24
+            });
+            green.then_some(number)
         })
         .collect();
     (selected.len() == 1).then(|| selected[0])
@@ -252,6 +255,27 @@ fn first_clear_entry(frame: &Frame) -> Option<(u32, u32)> {
                 && matches!(compact(&l.text).as_str(), "1stclear" | "istclear")
         })
         .map(|l| (l.center().0, l.center().1.saturating_sub(45)))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScopeEntry {
+    Available((u32, u32)),
+    Unavailable,
+}
+
+fn scope_entry(frame: &Frame, phase: u32) -> Option<ScopeEntry> {
+    if !ranking(frame) || selected_phase(frame) != Some(phase) {
+        return None;
+    }
+    if let Some(point) = first_clear_entry(frame) {
+        return Some(ScopeEntry::Available(point));
+    }
+    let phase_button = ranking_control(frame, "phase", 100.0..300.0)?;
+    let season_button = ranking_control(frame, "season", 300.0..570.0)?;
+    // With no First Clear button, Season occupies the slot directly below Phase.
+    (100.0..170.0)
+        .contains(&(season_button - phase_button))
+        .then_some(ScopeEntry::Unavailable)
 }
 
 fn reward_badge(frame: &Frame, scope: RankingScope) -> bool {
@@ -488,13 +512,10 @@ fn open_scope(
         return Ok(Some(frame));
     }
     let mut frame = open_ranking(serial, cancelled, log)?;
-    let mut found = false;
-    for _ in 0..8 {
-        if let Some(point) = phase_tabs(&frame.lines).get(&phase) {
-            tap(serial, *point, &frame, cancelled)?;
-            common::settle_cancellable(cancelled)?;
-            frame = wait_ranking(serial, cancelled)?;
-            found = true;
+    let mut phase_tab = None;
+    for index in 0..8 {
+        phase_tab = phase_tabs(&frame.lines).get(&phase).copied();
+        if phase_tab.is_some() || index == 7 {
             break;
         }
         // The left arrow returns toward newer phases.
@@ -502,36 +523,40 @@ fn open_scope(
         common::settle_cancellable(cancelled)?;
         frame = wait_ranking(serial, cancelled)?;
     }
-    if !found {
-        return Err(text(
+    let phase_tab = phase_tab.ok_or_else(|| {
+        text(
             "The selected ranking phase could not be found.",
             "Die gewählte Ranglistenphase wurde nicht gefunden.",
         )
-        .into());
+        .to_owned()
+    })?;
+    if selected_phase(&frame) != Some(phase) {
+        tap(serial, phase_tab, &frame, cancelled)?;
+        frame = read(serial, cancelled)?;
     }
+    let mut unavailable = false;
+    let mut opened = false;
     for _ in 0..18 {
-        if selected_phase(&frame) == Some(phase) {
-            break;
+        let entry = scope_entry(&frame, phase);
+        match entry {
+            Some(ScopeEntry::Available(point)) => {
+                tap(serial, point, &frame, cancelled)?;
+                opened = true;
+                break;
+            }
+            Some(ScopeEntry::Unavailable) if unavailable => return Ok(None),
+            _ => unavailable = entry == Some(ScopeEntry::Unavailable),
         }
         common::settle_cancellable(cancelled)?;
-        frame = wait_ranking(serial, cancelled)?;
+        frame = read(serial, cancelled)?;
     }
-    if selected_phase(&frame) != Some(phase) {
+    if !opened {
         return Err(text(
-            "The active ranking phase could not be verified.",
-            "Die aktive Ranglistenphase konnte nicht bestätigt werden.",
+            "The First Clear entry for the selected phase could not be verified.",
+            "Der First-Clear-Einstieg für die ausgewählte Phase konnte nicht bestätigt werden.",
         )
         .into());
     }
-    if first_clear_entry(&frame).is_none() {
-        common::settle_cancellable(cancelled)?;
-        frame = wait_ranking(serial, cancelled)?;
-        if selected_phase(&frame) == Some(phase) && first_clear_entry(&frame).is_none() {
-            return Ok(None);
-        }
-    }
-    let entry = first_clear_entry(&frame).ok_or("First-clear entry changed.")?;
-    tap(serial, entry, &frame, cancelled)?;
     for _ in 0..18 {
         let next = read(serial, cancelled)?;
         if let Some((number, _)) = first_clear(&next) {
@@ -817,6 +842,34 @@ mod tests {
         assert_eq!(found.keys().copied().collect::<Vec<_>>(), [1, 2]);
     }
     #[test]
+    fn first_clear_waits_for_the_selected_phase_and_uses_the_button_layout() {
+        let mut frame = Frame {
+            gray: GrayImage::new(1080, 1920),
+            color: RgbImage::new(1080, 1920),
+            lines: vec![
+                line("Phase 2", 280.0, 726.0),
+                line("Phase 1", 735.0, 726.0),
+                line("Phase Rankings", 525.0, 1879.0),
+                line("Phase", 942.0, 235.0),
+                line("Season", 937.0, 368.0),
+            ],
+            size: (1080, 1920),
+        };
+        assert_eq!(scope_entry(&frame, 1), None);
+        for x in 670..710 {
+            frame.color.put_pixel(x, 796, image::Rgb([75, 147, 83]));
+        }
+        assert_eq!(scope_entry(&frame, 2), None);
+        assert_eq!(scope_entry(&frame, 1), Some(ScopeEntry::Unavailable));
+        frame.lines.last_mut().unwrap().y = 500.0;
+        assert_eq!(scope_entry(&frame, 1), None);
+        frame.lines.push(line("Ist Clear", 928.0, 367.0));
+        assert_eq!(
+            scope_entry(&frame, 1),
+            Some(ScopeEntry::Available((988, 342)))
+        );
+    }
+    #[test]
     fn stop_before_navigation_does_not_start_adb() {
         let mut cursor = Cursor::default();
         let mut events = Vec::new();
@@ -837,12 +890,18 @@ mod tests {
             std::env::var_os("ADBHELPER_TEST_PHASE_REWARDS").expect("capture folder"),
         );
         let load = |name: &str| decode(&std::fs::read(root.join(name)).unwrap()).unwrap();
-        assert!(ranking(&load("after-back.png")));
-        assert_eq!(selected_phase(&load("after-back.png")), Some(2));
+        let current = load("after-back.png");
+        assert!(ranking(&current));
+        assert_eq!(selected_phase(&current), Some(2));
+        assert!(matches!(
+            scope_entry(&current, 2),
+            Some(ScopeEntry::Available(_))
+        ));
+        assert_eq!(scope_entry(&current, 1), None);
         let older = load("phase-one.png");
         assert!(ranking(&older));
         assert_eq!(selected_phase(&older), Some(1));
-        assert!(first_clear_entry(&older).is_none());
+        assert_eq!(scope_entry(&older, 1), Some(ScopeEntry::Unavailable));
         assert_eq!(
             first_clear(&load("district-ocr-variant.png")),
             Some((2, RankingScope::District))

@@ -10,11 +10,7 @@ use crate::{
     routine::EmporiumSettings,
 };
 use image::{GrayImage, RgbImage};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    ops::Range,
-    sync::atomic::AtomicBool,
-};
+use std::{collections::BTreeMap, ops::Range, sync::atomic::AtomicBool};
 
 type Point = (u32, u32);
 
@@ -24,7 +20,7 @@ pub struct RunState {
     // A crash after an irreversible input can leave its outcome unknown.
     pending: bool,
     purchased_essences: Vec<String>,
-    affinity_visited: BTreeSet<String>,
+    affinity_attempted: Vec<hall::HeroNameplate>,
     shop: shop::State,
 }
 

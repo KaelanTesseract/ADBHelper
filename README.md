@@ -55,7 +55,7 @@ No Rust installation is needed to use the downloaded EXE.
 | **AFK Stages** | Pushes normal stages, Season stages, or both. When both are selected, Season runs first. |
 | **Season Legend Trial** | Pushes the selected Lightbearer, Wilder, Graveborn, and Mauler towers. Closed towers are skipped. |
 | **Union Campaign** | Pushes available guild campaign floors. Requires guild membership and an unlocked campaign. |
-| **Dura's Trials** | Pushes free first-clear stages toward the daily limit. Optionally uses daily Sweeps at a verified maximum. |
+| **Dura's Trials** | Starts a free battle when the selected stage shows Battle. Optionally uses daily Sweeps when the selected stage shows Sweep. |
 | **Dream Realm** | Challenges the boss with your in-game formation and uses Skip when available. The default is up to two battles per run, adjustable in the action settings. Extra Gold attempts are opt-in. As a Daily step, it collects yesterday's ranking reward and can stop early once today's ranking is recorded. |
 | **Arena** | Plays daily Arena battles with your in-game team. Can claim up to two additional attempts when their zero-diamond price is confirmed. |
 | **Supreme Arena** | Plays daily challenges with your three in-game formations and your selected left, middle, or right opponent. |
@@ -70,7 +70,7 @@ Add these steps through the **Daily** gear popup:
 | --- | --- |
 | **AFK rewards** | Collects the AFK chest twice for daily progress. |
 | **Free hourglasses** | Claims up to three available free Instant AFK hourglasses. Stops when the game shows a diamond price. |
-| **Diamond hourglasses** | Purchases Instant AFK rewards within your configured purchase count and total diamond budget. Optional. |
+| **Diamond hourglasses** | Purchases remaining Instant AFK rewards within your configured daily purchase count and diamond budget. Optional. |
 | **AFK stage rewards** | Collects available stage-progress rewards. A step with no rewards available completes normally. |
 | **Season Phase Ranking rewards** | Collects available District, Server, and Guild first-clear rewards across the available phases. Each scope has its own counter. |
 | **Friend rewards** | Uses Send & Receive to exchange available gifts with friends. |
@@ -83,10 +83,10 @@ Add these steps through the **Daily** gear popup:
 
 | Step | What it does |
 | --- | --- |
-| **Collect Affinity** | Visits the roster and performs up to three free interactions per hero. |
+| **Collect Affinity** | Visits the roster and taps the center of the screen twice per hero. The activity counter shows heroes visited. |
 | **Level Up All Heroes** | Uses Level Up All in the Resonating Hall, up to 30 confirmed levels per run. |
 | **Equip New Equipment** | Opens available equipment chests and uses Quick Equip for the six equipment classes when available. |
-| **Emporium purchases** | Buys the discounted Invite Letter, affinity items, and hero-bound Temporal Essences within separate Diamond, Pal-Coin, and Dream Fragment budgets. A budget of zero disables that purchase category. Full-price affinity items are optional. |
+| **Emporium purchases** | Buys the discounted Invite Letter, affinity items, and hero-bound Temporal Essences within separate currency budgets. Set the Invite Letter budget to at least the price in diamonds. Daily shows the price and budget when the offer is skipped for exceeding the limit. A completed Emporium purchase quest skips the step. A budget of zero disables that purchase category. Full-price affinity items are optional. |
 | **Noble Tavern · Single Pull** | Uses one existing Invite Letter for All-Hero Recruitment when available. |
 | **Essence Swap** | Exchanges eligible hero-bound Temporal Essences bought by Emporium earlier in the same Daily run. |
 
@@ -96,9 +96,9 @@ Open the **Daily** gear and browse **Rewards**, **Battles**, **Heroes**, or **Sh
 
 The default routine contains **AFK rewards → Free hourglasses**. Additional combat and reward steps are optional; new actions are not added to an existing routine automatically.
 
-**Diamond hourglasses require an explicit opt-in:** add the step and configure its purchase count and total budget per run. Initial limits are **one purchase / 50 diamonds**; a zero budget disables spending. Place free hourglasses first. An unconfirmed charge stops the run rather than retrying a purchase.
+**Diamond hourglasses require an explicit opt-in.** Add the step and configure its daily purchase count and diamond budget. The defaults are **one purchase and 50 diamonds**. Earlier purchases today count toward both limits. A budget of zero disables spending. Place free hourglasses first. Daily moves on when the game shows that no attempts remain or the next purchase would exceed either limit. An unconfirmed purchase stops the run for inspection.
 
-For Dura's Trials, Sweeps require a confirmed maximum stage and verified daily-token costs. ADBHelper sets up to **six available daily Sweeps** per batch and checks the counter decrease before counting them. Extra stock tokens and purchases are excluded.
+For Dura's Trials, the selected stage's button determines the action. ADBHelper sets up to **six available daily Sweeps** per batch, verifies the quantity and daily-token cost in the dialog, and checks the counter decrease before counting them. Sweeps use daily attempts only.
 
 ## Settings
 

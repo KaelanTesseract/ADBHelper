@@ -149,44 +149,6 @@ fn navigate(
     .into())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SelectedCard {
-    left: u32,
-    right: u32,
-}
-
-fn selected_card(image: &image::RgbImage) -> Option<SelectedCard> {
-    if image.dimensions() != (1080, 1920) {
-        return None;
-    }
-    let mut edges = Vec::<u32>::new();
-    let mut last_green = None;
-    for x in 0..image.width() {
-        let green = (1130..1520)
-            .filter(|&y| {
-                let [r, g, b] = image.get_pixel(x, y).0;
-                g >= 100 && u16::from(g) > u16::from(r) + 30 && u16::from(g) > u16::from(b) + 20
-            })
-            .count();
-        if green >= 250 {
-            // A thick border is one edge, not several edges six pixels apart.
-            if last_green.is_none_or(|last| x > last + 3) {
-                edges.push(x);
-            }
-            last_green = Some(x);
-        }
-    }
-    let pairs: Vec<_> = edges
-        .windows(2)
-        .filter(|e| (350..=600).contains(&(e[1] - e[0])))
-        .map(|e| SelectedCard {
-            left: e[0],
-            right: e[1],
-        })
-        .collect();
-    (pairs.len() == 1).then(|| pairs[0])
-}
-
 fn enabled_sweep_color(image: &image::RgbImage, rect: Rect) -> bool {
     let mut orange = 0u32;
     let mut total = 0u32;
@@ -219,141 +181,6 @@ fn unique_value(values: impl Iterator<Item = u32>) -> Option<u32> {
     }
 }
 
-fn repeated_stage(text: &str) -> Option<u32> {
-    let text: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    if ![3, 6, 9].contains(&text.len()) || !text.bytes().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let width = text.len() / 3;
-    if text[..width] != text[width..width * 2] || text[..width] != text[width * 2..] {
-        return None;
-    }
-    exact_number(&text[..width]).filter(|n| (1..=999).contains(n))
-}
-
-fn clean_stage_numeral(mask: &image::GrayImage) -> Option<image::GrayImage> {
-    let (width, height) = mask.dimensions();
-    if width < 3 || height < 60 {
-        return None;
-    }
-    let index = |x: u32, y: u32| (y * width + x) as usize;
-    // Opening removes hairline portrait outlines that otherwise attach to a
-    // numeral. Keep only tall connected strokes; tiny hair/armour fragments
-    // must not become a quote or an extra digit in the OCR word.
-    let mut eroded = vec![false; (width * height) as usize];
-    for y in 1..height - 1 {
-        for x in 1..width - 1 {
-            eroded[index(x, y)] = (y - 1..=y + 1)
-                .all(|ny| (x - 1..=x + 1).all(|nx| mask.get_pixel(nx, ny).0[0] == 0));
-        }
-    }
-    let mut opened = vec![false; eroded.len()];
-    for y in 0..height {
-        for x in 0..width {
-            opened[index(x, y)] = (y.saturating_sub(1)..=(y + 1).min(height - 1)).any(|ny| {
-                (x.saturating_sub(1)..=(x + 1).min(width - 1)).any(|nx| eroded[index(nx, ny)])
-            });
-        }
-    }
-    let mut seen = vec![false; opened.len()];
-    let mut clean = image::GrayImage::from_pixel(width, height, image::Luma([255]));
-    let mut kept = 0;
-    for start in 0..opened.len() {
-        if !opened[start] || seen[start] {
-            continue;
-        }
-        let mut stack = vec![start];
-        let mut pixels = Vec::new();
-        let (mut left, mut top, mut right, mut bottom) = (width, height, 0, 0);
-        seen[start] = true;
-        while let Some(at) = stack.pop() {
-            let (x, y) = (at as u32 % width, at as u32 / width);
-            left = left.min(x);
-            right = right.max(x);
-            top = top.min(y);
-            bottom = bottom.max(y);
-            pixels.push((x, y));
-            for (nx, ny) in [
-                (x.saturating_sub(1), y),
-                ((x + 1).min(width - 1), y),
-                (x, y.saturating_sub(1)),
-                (x, (y + 1).min(height - 1)),
-            ] {
-                let next = index(nx, ny);
-                if opened[next] && !seen[next] {
-                    seen[next] = true;
-                    stack.push(next);
-                }
-            }
-        }
-        if bottom - top + 1 >= 60 && right - left + 1 >= 8 {
-            if left == 0 || top == 0 || right == width - 1 || bottom == height - 1 {
-                return None;
-            }
-            kept += 1;
-            if kept > 3 {
-                return None;
-            }
-            for (x, y) in pixels {
-                clean.put_pixel(x, y, image::Luma([0]));
-            }
-        }
-    }
-    (kept > 0).then_some(clean)
-}
-
-fn isolated_selected_stage(
-    color: &image::RgbImage,
-    card: SelectedCard,
-) -> Result<Option<u32>, String> {
-    // Keep the complete italic numeral inside THIS green card. Portraits and
-    // pale yellow backgrounds can defeat grayscale OCR, so isolate the warm
-    // dark numeral and repeat the captured pixels; never infer a stage from
-    // its neighbour, the bottom trial tabs, or the daily limit.
-    let left = card.left + 140;
-    let (width, height) = (210, 140);
-    if left + width >= card.right || color.dimensions() != (1080, 1920) {
-        return Ok(None);
-    }
-    // Some pale armour portraits share the numeral's warm hue. Retry with a
-    // stricter dark-ink mask if they remain attached to the captured glyphs.
-    // Every candidate must still contain complete strokes and three matching
-    // readings; no number is inferred from Max or the daily-limit banner.
-    for maximum_red in [190, 165] {
-        let mut mask = image::GrayImage::from_pixel(width, height, image::Luma([255]));
-        for y in 0..height {
-            for x in 0..width {
-                let [r, g, b] = color.get_pixel(left + x, 1150 + y).0.map(u16::from);
-                let ink = (45..maximum_red).contains(&r)
-                    && r > g + 3
-                    && r - g < 30
-                    && r > b + 5
-                    && g >= b
-                    && g - b < 65;
-                if ink {
-                    mask.put_pixel(x, y, image::Luma([0]));
-                }
-            }
-        }
-        let Some(clean) = clean_stage_numeral(&mask) else {
-            continue;
-        };
-        let mut word =
-            image::GrayImage::from_pixel(width * 3 + 76, height + 60, image::Luma([255]));
-        for copy in 0..3 {
-            image::imageops::replace(&mut word, &clean, i64::from(30 + copy * (width + 8)), 30);
-        }
-        if let Some(stage) = unique_value(
-            super::ocr::recognize(&word)?
-                .iter()
-                .filter_map(|line| repeated_stage(&line.text)),
-        ) {
-            return Ok(Some(stage));
-        }
-    }
-    Ok(None)
-}
-
 fn isolated_daily_counter(gray: &image::GrayImage) -> Result<Option<u32>, String> {
     Ok(unique_value(
         repeated_numeric_patch(
@@ -368,60 +195,6 @@ fn isolated_daily_counter(gray: &image::GrayImage) -> Result<Option<u32>, String
         .iter()
         .filter_map(|line| repeated_counter(&line.text)),
     ))
-}
-
-fn daily_limit(lines: &[super::ocr::TextLine]) -> Option<u32> {
-    unique_value(lines.iter().filter_map(|line| {
-        let (_, y) = line.center();
-        if !(930..=1110).contains(&y) {
-            return None;
-        }
-        let text: String = line
-            .text
-            .to_lowercase()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        let number = [
-            "dailylimit:",
-            "tageslimit:",
-            "täglicheslimit:",
-            "taglicheslimit:",
-        ]
-        .into_iter()
-        .find_map(|prefix| text.strip_prefix(prefix))
-        .and_then(exact_number)?;
-        (1..=999).contains(&number).then_some(number)
-    }))
-}
-
-fn reached_cap_stage(
-    lines: &[super::ocr::TextLine],
-    card: Option<SelectedCard>,
-    stage: Option<u32>,
-    selected_max_template: bool,
-) -> Option<u32> {
-    let card = card?;
-    let stage = stage.filter(|n| (1..=999).contains(n))?;
-    // Once the last first-clear is won, the numeric Daily Limit is replaced
-    // by this explicit status. Also require Max on THIS selected green card.
-    let reached = lines.iter().any(|line| {
-        let (x, y) = line.center();
-        (250..=830).contains(&x)
-            && (1000..=1100).contains(&y)
-            && line
-                .text
-                .trim()
-                .eq_ignore_ascii_case("Current Limit Reached")
-    });
-    let selected_max = lines.iter().any(|line| {
-        let (x, y) = line.center();
-        x > card.right.saturating_sub(140)
-            && x < card.right
-            && (1130..=1205).contains(&y)
-            && line.text.trim().eq_ignore_ascii_case("Max")
-    });
-    (reached && (selected_max || selected_max_template)).then_some(stage)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -459,41 +232,33 @@ fn repeated_price(text: &str) -> Option<SweepCost> {
     text_sweep_cost(&text[..len])
 }
 
-fn sweep_cost(lines: &[super::ocr::TextLine]) -> Option<SweepCost> {
-    let values: Vec<_> = lines
-        .iter()
-        .filter_map(|line| {
-            let (x, y) = line.center();
-            if !(216..=1040).contains(&x) || !(1540..=1740).contains(&y) {
-                return None;
-            }
-            let text: String = line.text.chars().filter(|c| !c.is_whitespace()).collect();
-            let text = text.trim_matches(|c: char| !c.is_ascii_digit() && c != '/');
-            let (available, cost) = text.split_once('/')?;
-            let available = exact_number(available)?;
-            let cost = exact_number(cost)?;
-            (available <= 99 && cost > 0 && cost <= 99).then_some(SweepCost { available, cost })
-        })
-        .collect();
-    if values.len() == 1 {
-        Some(values[0])
-    } else {
-        None
-    }
-}
-
 #[derive(Clone, Debug)]
 struct Snapshot {
-    trial: String,
-    limit: Option<u32>,
-    stage: Option<u32>,
     daily_remaining: Option<u32>,
     overview: bool,
     sweep: bool,
     sweep_enabled: bool,
-    sweep_cost: Option<SweepCost>,
     battle: bool,
     blocked: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TrialAction {
+    Battle,
+    Sweep,
+}
+
+impl Snapshot {
+    fn action(&self) -> Option<TrialAction> {
+        if !self.overview || self.blocked {
+            return None;
+        }
+        match (self.battle, self.sweep) {
+            (true, false) => Some(TrialAction::Battle),
+            (false, true) => Some(TrialAction::Sweep),
+            _ => None,
+        }
+    }
 }
 
 struct Frame {
@@ -502,59 +267,6 @@ struct Frame {
     size: (u32, u32),
     lines: Vec<super::ocr::TextLine>,
     snapshot: Snapshot,
-}
-
-fn trial_key(title: &str) -> String {
-    let key: String = title
-        .to_lowercase()
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    // OCR can read the decorative initial separately or omit it from the
-    // dialog. Only normalize these observed spellings, never fuzzy-match trials.
-    match key.as_str() {
-        "aidtreasure" => "raidtreasure".into(),
-        "rcanetreasure" => "arcanetreasure".into(),
-        "ocusedtreasure" => "focusedtreasure".into(),
-        "ronwalltreasure" | "rronwalltreasure" => "ironwalltreasure".into(),
-        "ooperativetreasure" | "nooperativetreasure" | "ooperaåvetreasure" => {
-            "cooperativetreasure".into()
-        }
-        _ => key,
-    }
-}
-
-fn overview_trial(lines: &[super::ocr::TextLine]) -> String {
-    let mut titles = lines
-        .iter()
-        .filter(|line| {
-            let (_, y) = line.center();
-            if !(70..=205).contains(&y)
-                || line.x < 25.0
-                || line.x + line.width > 850.0
-                || line.width <= 120.0
-                || line.height < 40.0
-            {
-                return false;
-            }
-            !trial_key(&line.text).is_empty()
-        })
-        .collect::<Vec<_>>();
-    titles.sort_by(|a, b| a.y.total_cmp(&b.y));
-    match titles.as_slice() {
-        [title] if trial_key(&title.text) != "treasure" => trial_key(&title.text),
-        [first, second]
-            if trial_key(&second.text) == "treasure"
-                && !trial_key(&first.text).contains("treasure")
-                && second.y >= first.y + first.height - 8.0
-                && second.y <= first.y + first.height + 35.0
-                && second.x >= first.x - 15.0
-                && second.x <= first.x + 180.0 =>
-        {
-            trial_key(&format!("{} {}", first.text, second.text))
-        }
-        _ => String::new(),
-    }
 }
 
 fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
@@ -572,42 +284,6 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
         .resize_exact(1080, 1920, image::imageops::FilterType::Triangle)
         .to_rgb8();
     let lines = super::ocr::recognize(&gray)?;
-    let card = selected_card(&color);
-    let mut stage = card.and_then(|card| {
-        unique_value(lines.iter().filter_map(|line| {
-            let (x, y) = line.center();
-            if x > card.left + 20
-                && x < card.right - 20
-                && (1140..=1290).contains(&y)
-                && line.height >= 40.0
-            {
-                exact_number(&line.text).filter(|&n| (1..=999).contains(&n))
-            } else {
-                None
-            }
-        }))
-    });
-    if stage.is_none() {
-        if let Some(card) = card {
-            stage = isolated_selected_stage(&color, card)?;
-        }
-    }
-    let selected_max = if let Some(card) = card {
-        common::find_template(
-            &gray,
-            "duras_trials/max_badge.png",
-            Rect {
-                x: card.right.saturating_sub(140),
-                y: 1130,
-                width: 140,
-                height: 75,
-            },
-            0.95,
-        )?
-        .is_some()
-    } else {
-        false
-    };
     let mut daily_remaining = unique_value(lines.iter().filter_map(|line| {
         let (x, y) = line.center();
         if (870..=1050).contains(&x) && (15..=100).contains(&y) {
@@ -652,11 +328,8 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
         0.9,
     )?;
     let snapshot = Snapshot {
-        trial: overview_trial(&lines),
         blocked,
-        stage,
         daily_remaining,
-        limit: daily_limit(&lines).or_else(|| reached_cap_stage(&lines, card, stage, selected_max)),
         overview: common::find_template(
             &gray,
             "duras_trials/socketed_charms_overview.png",
@@ -666,7 +339,6 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
         .is_some(),
         sweep: sweep_button.is_some(),
         sweep_enabled: sweep_button.is_some_and(|found| enabled_sweep_color(&color, found.rect())),
-        sweep_cost: sweep_cost(&lines),
         battle: common::find_template(
             &gray,
             "duras_trials/battle.png",
@@ -683,10 +355,7 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
     #[cfg(test)]
     {
         println!("Dura observation: {snapshot:?}");
-        if snapshot.stage.is_none()
-            || snapshot.limit.is_none()
-            || snapshot.daily_remaining.is_none()
-        {
+        if snapshot.daily_remaining.is_none() {
             let _ = color.save(".update-test/dura-unreadable.png");
             for line in &lines {
                 println!("OCR: {line:?}");
@@ -702,71 +371,44 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
     })
 }
 
-#[derive(Debug)]
-struct CapPermit {
-    stage: u32,
+#[derive(Debug, PartialEq, Eq)]
+struct SweepPermit {
     daily_remaining: u32,
-    trial: String,
 }
 
-fn confirm_cap(first: &Snapshot, second: &Snapshot) -> Result<CapPermit, String> {
+fn confirm_sweep(first: &Snapshot, second: &Snapshot) -> Result<SweepPermit, String> {
     for frame in [first, second] {
-        if !frame.overview
-            || !frame.sweep
-            || frame.battle
-            || frame.blocked
-            || frame.trial.is_empty()
-        {
+        if frame.action() != Some(TrialAction::Sweep) {
             return Err(text(
-                "Sweeps require a verified stage cap.",
-                "Die Maximalstufe ist nicht eindeutig bestätigt; Sweep bleibt gesperrt.",
+                "Could not verify the Sweep button on the Dura stage screen.",
+                "Die Sweep-Schaltfläche in der Dura-Stufenansicht konnte nicht bestätigt werden.",
             )
             .into());
         }
-        let (Some(limit), Some(stage), Some(_)) = (frame.limit, frame.stage, frame.daily_remaining)
-        else {
+        let Some(remaining @ 0..=99) = frame.daily_remaining else {
             return Err(text(
-                "Could not read the stage, daily cap, or remaining attempts. Sweeps stopped.",
-                "Stufe, Tageslimit oder tägliche Versuche unlesbar; kein Sweep.",
+                "Could not read the remaining daily attempts for Sweep.",
+                "Die verbleibenden täglichen Sweep-Versuche sind unlesbar.",
             )
             .into());
         };
-        if limit == 0 || limit > 999 || stage != limit || frame.daily_remaining.unwrap() > 99 {
+        if remaining > 0 && !frame.sweep_enabled {
             return Err(text(
-                "The selected stage is below the verified cap. Sweeps stopped.",
-                "Die ausgewählte Stufe ist nicht die aktuelle Maximalstufe; kein Sweep.",
+                "The Sweep button is disabled.",
+                "Die Sweep-Schaltfläche ist deaktiviert.",
             )
             .into());
         }
     }
-    if first.daily_remaining.unwrap() > 0 {
-        for frame in [first, second] {
-            if !frame.sweep_enabled
-                || frame.sweep_cost
-                    != Some(SweepCost {
-                        available: frame.daily_remaining.unwrap(),
-                        cost: 1,
-                    })
-            {
-                return Err(text("Sweeps require a verified cost of one daily attempt.", "Tägliche Sweep-Kosten nicht eindeutig als ein Tagesversuch bestätigt; kein Sweep.").into());
-            }
-        }
-    }
-    if first.trial != second.trial
-        || first.limit != second.limit
-        || first.stage != second.stage
-        || first.daily_remaining != second.daily_remaining
-    {
+    if first.daily_remaining != second.daily_remaining {
         return Err(text(
-            "The stage verification returned inconsistent readings. Sweeps stopped.",
-            "Die Stufenprüfung ist nicht stabil; kein Sweep.",
+            "The number of daily attempts changed. Sweeps stopped.",
+            "Tagesversuche haben sich geändert; kein weiterer Sweep.",
         )
         .into());
     }
-    Ok(CapPermit {
-        stage: first.stage.unwrap(),
+    Ok(SweepPermit {
         daily_remaining: first.daily_remaining.unwrap(),
-        trial: first.trial.clone(),
     })
 }
 
@@ -848,8 +490,7 @@ fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
             .is_some()
         {
             // Next opens the following formation directly. Return to the
-            // carousel so its selected floor and current daily cap are read
-            // again before deciding between a free first clear and Sweep.
+            // carousel to check whether the game offers Battle or Sweep.
             adb::press_back(serial).map_err(|e| e.to_string())?;
         } else if common::get_match(
             &screen,
@@ -862,8 +503,7 @@ fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
         )?
         .is_some()
         {
-            // At the daily limit the only green button is a paid Retry.
-            // Return to the overview and independently verify the cap there.
+            // The result can offer a paid Retry. Return to the overview.
             adb::press_back(serial).map_err(|e| e.to_string())?;
         } else if let Some((_, close)) = common::get_match(
             &screen,
@@ -882,58 +522,10 @@ fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
     .into())
 }
 
-fn select_next_stage(serial: &str, stage: u32, cancelled: &AtomicBool) -> Result<(), String> {
-    for _ in 0..8 {
-        let frame = read_frame(serial, cancelled)?;
-        if frame.snapshot.stage == Some(stage) {
-            return Ok(());
-        }
-        let numbers: Vec<_> = frame
-            .lines
-            .iter()
-            .filter_map(|line| {
-                let (_, y) = line.center();
-                if (1140..=1290).contains(&y) && line.height >= 40.0 {
-                    exact_number(&line.text).map(|number| (number, line.center()))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let candidates: Vec<_> = numbers
-            .iter()
-            .filter(|(number, _)| *number == stage)
-            .collect();
-        if candidates.len() == 1 {
-            let (x, y) = candidates[0].1;
-            adb::tap_game_point(serial, x, y, frame.size).map_err(|e| e.to_string())?;
-        } else {
-            let backwards = numbers
-                .iter()
-                .map(|(n, _)| *n)
-                .min()
-                .is_some_and(|n| n > stage);
-            let (start, end) = if backwards {
-                ((280, 1260), (900, 1260))
-            } else {
-                ((900, 1260), (280, 1260))
-            };
-            adb::swipe_game_points(serial, start, end, frame.size, 900)
-                .map_err(|e| e.to_string())?;
-        }
-        common::settle_cancellable(cancelled)?;
-    }
-    Err(text(
-        "Could not verify the selection of the next Dura stage. Sweeps stopped.",
-        "Die nächste Dura-Stufe konnte nicht eindeutig ausgewählt werden; kein Sweep.",
-    )
-    .into())
-}
-
 trait SweepDriver {
     fn observe(&mut self) -> Result<Snapshot, String>;
     fn settle(&mut self) -> Result<(), String>;
-    fn sweep(&mut self, permit: &CapPermit, quantity: u32) -> Result<u32, String>;
+    fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, String>;
     fn report(&mut self, count: u32);
 }
 
@@ -948,7 +540,7 @@ fn daily_sweeps(driver: &mut impl SweepDriver, budget: u32) -> Result<u32, Strin
         let first = driver.observe()?;
         driver.settle()?;
         let second = driver.observe()?;
-        let permit = confirm_cap(&first, &second)?;
+        let permit = confirm_sweep(&first, &second)?;
         if permit.daily_remaining == 0 {
             return Ok(total);
         }
@@ -982,8 +574,6 @@ struct AdbSweep<'a, P> {
 
 #[derive(Debug, Clone)]
 struct SweepDialog {
-    trial: String,
-    stage: u32,
     daily_remaining: u32,
     quantity: Option<u32>,
     daily_token: bool,
@@ -993,14 +583,12 @@ struct SweepDialog {
 
 fn validate_sweep_dialog(
     dialog: &SweepDialog,
-    permit: &CapPermit,
+    permit: &SweepPermit,
     quantity: u32,
 ) -> Result<(), String> {
     #[cfg(test)]
     println!("Dura sweep dialog: {dialog:?}");
-    if trial_key(&dialog.trial) != trial_key(&permit.trial)
-        || dialog.stage != permit.stage
-        || dialog.daily_remaining != permit.daily_remaining
+    if dialog.daily_remaining != permit.daily_remaining
         || dialog.quantity != Some(quantity)
         || !dialog.daily_token
         || !dialog.orange
@@ -1011,8 +599,8 @@ fn validate_sweep_dialog(
             })
     {
         return Err(text(
-            "Could not verify the stage, quantity, or daily cost in the sweep dialog.",
-            "Sweep-Dialog: Stufe, Menge oder Tageskosten nicht bestätigt; kein Verbrauch.",
+            "Could not verify the quantity or daily-token cost in the Sweep dialog.",
+            "Sweep-Dialog: Menge oder Kosten in täglichen Versuchen nicht bestätigt.",
         )
         .into());
     }
@@ -1089,81 +677,7 @@ fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<common::Match>, Str
     )
 }
 
-fn sweep_dialog_heading(lines: &[super::ocr::TextLine]) -> Option<(String, u32)> {
-    let headings = lines
-        .iter()
-        .filter_map(|line| {
-            let (_, y) = line.center();
-            if !(950..=1030).contains(&y) {
-                return None;
-            }
-            let compact: String = line
-                .text
-                .to_lowercase()
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let (trial, floor, wrapped_label) = match compact.split_once("-floor") {
-                Some((trial, floor)) => (trial, floor, false),
-                None => (compact.strip_suffix('-')?, "", true),
-            };
-            if trial.is_empty() {
-                return None;
-            }
-            let floor = floor.trim_matches([',', '.', ':', ';']);
-            let stage = if floor.is_empty() {
-                // The next line may contain either just the numeral (Arcane)
-                // or the whole "Floor 25" label (Focused). Require adjacency
-                // to this header so daily counters/rewards cannot supply it.
-                unique_value(lines.iter().filter_map(|number| {
-                    if number.y < line.y + line.height - 4.0
-                        || number.y > line.y + line.height + 55.0
-                        || number.x < line.x - 32.0
-                        || number.x > line.x + 120.0
-                        || !(20.0..=60.0).contains(&number.height)
-                        || number.width > if wrapped_label { 260.0 } else { 140.0 }
-                    {
-                        return None;
-                    }
-                    let compact: String = number
-                        .text
-                        .to_lowercase()
-                        .chars()
-                        .filter(|c| !c.is_whitespace())
-                        .collect();
-                    let value = if wrapped_label {
-                        compact.strip_prefix("floor").or_else(|| {
-                            // The captured Ironwall dialog reads the joined
-                            // italic Fl as n. Keep the adjacent numeric stage
-                            // intact and restrict this observed label variant
-                            // to its independently verified trial identity.
-                            (trial_key(trial) == "ironwalltreasure")
-                                .then(|| compact.strip_prefix("noor"))
-                                .flatten()
-                        })?
-                    } else {
-                        &compact
-                    };
-                    exact_number(value.trim_matches([',', '.', ':', ';']))
-                        .filter(|n| (1..=999).contains(n))
-                }))?
-            } else {
-                exact_number(floor).filter(|n| (1..=999).contains(n))?
-            };
-            Some((trial_key(trial), stage))
-        })
-        .collect::<Vec<_>>();
-    if headings.len() == 1 {
-        headings.into_iter().next()
-    } else {
-        None
-    }
-}
-
 fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match)>, String> {
-    let Some((trial, stage)) = sweep_dialog_heading(&frame.lines) else {
-        return Ok(None);
-    };
     if !frame
         .lines
         .iter()
@@ -1282,8 +796,6 @@ fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match
     };
     Ok(Some((
         SweepDialog {
-            trial,
-            stage,
             daily_remaining,
             quantity,
             daily_token,
@@ -1333,15 +845,8 @@ fn sweep_completion(lines: &[super::ocr::TextLine]) -> Option<SweepCompletion> {
     })
 }
 
-fn daily_count_after_sweep(snapshot: &Snapshot, permit: &CapPermit) -> Option<u32> {
-    if snapshot.overview
-        && snapshot.sweep
-        && !snapshot.battle
-        && !snapshot.blocked
-        && snapshot.stage == Some(permit.stage)
-        && snapshot.limit == Some(permit.stage)
-        && snapshot.trial == permit.trial
-    {
+fn daily_count_after_sweep(snapshot: &Snapshot) -> Option<u32> {
+    if snapshot.action() == Some(TrialAction::Sweep) {
         return snapshot.daily_remaining;
     }
     None
@@ -1349,7 +854,7 @@ fn daily_count_after_sweep(snapshot: &Snapshot, permit: &CapPermit) -> Option<u3
 
 fn wait_for_sweep_result(
     serial: &str,
-    permit: &CapPermit,
+    permit: &SweepPermit,
     cancelled: &AtomicBool,
 ) -> Result<u32, String> {
     for _ in 0..12 {
@@ -1364,7 +869,7 @@ fn wait_for_sweep_result(
                 adb::press_back(serial).map_err(|e| e.to_string())?;
             }
             None => {
-                if let Some(remaining) = daily_count_after_sweep(&frame.snapshot, permit) {
+                if let Some(remaining) = daily_count_after_sweep(&frame.snapshot) {
                     if remaining < permit.daily_remaining {
                         return Ok(remaining);
                     }
@@ -1394,18 +899,14 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
     fn settle(&mut self) -> Result<(), String> {
         common::settle_cancellable(self.cancelled)
     }
-    fn sweep(&mut self, permit: &CapPermit, quantity: u32) -> Result<u32, String> {
-        // Re-read immediately before the resource-consuming tap. A permit never
-        // survives a changed trial, cap, selected card, or daily token count.
+    fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, String> {
+        // Check the visible Sweep offer again before opening its dialog.
         let frame = read_frame(self.serial, self.cancelled)?;
-        let fresh = confirm_cap(&frame.snapshot, &frame.snapshot)?;
-        if fresh.stage != permit.stage
-            || fresh.trial != permit.trial
-            || fresh.daily_remaining != permit.daily_remaining
-        {
+        let fresh = confirm_sweep(&frame.snapshot, &frame.snapshot)?;
+        if fresh != *permit {
             return Err(text(
-                "The Dura selection changed after the cap check. Sweeps stopped.",
-                "Dura-Auswahl seit der Cap-Prüfung verändert; kein Sweep.",
+                "The number of daily attempts changed before Sweep.",
+                "Tagesversuche haben sich vor dem Sweep verändert.",
             )
             .into());
         }
@@ -1493,7 +994,7 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
 pub fn run(
     serial: &str,
     settings: BattleSettings,
-    sweep_after_cap: bool,
+    sweep_when_available: bool,
     cancelled: &AtomicBool,
     log: impl FnMut(String),
     progress: impl FnMut(ActivityEvent),
@@ -1501,7 +1002,7 @@ pub fn run(
     run_with_budget(
         serial,
         settings,
-        sweep_after_cap,
+        sweep_when_available,
         u32::MAX,
         cancelled,
         log,
@@ -1512,7 +1013,7 @@ pub fn run(
 fn run_with_budget(
     serial: &str,
     settings: BattleSettings,
-    sweep_after_cap: bool,
+    sweep_when_available: bool,
     budget: u32,
     cancelled: &AtomicBool,
     mut log: impl FnMut(String),
@@ -1530,33 +1031,9 @@ fn run_with_budget(
     let mut cleared = 0u32;
     loop {
         let frame = read_frame(serial, cancelled)?;
-        if !frame.snapshot.overview || frame.snapshot.blocked {
-            return Err(text(
-                "Could not verify the Dura stage screen. Sweeps stopped.",
-                "Dura-Stufenansicht ist nicht eindeutig; kein Sweep.",
-            )
-            .into());
-        }
-        let (Some(stage), Some(limit)) = (frame.snapshot.stage, frame.snapshot.limit) else {
-            return Err(text(
-                "Could not read the selected Dura stage or the daily cap. Sweeps stopped.",
-                "Ausgewählte Dura-Stufe oder Tageslimit nicht eindeutig lesbar; kein Sweep.",
-            )
-            .into());
-        };
-        if stage > limit {
-            return Err(text(
-                "The selected stage is above the current daily cap. Sweeps stopped.",
-                "Ausgewählte Stufe liegt über dem aktuellen Tageslimit; kein Sweep.",
-            )
-            .into());
-        }
-        if frame.snapshot.sweep {
-            if stage < limit {
-                select_next_stage(serial, stage + 1, cancelled)?;
-                continue;
-            }
-            if sweep_after_cap {
+        match frame.snapshot.action() {
+            Some(TrialAction::Battle) => {}
+            Some(TrialAction::Sweep) if sweep_when_available => {
                 let count = daily_sweeps(
                     &mut AdbSweep {
                         serial,
@@ -1566,18 +1043,19 @@ fn run_with_budget(
                     budget,
                 )?;
                 log(format_text!(
-                    "Verified Dura cap at stage {stage}. Completed {count} daily sweeps.",
-                    "Bestätigte Dura-Maximalstufe {stage}: {count} tägliche Sweeps abgeschlossen."
+                    "Completed {count} daily Dura Sweeps.",
+                    "{count} tägliche Dura-Sweeps abgeschlossen."
                 ));
+                return Ok(cleared);
             }
-            return Ok(cleared);
-        }
-        if !frame.snapshot.battle {
-            return Err(text(
-                "Could not identify the Dura battle action. Sweeps stopped.",
-                "Keine eindeutige Dura-Kampfaktion; kein Sweep.",
-            )
-            .into());
+            Some(TrialAction::Sweep) => return Ok(cleared),
+            None => {
+                return Err(text(
+                    "Could not verify the Battle or Sweep button on the Dura stage screen.",
+                    "Battle oder Sweep konnte in der Dura-Stufenansicht nicht eindeutig erkannt werden.",
+                )
+                .into());
+            }
         }
         ensure_formation(serial, cancelled)?;
         match common::play_one_stage(
@@ -1593,7 +1071,11 @@ fn run_with_budget(
                 after_victory(serial, cancelled)?;
             }
             StageResult::FormationFailed | StageResult::FinalStage => {
-                log(text("Dura team attempts are exhausted. Sweeps require a verified stage cap.", "Dura-Teamversuche ausgeschöpft. Ohne bestätigte Maximalstufe wird nicht gesweept.").into());
+                log(text(
+                    "Dura team attempts are exhausted.",
+                    "Dura-Teamversuche ausgeschöpft.",
+                )
+                .into());
                 return Ok(cleared);
             }
         }
@@ -1605,140 +1087,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ironwall_heading_keeps_its_short_first_row_and_rejects_treasure_alone() {
-        let first = super::super::ocr::TextLine {
-            text: "r ronwall".into(),
-            x: 86.0,
-            y: 61.0,
-            width: 296.0,
-            height: 55.0,
-        };
-        let second = super::super::ocr::TextLine {
-            text: "Treasure".into(),
-            x: 191.0,
-            y: 124.0,
-            width: 228.0,
-            height: 47.0,
-        };
-        assert_eq!(
-            overview_trial(&[first.clone(), second.clone()]),
-            "ironwalltreasure"
-        );
-        assert!(overview_trial(&[second.clone()]).is_empty());
-        assert_eq!(trial_key("ronwall Treasure"), "ironwalltreasure");
-        let mut far = second.clone();
-        far.x = 500.0;
-        assert!(overview_trial(&[first.clone(), far]).is_empty());
-        let mut separated = second;
-        separated.y = 200.0;
-        assert_ne!(overview_trial(&[first, separated]), "ironwalltreasure");
-    }
-
-    #[test]
-    fn stage_mask_removes_small_portrait_fragments_and_rejects_clipped_numerals() {
-        let mut patch = image::GrayImage::from_pixel(210, 140, image::Luma([255]));
-        for (left, right) in [(40, 60), (90, 120)] {
-            for y in 20..110 {
-                for x in left..right {
-                    patch.put_pixel(x, y, image::Luma([0]));
-                }
-            }
-        }
-        for y in 4..20 {
-            for x in 5..20 {
-                patch.put_pixel(x, y, image::Luma([0]));
-            }
-        }
-        for y in 20..60 {
-            patch.put_pixel(19, y, image::Luma([0]));
-        }
-        let clean = clean_stage_numeral(&patch).unwrap();
-        assert_eq!(clean.get_pixel(10, 10).0[0], 255);
-        assert_eq!(clean.get_pixel(19, 40).0[0], 255);
-        assert_eq!(clean.get_pixel(45, 40).0[0], 0);
-        assert_eq!(clean.get_pixel(100, 40).0[0], 0);
-        for y in 20..110 {
-            for x in 0..15 {
-                patch.put_pixel(x, y, image::Luma([0]));
-            }
-        }
-        assert!(clean_stage_numeral(&patch).is_none());
-    }
-
-    #[test]
-    fn cooperative_overview_joins_only_the_adjacent_treasure_heading() {
-        let first = super::super::ocr::TextLine {
-            text: "n ooperative".into(),
-            x: 55.0,
-            y: 66.0,
-            width: 405.0,
-            height: 59.0,
-        };
-        let second = super::super::ocr::TextLine {
-            text: "Treasure".into(),
-            x: 191.0,
-            y: 124.0,
-            width: 228.0,
-            height: 47.0,
-        };
-        assert_eq!(
-            overview_trial(&[second.clone(), first.clone()]),
-            "cooperativetreasure"
-        );
-        assert_eq!(trial_key("ooperative Treasure"), "cooperativetreasure");
-        assert_eq!(trial_key("ooperaåve Treasure"), "cooperativetreasure");
-        assert_ne!(trial_key("Arcane Treasure"), "cooperativetreasure");
-        let mut far = second.clone();
-        far.y = 250.0;
-        assert_ne!(overview_trial(&[first.clone(), far]), "cooperativetreasure");
-        let mut wrong = second.clone();
-        wrong.text = "Rewards".into();
-        assert!(overview_trial(&[first.clone(), wrong]).is_empty());
-        assert!(overview_trial(&[first, second.clone(), second]).is_empty());
-    }
-
-    #[test]
-    fn selected_stage_requires_three_identical_numeric_readings_and_cannot_authorize_a_lower_sweep()
-    {
-        for (text, stage) in [("27 27 27", 27), ("30 30 30", 30), ("100100100", 100)] {
-            assert_eq!(repeated_stage(text), Some(stage));
-        }
-        for text in [
-            "27", "2727", "27 28 27", "27/30", "000", "I7I7I7", "30 30 3O",
-        ] {
-            assert_eq!(repeated_stage(text), None, "{text}");
-        }
-        let mut snapshot = capped();
-        snapshot.trial = "cooperativetreasure".into();
-        snapshot.stage = Some(27);
-        snapshot.limit = Some(30);
-        assert!(confirm_cap(&snapshot, &snapshot).is_err());
-        snapshot.battle = true;
-        snapshot.sweep = false;
-        assert!(confirm_cap(&snapshot, &snapshot).is_err());
-    }
-
-    #[test]
-    #[ignore = "reads a captured Dura stage below its daily limit; no device input"]
-    fn captured_dura_stage_below_cap() {
-        let path = std::env::var_os("ADBHELPER_TEST_DURA_BELOW_CAP").expect("capture path");
+    #[ignore = "reads a captured Dura stage with a Battle button; no device input"]
+    fn captured_dura_battle_button() {
+        let path = std::env::var_os("ADBHELPER_TEST_DURA_BATTLE").expect("capture path");
         let frame = decode_frame(&std::fs::read(path).unwrap()).unwrap();
-        let stage = std::env::var("ADBHELPER_TEST_DURA_STAGE")
-            .unwrap_or_else(|_| "27".into())
-            .parse()
-            .unwrap();
-        let trial = std::env::var("ADBHELPER_TEST_DURA_TRIAL")
-            .unwrap_or_else(|_| "cooperativetreasure".into());
-        assert_eq!(frame.snapshot.trial, trial);
-        assert_eq!(frame.snapshot.stage, Some(stage));
-        assert_eq!(frame.snapshot.limit, Some(30));
-        assert!(frame.snapshot.overview && frame.snapshot.battle && !frame.snapshot.blocked);
-        assert!(!frame.snapshot.sweep);
-        assert!(confirm_cap(&frame.snapshot, &frame.snapshot).is_err());
+        assert_eq!(frame.snapshot.action(), Some(TrialAction::Battle));
+        assert!(confirm_sweep(&frame.snapshot, &frame.snapshot).is_err());
     }
 
     #[test]
-    fn batch_rewards_are_closed_before_reading_the_same_trials_daily_counter() {
+    fn batch_rewards_are_closed_before_reading_the_daily_counter() {
         use super::super::ocr::TextLine;
         let mut title = TextLine {
             text: "Sweep Complete".into(),
@@ -1764,16 +1122,15 @@ mod tests {
         title.text = "-Sweep Complete—".into();
         assert_eq!(sweep_completion(&[title]), Some(SweepCompletion::Back));
 
-        let before = capped();
-        let permit = confirm_cap(&before, &before).unwrap();
-        let mut after = before;
+        let mut after = sweep_ready();
         after.daily_remaining = Some(0);
         after.blocked = true;
-        assert_eq!(daily_count_after_sweep(&after, &permit), None);
+        assert_eq!(daily_count_after_sweep(&after), None);
         after.blocked = false;
-        assert_eq!(daily_count_after_sweep(&after, &permit), Some(0));
-        after.trial = "raidtreasure".into();
-        assert_eq!(daily_count_after_sweep(&after, &permit), None);
+        assert_eq!(daily_count_after_sweep(&after), Some(0));
+        after.sweep = false;
+        after.battle = true;
+        assert_eq!(daily_count_after_sweep(&after), None);
     }
 
     #[test]
@@ -1789,7 +1146,7 @@ mod tests {
         let before = decode_frame(&std::fs::read(overview).unwrap())
             .unwrap()
             .snapshot;
-        let permit = confirm_cap(&before, &before).unwrap();
+        let permit = confirm_sweep(&before, &before).unwrap();
         let expected = permit.daily_remaining.checked_sub(quantity).unwrap();
         let cancelled = AtomicBool::new(false);
         let result = read_frame(&serial, &cancelled).unwrap();
@@ -1869,15 +1226,9 @@ mod tests {
     }
 
     #[test]
-    fn sweep_dialog_requires_the_permitted_trial_floor_quantity_and_daily_price() {
-        let permit = CapPermit {
-            trial: "ale treasure".into(),
-            stage: 25,
-            daily_remaining: 6,
-        };
+    fn sweep_dialog_requires_matching_quantity_and_daily_token_cost() {
+        let permit = SweepPermit { daily_remaining: 6 };
         let valid = SweepDialog {
-            trial: "aletreasure".into(),
-            stage: 25,
             daily_remaining: 6,
             quantity: Some(6),
             daily_token: true,
@@ -1888,27 +1239,25 @@ mod tests {
             orange: true,
         };
         assert!(validate_sweep_dialog(&valid, &permit, 6).is_ok());
-        for change in 0..9 {
+        for change in 0..7 {
             let mut invalid = valid.clone();
             match change {
-                0 => invalid.trial = "firetreasure".into(),
-                1 => invalid.stage = 24,
-                2 => invalid.daily_remaining = 5,
-                3 => invalid.quantity = Some(5),
-                4 => invalid.cost = None,
-                5 => {
+                0 => invalid.daily_remaining = 5,
+                1 => invalid.quantity = Some(5),
+                2 => invalid.cost = None,
+                3 => {
                     invalid.cost = Some(SweepCost {
                         available: 10,
                         cost: 6,
                     })
                 }
-                6 => {
+                4 => {
                     invalid.cost = Some(SweepCost {
                         available: 6,
                         cost: 5,
                     })
                 }
-                7 => invalid.orange = false,
+                5 => invalid.orange = false,
                 _ => invalid.daily_token = false,
             }
             assert!(
@@ -1917,191 +1266,15 @@ mod tests {
             );
         }
     }
-    fn capped() -> Snapshot {
+    fn sweep_ready() -> Snapshot {
         Snapshot {
-            trial: "gale treasure".into(),
-            limit: Some(25),
-            stage: Some(25),
             daily_remaining: Some(6),
             overview: true,
             sweep: true,
             sweep_enabled: true,
-            sweep_cost: Some(SweepCost {
-                available: 6,
-                cost: 1,
-            }),
             battle: false,
             blocked: false,
         }
-    }
-
-    #[test]
-    fn focused_sweep_heading_accepts_the_wrapped_floor_label_without_mixing_trials() {
-        let title = super::super::ocr::TextLine {
-            text: "ocused Treasure -".into(),
-            x: 149.0,
-            y: 933.0,
-            width: 292.0,
-            height: 36.0,
-        };
-        let floor = super::super::ocr::TextLine {
-            text: "Floor 25".into(),
-            x: 137.0,
-            y: 984.0,
-            width: 143.0,
-            height: 36.0,
-        };
-        assert_eq!(
-            sweep_dialog_heading(&[title.clone(), floor.clone()]),
-            Some(("focusedtreasure".into(), 25))
-        );
-        assert_eq!(trial_key("F ocused Treasure"), "focusedtreasure");
-        let mut changed = floor.clone();
-        changed.text = "Floor 24".into();
-        assert_eq!(
-            sweep_dialog_heading(&[title.clone(), floor.clone(), changed.clone()]),
-            None
-        );
-        changed.y = 1300.0;
-        assert_eq!(sweep_dialog_heading(&[title.clone(), changed]), None);
-        let mut misplaced = floor.clone();
-        misplaced.x = 600.0;
-        assert_eq!(sweep_dialog_heading(&[title.clone(), misplaced]), None);
-        let mut unlabeled = floor;
-        unlabeled.text = "25".into();
-        assert_eq!(sweep_dialog_heading(&[title, unlabeled]), None);
-        let permit = CapPermit {
-            stage: 25,
-            daily_remaining: 6,
-            trial: "focusedtreasure".into(),
-        };
-        let mut dialog = SweepDialog {
-            trial: "ocusedtreasure".into(),
-            stage: 25,
-            daily_remaining: 6,
-            quantity: Some(1),
-            daily_token: true,
-            cost: Some(SweepCost {
-                available: 6,
-                cost: 1,
-            }),
-            orange: true,
-        };
-        validate_sweep_dialog(&dialog, &permit, 1).unwrap();
-        dialog.trial = "arcanetreasure".into();
-        assert!(validate_sweep_dialog(&dialog, &permit, 1).is_err());
-        dialog.trial = "ocusedtreasure".into();
-        dialog.stage = 24;
-        assert!(validate_sweep_dialog(&dialog, &permit, 1).is_err());
-    }
-
-    #[test]
-    fn ironwall_sweep_heading_reads_the_observed_italic_floor_label() {
-        let title = super::super::ocr::TextLine {
-            text: "ronwall Treasure -".into(),
-            x: 128.0,
-            y: 932.0,
-            width: 307.0,
-            height: 37.0,
-        };
-        let floor = super::super::ocr::TextLine {
-            text: "noor30".into(),
-            x: 119.0,
-            y: 983.0,
-            width: 141.0,
-            height: 37.0,
-        };
-        assert_eq!(
-            sweep_dialog_heading(&[title.clone(), floor.clone()]),
-            Some(("ironwalltreasure".into(), 30))
-        );
-        let mut other_trial = title.clone();
-        other_trial.text = "ocused Treasure -".into();
-        assert_eq!(sweep_dialog_heading(&[other_trial, floor.clone()]), None);
-        let mut distant = floor.clone();
-        distant.y = 1300.0;
-        assert_eq!(sweep_dialog_heading(&[title.clone(), distant]), None);
-        let mut conflict = floor.clone();
-        conflict.text = "Floor 29".into();
-        assert_eq!(
-            sweep_dialog_heading(&[title.clone(), floor.clone(), conflict]),
-            None
-        );
-        let mut unlabeled = floor;
-        unlabeled.text = "30".into();
-        assert_eq!(sweep_dialog_heading(&[title, unlabeled]), None);
-    }
-
-    #[test]
-    fn wrapped_arcane_sweep_heading_reads_only_its_adjacent_floor() {
-        let line = |text: &str, x, y, width, height| super::super::ocr::TextLine {
-            text: text.into(),
-            x,
-            y,
-            width,
-            height,
-        };
-        let title = line("rcane Treasure -Floor,", 167.0, 932.0, 379.0, 38.0);
-        let floor = line("25", 159.0, 985.0, 46.0, 34.0);
-        let daily = line("6", 933.0, 19.0, 20.0, 30.0);
-        let reward = line("150", 450.0, 1350.0, 60.0, 32.0);
-        assert_eq!(
-            sweep_dialog_heading(&[title.clone(), floor.clone(), daily.clone(), reward.clone()]),
-            Some(("arcanetreasure".into(), 25))
-        );
-        assert_eq!(trial_key("A rcane Treasure"), "arcanetreasure");
-        assert_eq!(sweep_dialog_heading(&[title.clone(), daily, reward]), None);
-        let mut other = floor.clone();
-        other.text = "24".into();
-        assert_eq!(
-            sweep_dialog_heading(&[title.clone(), floor.clone(), other]),
-            None
-        );
-        let mut far = floor.clone();
-        far.x = 600.0;
-        assert_eq!(sweep_dialog_heading(&[title.clone(), far]), None);
-        let mut distant = floor;
-        distant.y = 1200.0;
-        assert_eq!(sweep_dialog_heading(&[title, distant]), None);
-        let inline = line("aid Treasure -Floor 25", 151.0, 982.0, 389.0, 38.0);
-        assert_eq!(
-            sweep_dialog_heading(&[inline]),
-            Some(("raidtreasure".into(), 25))
-        );
-    }
-
-    #[test]
-    fn raid_heading_matches_the_dialog_despite_its_decorative_initial() {
-        let heading = super::super::ocr::TextLine {
-            text: "R aid Treasure".into(),
-            x: 50.0,
-            y: 66.0,
-            width: 569.0,
-            height: 105.0,
-        };
-        let counter = super::super::ocr::TextLine {
-            text: "@ 10".into(),
-            x: 519.0,
-            y: 27.0,
-            width: 159.0,
-            height: 58.0,
-        };
-        let mut snapshot = capped();
-        snapshot.trial = overview_trial(&[counter, heading]);
-        assert_eq!(snapshot.trial, "raidtreasure");
-        let permit = confirm_cap(&snapshot, &snapshot).unwrap();
-        let mut dialog = SweepDialog {
-            trial: "aidtreasure".into(),
-            stage: 25,
-            daily_remaining: 6,
-            quantity: Some(1),
-            daily_token: true,
-            cost: snapshot.sweep_cost,
-            orange: true,
-        };
-        assert!(validate_sweep_dialog(&dialog, &permit, 1).is_ok());
-        dialog.trial = "ale treasure".into();
-        assert!(validate_sweep_dialog(&dialog, &permit, 1).is_err());
     }
 
     #[test]
@@ -2113,7 +1286,7 @@ mod tests {
         };
         let first = load("ADBHELPER_TEST_DURA_OVERVIEW");
         let second = load("ADBHELPER_TEST_DURA_SECOND_OVERVIEW");
-        let permit = confirm_cap(&first.snapshot, &second.snapshot).unwrap();
+        let permit = confirm_sweep(&first.snapshot, &second.snapshot).unwrap();
         let quantity = std::env::var("ADBHELPER_TEST_DURA_QUANTITY")
             .map_or(1, |value| value.parse().expect("valid Sweep quantity"));
         let frame = load("ADBHELPER_TEST_DURA_DIALOG");
@@ -2139,23 +1312,19 @@ mod tests {
             self.observe_count += 1;
             let mut snapshot = self.snapshot.clone();
             if self.changed_second && self.observe_count == 2 {
-                snapshot.limit = Some(30);
+                snapshot.daily_remaining = Some(5);
             }
             Ok(snapshot)
         }
         fn settle(&mut self) -> Result<(), String> {
             Ok(())
         }
-        fn sweep(&mut self, permit: &CapPermit, quantity: u32) -> Result<u32, String> {
+        fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, String> {
             self.actions += 1;
             let after = self
                 .remaining_after
                 .unwrap_or(permit.daily_remaining - quantity);
             self.snapshot.daily_remaining = Some(after);
-            self.snapshot.sweep_cost = Some(SweepCost {
-                available: after,
-                cost: 1,
-            });
             Ok(after)
         }
         fn report(&mut self, count: u32) {
@@ -2175,37 +1344,11 @@ mod tests {
 
     #[test]
     fn explicit_live_budget_cannot_consume_more_daily_tokens_than_authorized() {
-        let mut driver = sweeper(capped());
+        let mut driver = sweeper(sweep_ready());
         assert_eq!(daily_sweeps(&mut driver, 3).unwrap(), 3);
         assert_eq!(driver.actions, 1);
         assert_eq!(driver.reports, vec![3]);
         assert_eq!(driver.snapshot.daily_remaining, Some(3));
-    }
-
-    #[test]
-    fn missing_price_extra_token_budget_and_non_daily_costs_block_sweep() {
-        for change in 0..4 {
-            let mut frame = capped();
-            match change {
-                0 => frame.sweep_cost = None,
-                1 => {
-                    frame.sweep_cost = Some(SweepCost {
-                        available: 16,
-                        cost: 1,
-                    })
-                }
-                2 => {
-                    frame.sweep_cost = Some(SweepCost {
-                        available: 6,
-                        cost: 2,
-                    })
-                }
-                _ => frame.sweep_enabled = false,
-            }
-            let mut driver = sweeper(frame);
-            assert!(daily_sweeps(&mut driver, u32::MAX).is_err());
-            assert_eq!(driver.actions, 0);
-        }
     }
 
     #[test]
@@ -2229,36 +1372,31 @@ mod tests {
     }
 
     #[test]
-    fn lower_cleared_floor_and_failed_battle_are_never_sweep_permission() {
-        let mut lower = capped();
-        lower.stage = Some(24);
-        let mut failed = capped();
-        failed.sweep = false;
-        failed.battle = true;
-        for frame in [lower, failed] {
-            let mut driver = sweeper(frame);
-            assert!(daily_sweeps(&mut driver, u32::MAX).is_err());
-            assert_eq!(driver.actions, 0);
-        }
+    fn battle_and_sweep_follow_the_visible_button() {
+        let mut frame = sweep_ready();
+        let mut driver = sweeper(frame.clone());
+        assert_eq!(daily_sweeps(&mut driver, u32::MAX).unwrap(), 6);
+
+        frame.sweep = false;
+        frame.battle = true;
+        frame.daily_remaining = None;
+        assert_eq!(frame.action(), Some(TrialAction::Battle));
+        let mut driver = sweeper(frame);
+        assert!(daily_sweeps(&mut driver, u32::MAX).is_err());
+        assert_eq!(driver.actions, 0);
     }
 
     #[test]
-    fn ambiguous_missing_or_conflicting_cap_evidence_never_spends_tokens() {
-        for change in 0..10 {
-            let mut frame = capped();
+    fn ambiguous_or_conflicting_sweep_evidence_never_spends_tokens() {
+        for change in 0..7 {
+            let mut frame = sweep_ready();
             match change {
-                0 => frame.limit = None,
-                1 => frame.stage = None,
-                2 => frame.daily_remaining = None,
-                3 => frame.overview = false,
-                4 => frame.sweep = false,
-                5 => frame.battle = true,
-                6 => frame.blocked = true,
-                7 => frame.trial.clear(),
-                8 => {
-                    frame.limit = Some(1000);
-                    frame.stage = Some(1000);
-                }
+                0 => frame.daily_remaining = None,
+                1 => frame.overview = false,
+                2 => frame.sweep = false,
+                3 => frame.battle = true,
+                4 => frame.blocked = true,
+                5 => frame.sweep_enabled = false,
                 _ => frame.daily_remaining = Some(100),
             }
             let mut driver = sweeper(frame);
@@ -2268,44 +1406,24 @@ mod tests {
             );
             assert_eq!(driver.actions, 0);
         }
-        let mut driver = sweeper(capped());
+        let mut driver = sweeper(sweep_ready());
         driver.changed_second = true;
         assert!(daily_sweeps(&mut driver, u32::MAX).is_err());
         assert_eq!(driver.actions, 0);
     }
 
     #[test]
-    fn permits_require_same_trial_same_cap_and_same_daily_budget_in_both_frames() {
-        let first = capped();
-        for change in 0..4 {
-            let mut second = capped();
-            match change {
-                0 => second.trial = "fire treasure".into(),
-                1 => second.limit = Some(30),
-                2 => second.stage = Some(24),
-                _ => second.daily_remaining = Some(5),
-            }
-            assert!(confirm_cap(&first, &second).is_err());
-        }
-        assert_eq!(confirm_cap(&first, &first).unwrap().stage, 25);
-    }
-
-    #[test]
     fn only_remaining_daily_tokens_are_consumed_and_zero_stops_without_any_tap() {
-        let mut driver = sweeper(capped());
+        let mut driver = sweeper(sweep_ready());
         assert_eq!(daily_sweeps(&mut driver, u32::MAX).unwrap(), 6);
         assert_eq!(driver.actions, 1);
         assert_eq!(driver.reports, vec![6]);
-        let mut more_attempts = capped();
+        let mut more_attempts = sweep_ready();
         more_attempts.daily_remaining = Some(7);
-        more_attempts.sweep_cost = Some(SweepCost {
-            available: 7,
-            cost: 1,
-        });
         let mut driver = sweeper(more_attempts);
         assert_eq!(daily_sweeps(&mut driver, u32::MAX).unwrap(), 7);
         assert_eq!(driver.reports, vec![6, 1]);
-        let mut no_tokens = capped();
+        let mut no_tokens = sweep_ready();
         no_tokens.daily_remaining = Some(0);
         let mut driver = sweeper(no_tokens);
         assert_eq!(daily_sweeps(&mut driver, u32::MAX).unwrap(), 0);
@@ -2315,136 +1433,12 @@ mod tests {
     #[test]
     fn unconfirmed_consumption_never_causes_another_sweep() {
         for after in [4, 6, 7] {
-            let mut driver = sweeper(capped());
+            let mut driver = sweeper(sweep_ready());
             driver.remaining_after = Some(after);
             assert!(daily_sweeps(&mut driver, u32::MAX).is_err());
             assert_eq!(driver.actions, 1);
             assert!(driver.reports.is_empty());
         }
-    }
-
-    #[test]
-    fn reached_status_requires_max_on_the_selected_card_and_a_readable_stage() {
-        use super::super::ocr::TextLine;
-        let card = Some(SelectedCard {
-            left: 530,
-            right: 1000,
-        });
-        let reached = TextLine {
-            text: "Current Limit Reached".into(),
-            x: 354.0,
-            y: 1042.0,
-            width: 371.0,
-            height: 31.0,
-        };
-        let badge = TextLine {
-            text: "Max".into(),
-            x: 913.0,
-            y: 1148.0,
-            width: 61.0,
-            height: 23.0,
-        };
-        let lines = vec![reached.clone(), badge.clone()];
-        assert_eq!(reached_cap_stage(&lines, card, Some(25), false), Some(25));
-        assert_eq!(reached_cap_stage(&lines, card, None, false), None);
-        assert_eq!(reached_cap_stage(&lines, None, Some(25), false), None);
-        assert_eq!(
-            reached_cap_stage(&[reached.clone()], card, Some(25), false),
-            None
-        );
-        assert_eq!(
-            reached_cap_stage(&[badge.clone()], card, Some(25), false),
-            None
-        );
-        assert_eq!(
-            reached_cap_stage(&[reached.clone()], card, Some(25), true),
-            Some(25)
-        );
-        assert_eq!(
-            reached_cap_stage(&[badge.clone()], card, Some(25), true),
-            None
-        );
-        let neighbour = TextLine { x: 410.0, ..badge };
-        assert_eq!(
-            reached_cap_stage(&[reached.clone(), neighbour], card, Some(25), false),
-            None
-        );
-        let other_heading = TextLine {
-            y: 400.0,
-            ..reached
-        };
-        assert_eq!(
-            reached_cap_stage(&[other_heading, lines[1].clone()], card, Some(25), false),
-            None
-        );
-    }
-
-    #[test]
-    fn cap_parser_requires_the_explicit_daily_limit_at_its_own_position() {
-        let line = |text: &str, y| super::super::ocr::TextLine {
-            text: text.into(),
-            x: 400.0,
-            y,
-            width: 250.0,
-            height: 40.0,
-        };
-        assert_eq!(daily_limit(&[line("Daily Limit: 25", 1040.0)]), Some(25));
-        assert_eq!(daily_limit(&[line("Tageslimit: 30", 1040.0)]), Some(30));
-        assert_eq!(daily_limit(&[line("Daily Limit: 25", 500.0)]), None);
-        for text in [
-            "Cleared 25",
-            "Sweep 25",
-            "Daily Limit: 2S",
-            "Daily Limit: 25/30",
-            "Daily Limit: 0",
-        ] {
-            assert_eq!(daily_limit(&[line(text, 1040.0)]), None, "{text}");
-        }
-        assert_eq!(
-            daily_limit(&[
-                line("Daily Limit: 25", 1040.0),
-                line("Daily Limit: 30", 1040.0)
-            ]),
-            None
-        );
-    }
-
-    #[test]
-    fn selected_stage_requires_one_unique_green_card_not_an_unselected_neighbour() {
-        let mut image = image::RgbImage::new(1080, 1920);
-        for x in [530, 1000] {
-            for y in 1130..1520 {
-                image.put_pixel(x, y, image::Rgb([50, 160, 30]));
-            }
-        }
-        assert_eq!(
-            selected_card(&image),
-            Some(SelectedCard {
-                left: 530,
-                right: 1000
-            })
-        );
-        // Real card outlines occupy several adjacent columns. Keep their
-        // outside edge stable rather than shifting the numeral crop inward.
-        for x in [531, 532, 533, 534, 535, 536, 537, 538] {
-            for y in 1130..1520 {
-                image.put_pixel(x, y, image::Rgb([50, 160, 30]));
-            }
-        }
-        assert_eq!(
-            selected_card(&image),
-            Some(SelectedCard {
-                left: 530,
-                right: 1000
-            })
-        );
-        for x in [20, 480] {
-            for y in 1130..1520 {
-                image.put_pixel(x, y, image::Rgb([50, 160, 30]));
-            }
-        }
-        assert_eq!(selected_card(&image), None);
-        assert_eq!(selected_card(&image::RgbImage::new(30, 30)), None);
     }
 
     #[test]
@@ -2462,7 +1456,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pushes Dura's free first clears; sweeps only after verified daily cap"]
+    #[ignore = "plays free Dura stages and respects the configured test sweep budget"]
     fn connected_emulator_dura_push() {
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
         let budget: u32 = std::env::var("ADBHELPER_TEST_DURA_SWEEPS")
@@ -2497,13 +1491,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads Dura's selected stage and daily cap; no input or sweep"]
-    fn connected_emulator_dura_cap_read() {
+    #[ignore = "reads Dura's selected stage and action button; no input or sweep"]
+    fn connected_emulator_dura_stage_read() {
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
         let frame = read_frame(&serial, &AtomicBool::new(false)).unwrap();
         println!("{:?}", frame.snapshot);
         std::fs::write(
-            ".update-test/duras-cap-read.png",
+            ".update-test/duras-stage-read.png",
             adb::screenshot(&serial).unwrap(),
         )
         .unwrap();
