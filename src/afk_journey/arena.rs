@@ -245,7 +245,7 @@ fn challenge_attempts(screen: &GrayImage) -> Result<Option<u32>, String> {
     Ok(count.filter(|first| counts.all(|next| next == *first)))
 }
 
-fn navigate(
+pub(super) fn navigate(
     serial: &str,
     kind: Kind,
     cancelled: &AtomicBool,

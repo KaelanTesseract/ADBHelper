@@ -100,6 +100,13 @@ The default routine contains **AFK rewards → Free hourglasses**. Additional co
 
 For Dura's Trials, the selected stage's button determines the action. ADBHelper sets up to **six available daily Sweeps** per batch, verifies the quantity and daily-token cost in the dialog, and checks the counter decrease before counting them. Sweeps use daily attempts only.
 
+## Scanners
+
+Start either scanner from the dashboard with AFK Journey set to English. ADBHelper saves JSON exports in a new run folder under `%APPDATA%\ADBHelper\scans`. Use **Copy export path** on the action card after the scan.
+
+- **AFKJ Tracker Scan** reads hero ascension and exclusive weapon levels from the roster. Import the completed `afkj_tracker_backup.json` in [AFKJ Tracker](https://afkj-tracker.vercel.app/). Review any file marked `partial` before importing.
+- **Guild Manager Scan** exports the selected Dream Realm days, Supreme Arena, the active Season AFK phase, and guild activeness. The optional `guild_states` API URL from [AFKJ Guild Manager](https://afkj-guildmanager.vercel.app/) lets ADBHelper read the roster from Supabase for matching names and IDs. The URL is kept for the current session. Import the local JSON files in Guild Manager.
+
 ## Settings
 
 | Where | Options |

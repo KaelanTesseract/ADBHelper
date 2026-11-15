@@ -479,6 +479,14 @@ fn open_ranking(
     wait_ranking(serial, cancelled)
 }
 
+pub(super) fn open_rankings_for_scan(
+    serial: &str,
+    cancelled: &AtomicBool,
+    log: &mut impl FnMut(String),
+) -> Result<(), String> {
+    open_ranking(serial, cancelled, log).map(|_| ())
+}
+
 fn discover_phases(serial: &str, cancelled: &AtomicBool) -> Result<Vec<u32>, String> {
     let mut phases = BTreeSet::new();
     for _ in 0..8 {

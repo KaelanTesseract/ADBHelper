@@ -47,7 +47,9 @@ Equip New Equipment erkennt die Season-Equipment-Übersicht anhand der Klassensy
 
 Wenn die Vollbilderkennung die Klassenzeile überspringt, liest Equip New Equipment die Überschrift des Ausrüstungspanels separat. Beim erneuten Emulator-Test wurde der Ausrüstungswechsel für Warrior bestätigt. Der Wiederholungslauf endete ohne weitere Änderung.
 
-Die Live-Vorschau bestätigte die Navigation zur Resonanzhalle, den Aufwertungsbutton mit lesbarer Resonanzstufe, Helden und ihre exklusive Ausrüstung, alle drei Shopangebote sowie All-Hero Recruitment mit vorhandenem Invite Letter. Ein vollständiger Live-Test der Aufwertungen, Käufe, Rekrutierungen und des Essenztauschs steht aus. Der Stand ist im lokalen Testbuild verfügbar.
+Die Live-Vorschau bestätigte Helden und ihre exklusive Ausrüstung, alle drei Shopangebote sowie All-Hero Recruitment mit vorhandenem Invite Letter. Vollständige Live-Tests der übrigen Shopkäufe, Rekrutierung und des Essenztauschs stehen aus.
+
+Level Up All Heroes liest die Resonanzstufe stärker vergrößert und verwendet bei Bedarf eine weitere Helligkeitsschwelle. Aufnahmen der Stufen 809, 842, 846 und 847 decken auch eine Ansicht ohne erkannte Überschrift der Heldenliste ab. Im Emulator wurde die Aufwertung von 847 auf 848 bestätigt und als eine Stufe gezählt.
 
 ## 5. Events und Hilfe
 
@@ -67,9 +69,9 @@ Verfügbare Events zuerst umsetzen. Titan Reaver und Synergy & CC benötigen die
 
 ## 7. Scanner
 
-- [ ] AFKJ Tracker Scan mit Heldenkader-Export
-- [ ] Guild Manager Scan für Ranglisten und Gildenaktivität
-- [ ] Supabase-Anbindung für Guild Manager Scan nach dem lokalen Export
+- [x] AFKJ Tracker Scan mit lokalem JSON-Export der Aufstiegs- und exklusiven Waffenstufen. Im ersten Emulatorlauf wurden 106 Aufstiegsstufen und 89 Waffenstufen erfasst. Der Scan kennzeichnete den Export als unvollständig, weil weitere Angaben offen waren.
+- [x] Guild Manager Scan für Dream Realm, Supreme Arena, die aktive Season-AFK-Phase und Gildenaktivität. Im Emulator wurden zehn Dream-Realm-Einträge exportiert. Der jüngste Gildenlauf erfasste 64 Aktivitätsdatensätze bei 72 angezeigten Mitgliedern und kennzeichnete die JSON-Datei als unvollständig. Aufnahmen von Supreme Arena und Season AFK prüfen die Zeilenerkennung.
+- [x] Optionaler Supabase-Abgleich von Gildenmitgliedern über `guild_states`. URL-Validierung und Namens- und ID-Abgleich sind getestet. Die Prüfung mit einem echten Guild-Manager-Zugang steht aus.
 
 ## Routinen und bestehende Aktionen
 
@@ -81,6 +83,7 @@ Verfügbare Events zuerst umsetzen. Titan Reaver und Synergy & CC benötigen die
 - [x] AFK Stages nutzt in der Weltansicht den sichtbaren Apex-Stage-Direkteinstieg. Im Emulator wurden aus der gemeldeten Weltansicht die Season-Aufstellung und danach die normale Aufstellung geöffnet.
 - [x] Dura’s Trials wählt Battle oder Sweep anhand der sichtbaren Schaltfläche. Raid Treasure wurde anhand einer Battle-Aufnahme geprüft. Im Emulator wurden bei Arcane Treasure, Stufe 30, sechs Sweeps in einem Durchgang ausgeführt und der Verbrauch von sechs täglichen Versuchen bestätigt.
 - [x] Dream Realm mit konfigurierbarer Kampfanzahl, standardmäßig maximal zwei pro Lauf
+- [x] Dream Realm findet die Kachel in Battle Modes mit und ohne Guild-Duel-Banner. Beide Layouts wurden mit Aufnahmen geprüft. Im Emulator öffnete ADBHelper die Kachel mit Banner, bestätigte eine Ranglistenbelohnung und kehrte zur Dream-Realm-Übersicht zurück.
 - [x] Dream Realm verlässt die Rangliste über den sichtbaren Zurück-Pfeil und erkennt automatisch abgeholte Belohnungen am verschwundenen Geschenksymbol. Im Emulator wurde die Rückkehr nach bereits erfolgter Abholung geprüft. Anschließend hat ein Daily-Test einen kostenlosen Kampf abgeschlossen. Geschenksymbol und Belohnungsfenster wurden anhand von Aufnahmen geprüft.
 - [x] AFK-Belohnungen, kostenlose und Diamanten-Sanduhren, AFK-Stufenbelohnungen und Season-Phase-Ranglistenbelohnungen
 - [x] Season-Phase-Ranglistenbelohnungen überspringen Phasen ohne First-Clear-Bereich. Im Emulator wurden District, Server und Guild in Phase 2 geprüft und Phase 1 wurde übersprungen.

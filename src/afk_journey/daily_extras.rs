@@ -36,10 +36,19 @@ pub(super) fn exact_amount(value: &str) -> Option<u32> {
 }
 
 pub(super) fn amount(screen: &GrayImage, rect: common::Rect) -> Result<Option<u32>, String> {
+    amount_with_thresholds(screen, rect, &[180, 200], 3)
+}
+
+pub(super) fn amount_with_thresholds(
+    screen: &GrayImage,
+    rect: common::Rect,
+    thresholds: &[u8],
+    scale: u32,
+) -> Result<Option<u32>, String> {
     // The dark badge edge can be mistaken for punctuation. Isolate the white
-    // digits, then require agreement at two thresholds rather than fixing OCR.
+    // digits and require two matching reads. Conflicting readings stop the check.
     let mut previous = None;
-    for threshold in [180, 200] {
+    for (index, &threshold) in thresholds.iter().enumerate() {
         let mut patch =
             GrayImage::from_pixel(rect.width + 32, rect.height + 32, image::Luma([255]));
         for y in 0..rect.height {
@@ -49,25 +58,29 @@ pub(super) fn amount(screen: &GrayImage, rect: common::Rect) -> Result<Option<u3
                 }
             }
         }
-        let patch = image::imageops::resize(
+        let enlarged = image::imageops::resize(
             &patch,
-            patch.width() * 3,
-            patch.height() * 3,
+            patch.width() * scale,
+            patch.height() * scale,
             image::imageops::FilterType::CatmullRom,
         );
-        let lines = ocr::recognize(&patch)?;
+        let lines = ocr::recognize(&enlarged)?;
         let Some(value) = (lines.len() == 1)
             .then(|| exact_amount(&lines[0].text))
             .flatten()
         else {
-            return Ok(None);
+            let remaining = thresholds.len() - index - 1;
+            if remaining + usize::from(previous.is_some()) < 2 {
+                return Ok(None);
+            }
+            continue;
         };
-        if previous.is_some_and(|before| before != value) {
-            return Ok(None);
+        if let Some(before) = previous {
+            return Ok((before == value).then_some(value));
         }
         previous = Some(value);
     }
-    Ok(previous)
+    Ok(None)
 }
 
 // The price steps are visible in-game and reset with the daily allowance.

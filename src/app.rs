@@ -8,6 +8,7 @@ use crate::afk_journey::dream_realm;
 use crate::afk_journey::legend_trial::TowerSelection;
 use crate::afk_journey::menu_rewards;
 use crate::afk_journey::progression;
+use crate::afk_journey::progression::scanner;
 use crate::design_system::{
     self, card, primary_button, status_badge, ColorTokens, GeometryTokens, SizeTokens, SpaceTokens,
     TypeTokens,
@@ -31,6 +32,7 @@ enum Event {
     RecoveryStatus(String),
     StagesFinished(StageAction, Option<String>),
     DailyStep(usize),
+    ScanExport(StageAction, std::path::PathBuf),
     UpdateChecked(Result<Option<updater::Release>, String>),
     UpdateArtworkLoaded(updater::ReleaseArtwork, Option<egui::ColorImage>),
     UpdateCheckStarted,
@@ -84,7 +86,7 @@ impl ActionBattleOptions {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct RunSettings {
     selection: StageSelection,
     towers: TowerSelection,
@@ -96,10 +98,11 @@ struct RunSettings {
     supreme: SupremeSettings,
     diamond_hourglasses: crate::routine::DiamondHourglassSettings,
     emporium: crate::routine::EmporiumSettings,
+    guild_scan: scanner::GuildSettings,
 }
 
 impl RunSettings {
-    fn mode(self, action: StageAction) -> Option<GameMode> {
+    fn mode(&self, action: StageAction) -> Option<GameMode> {
         match action {
             StageAction::AfkStages => self.selection.modes().first().copied(),
             StageAction::SeasonLegendTrial => self
@@ -124,6 +127,8 @@ impl RunSettings {
             StageAction::Emporium => Some(GameMode::Emporium),
             StageAction::SinglePull => Some(GameMode::SinglePull),
             StageAction::EssenceSwap => Some(GameMode::EssenceSwap),
+            StageAction::HeroScan => Some(GameMode::HeroScan),
+            StageAction::GuildScan => Some(GameMode::GuildScan),
             StageAction::AfkRewards => Some(GameMode::AfkRewards),
             StageAction::FreeHourglasses => Some(GameMode::FreeHourglasses),
             StageAction::DiamondHourglasses => Some(GameMode::DiamondHourglasses),
@@ -140,7 +145,7 @@ fn run_step(
     serial: &str,
     action: StageAction,
     daily: bool,
-    settings: RunSettings,
+    settings: &RunSettings,
     progression: &mut progression::RunState,
     cancelled: &AtomicBool,
     sender: &Sender<Event>,
@@ -155,6 +160,21 @@ fn run_step(
     let mut log = |message| {
         let _ = sender.send(Event::Log(message));
     };
+    if matches!(mode, GameMode::HeroScan | GameMode::GuildScan) {
+        return scanner::run(
+            serial,
+            mode,
+            &settings.guild_scan,
+            cancelled,
+            &mut log,
+            &mut |event| {
+                let _ = sender.send(Event::Activity(event));
+            },
+            &mut |path| {
+                let _ = sender.send(Event::ScanExport(action, path));
+            },
+        );
+    }
     let mut collection = crate::afk_journey::daily::Cursor::default();
     let mut extras = crate::afk_journey::daily_extras::Cursor::default();
     let mut ranking = crate::afk_journey::phase_rewards::Cursor::default();
@@ -278,6 +298,7 @@ fn run_step(
                     report,
                 ),
                 StageAction::Daily => Err("A Daily routine cannot contain itself.".into()),
+                StageAction::HeroScan | StageAction::GuildScan => unreachable!(),
             }
         },
         |message| {
@@ -310,6 +331,8 @@ pub struct PlayerApp {
     dream_spend_gold: bool,
     dream_battle_limit: u32,
     dream_battle_limit_error: Option<String>,
+    guild_scan: scanner::GuildSettings,
+    scan_exports: Vec<(StageAction, std::path::PathBuf)>,
     active_action: Option<StageAction>,
     battle_options: [ActionBattleOptions; 6],
     arena_settings: ArenaSettings,
@@ -381,6 +404,8 @@ impl PlayerApp {
             dream_spend_gold: false,
             dream_battle_limit,
             dream_battle_limit_error,
+            guild_scan: scanner::GuildSettings::default(),
+            scan_exports: Vec::new(),
             active_action: None,
             battle_options: [ActionBattleOptions::default(); 6],
             arena_settings: ArenaSettings::default(),
@@ -696,6 +721,9 @@ impl PlayerApp {
             self.daily_notice = None;
         }
         self.daily_step = None;
+        if matches!(action, StageAction::HeroScan | StageAction::GuildScan) {
+            self.scan_exports.retain(|(owner, _)| *owner != action);
+        }
         let steps = if action == StageAction::Daily {
             self.daily_routine.steps.clone()
         } else {
@@ -723,6 +751,7 @@ impl PlayerApp {
             supreme: self.supreme_settings,
             diamond_hourglasses: self.daily_routine.diamond_hourglasses,
             emporium: self.daily_routine.emporium,
+            guild_scan: self.guild_scan.clone(),
         };
         for step in &steps {
             if settings.mode(*step).is_none() {
@@ -773,7 +802,7 @@ impl PlayerApp {
                     &serial,
                     step,
                     action == StageAction::Daily,
-                    settings,
+                    &settings,
                     &mut progression,
                     &cancelled,
                     &sender,
@@ -801,6 +830,7 @@ impl PlayerApp {
         while let Ok(event) = self.receiver.try_recv() {
             match event {
                 Event::DailyStep(index) => self.daily_step = Some(index),
+                Event::ScanExport(action, path) => self.scan_exports.push((action, path)),
                 Event::Devices(Ok(devices)) => {
                     if self
                         .selected_serial
@@ -1131,6 +1161,10 @@ impl PlayerApp {
                             self.show_battle_card(ui, StageAction::Arena, text("Play daily Arena battles", "Tägliche Arena-Kämpfe spielen"));
                             ui.add_space(SpaceTokens::MD);
                             self.show_battle_card(ui, StageAction::SupremeArena, text("Play daily Supreme Arena battles", "Tägliche Supreme-Arena-Kämpfe spielen"));
+                            ui.add_space(SpaceTokens::MD);
+                            self.show_battle_card(ui, StageAction::HeroScan, text("Export your hero roster for AFKJ Tracker", "Heldenkader für AFKJ Tracker exportieren"));
+                            ui.add_space(SpaceTokens::MD);
+                            self.show_battle_card(ui, StageAction::GuildScan, text("Export guild activity and rankings", "Gildenaktivität und Ranglisten exportieren"));
                         });
                 },
             );
@@ -1203,6 +1237,8 @@ impl PlayerApp {
                                         GameMode::Emporium => text("PURCHASES", "KÄUFE"),
                                         GameMode::SinglePull => text("RECRUITS", "REKRUTIERUNGEN"),
                                         GameMode::EssenceSwap => text("SWAPS", "TAUSCHE"),
+                                        GameMode::HeroScan => text("HEROES SCANNED", "HELDEN ERFASST"),
+                                        GameMode::GuildScan => text("ROWS EXPORTED", "ZEILEN EXPORTIERT"),
                                         _ => text("COLLECTED", "ABGEHOLT"),
                                     };
                                     progress_metric(ui, label, stats.collected);
@@ -1264,6 +1300,22 @@ impl PlayerApp {
                     }
                 }
             });
+            for (_, path) in self
+                .scan_exports
+                .iter()
+                .filter(|(owner, _)| *owner == action)
+            {
+                if ui
+                    .small_button(text("Copy export path", "Exportpfad kopieren"))
+                    .on_hover_text(path.display().to_string())
+                    .clicked()
+                {
+                    ui.ctx().copy_text(path.display().to_string());
+                }
+                if let Some(name) = path.file_name() {
+                    ui.small(name.to_string_lossy());
+                }
+            }
             if let Some((failed, error)) = self
                 .action_error
                 .as_ref()
@@ -1668,6 +1720,23 @@ impl PlayerApp {
                                         }
                                     });
                                     ui.label(text("Uses your three in-game teams. Selects Next twice, then Battle.", "Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf."));
+                                }
+                                StageAction::HeroScan => {
+                                    ui.label(text("Import the completed JSON backup in AFKJ Tracker.", "Importiere die vollständige JSON-Sicherung in AFKJ Tracker."));
+                                    ui.hyperlink_to("AFKJ Tracker", "https://afkj-tracker.vercel.app/");
+                                }
+                                StageAction::GuildScan => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(text("Past Dream Realm days", "Vergangene Dream-Realm-Tage"));
+                                        ui.add(egui::DragValue::new(&mut self.guild_scan.dream_days).range(0..=3));
+                                    });
+                                    ui.checkbox(&mut self.guild_scan.activeness, text("Guild activeness", "Gildenaktivität"));
+                                    ui.checkbox(&mut self.guild_scan.supreme_arena, "Supreme Arena");
+                                    ui.checkbox(&mut self.guild_scan.afk_stages, text("Current Season AFK phase", "Aktuelle Season-AFK-Phase"));
+                                    ui.label(text("Guild Manager API URL (optional)", "Guild-Manager-API-URL (optional)"));
+                                    ui.add(egui::TextEdit::singleline(&mut self.guild_scan.guild_members_url).password(true).desired_width(f32::INFINITY));
+                                    ui.small(text("Reads the roster for name matching. Exports are saved locally.", "Liest die Mitgliederliste zum Namensabgleich. Exporte werden lokal gespeichert."));
+                                    ui.hyperlink_to("AFKJ Guild Manager", "https://afkj-guildmanager.vercel.app/");
                                 }
                                 StageAction::Daily | StageAction::AfkRewards | StageAction::FreeHourglasses | StageAction::DiamondHourglasses | StageAction::StageRewards | StageAction::SeasonRankingRewards
                                 | StageAction::FriendRewards | StageAction::MailRewards | StageAction::BattlePassRewards

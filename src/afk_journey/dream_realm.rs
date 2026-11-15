@@ -12,6 +12,8 @@ use std::{
 };
 
 const MODE: GameMode = GameMode::DreamRealm;
+// The optional Guild Duel banner pushes the first row of cards down.
+const BATTLE_MODES_ENTRY: common::Rect = region(340, 525, 410, 700);
 const FOOTER: common::Rect = region(195, 1680, 885, 212);
 const CLOSE: common::Rect = region(300, 1700, 450, 180);
 const RANKINGS: common::Rect = region(915, 125, 165, 140);
@@ -421,6 +423,35 @@ fn wait_home(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
     .into())
 }
 
+pub(super) fn open_rankings_for_scan(
+    serial: &str,
+    cancelled: &AtomicBool,
+    log: &mut impl FnMut(String),
+) -> Result<(), String> {
+    if Frame::read(serial, cancelled)?.rankings() {
+        return Ok(());
+    }
+    let home = navigate(serial, cancelled, log)?;
+    let entry = home.home()?.ok_or("Dream Realm rankings entry missing.")?;
+    home.tap(serial, entry, cancelled)?;
+    let start = Instant::now();
+    while start.elapsed() < SHORT_WAIT {
+        common::settle_cancellable(cancelled)?;
+        let frame = Frame::read(serial, cancelled)?;
+        if frame.rankings() {
+            return Ok(());
+        }
+        if let Some(close) = frame.reward_close(true)? {
+            frame.tap(serial, close, cancelled)?;
+        }
+    }
+    Err(text(
+        "Dream Realm rankings could not be opened.",
+        "Die Dream-Realm-Rangliste konnte nicht geöffnet werden.",
+    )
+    .into())
+}
+
 fn navigate(
     serial: &str,
     cancelled: &AtomicBool,
@@ -437,7 +468,7 @@ fn navigate(
     let (_, entry, size) = common::wait_for_match(
         serial,
         &["dream_realm/label.png"],
-        region(340, 525, 410, 310),
+        BATTLE_MODES_ENTRY,
         SHORT_WAIT,
         cancelled,
     )?;
@@ -670,6 +701,22 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dream_realm_entry_matches_with_and_without_guild_duel_banner() {
+        let path = "dream_realm/label.png";
+        let label = common::load_template(path).unwrap();
+        for y in [657, 1002] {
+            let mut screen = GrayImage::new(1080, 1920);
+            image::imageops::replace(&mut screen, &label, 404, y);
+            let (x, cy) = common::find_template(&screen, path, BATTLE_MODES_ENTRY, 0.78)
+                .unwrap()
+                .expect("Dream Realm card in Battle Modes")
+                .center();
+            assert_eq!(x, 404 + label.width() / 2);
+            assert_eq!(cy, y as u32 + label.height() / 2);
+        }
+    }
 
     #[test]
     fn chances_must_be_explicit_and_valid() {

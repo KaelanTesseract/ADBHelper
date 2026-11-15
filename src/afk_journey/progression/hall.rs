@@ -1,8 +1,8 @@
 use super::{common, key, ocr, text, Driver, Point, Progress, Screen};
-use crate::afk_journey::{daily_extras::amount, BASE_RESOLUTION};
+use crate::afk_journey::{daily_extras::amount_with_thresholds, BASE_RESOLUTION};
 use image::{GrayImage, Luma};
 
-const NEXT_HERO: Point = (995, 1090);
+pub(super) const NEXT_HERO: Point = (995, 1090);
 
 fn hall(screen: &Screen) -> bool {
     screen
@@ -59,7 +59,7 @@ fn hero_profile(screen: &Screen) -> bool {
             ))
 }
 
-fn hero_name(screen: &Screen) -> Option<String> {
+pub(super) fn hero_name(screen: &Screen) -> Option<String> {
     if !hero_profile(screen) {
         return None;
     }
@@ -126,7 +126,7 @@ pub(super) struct HeroNameplate {
 }
 
 impl HeroNameplate {
-    fn read(screen: &Screen) -> Option<Self> {
+    pub(super) fn read(screen: &Screen) -> Option<Self> {
         if !hero_profile(screen) {
             return None;
         }
@@ -167,7 +167,7 @@ impl HeroNameplate {
             .then_some(Self { outline, title })
     }
 
-    fn matches(&self, other: &Self) -> bool {
+    pub(super) fn matches(&self, other: &Self) -> bool {
         let (shared, total) = self.outline.iter().zip(&other.outline).fold(
             (0_u32, 0_u32),
             |(shared, total), (&left, &right)| {
@@ -230,12 +230,18 @@ fn interact_for_affinity(
     })
 }
 
-fn open_first_hero(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<(), String> {
+pub(super) fn open_first_hero(
+    driver: &Driver<'_>,
+    log: &mut impl FnMut(String),
+) -> Result<(), String> {
     let screen = open_hall(driver, log)?;
     driver.tap(&screen, (130, 1040))
 }
 
-fn first_hero(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, String> {
+pub(super) fn first_hero(
+    driver: &Driver<'_>,
+    log: &mut impl FnMut(String),
+) -> Result<Screen, String> {
     open_first_hero(driver, log)?;
     wait_for_hero(driver, None)?.ok_or_else(|| {
         text(
@@ -267,7 +273,7 @@ fn wait_for_hero(driver: &Driver<'_>, previous: Option<&str>) -> Result<Option<S
     })
 }
 
-fn wait_for_affinity_profile(
+pub(super) fn wait_for_affinity_profile(
     driver: &Driver<'_>,
     previous: Option<&HeroNameplate>,
 ) -> Result<(Screen, HeroNameplate), String> {
@@ -349,11 +355,22 @@ fn collect_affinity_profiles(
     .into())
 }
 
+fn level_up_hall(screen: &Screen) -> bool {
+    // OCR can omit the roster heading even when the hall is visible.
+    hall(screen)
+        || (screen
+            .point(70..405, 790..910, "handsofresonance")
+            .is_some()
+            && screen
+                .line(280..810, 605..675, |label| label.contains("resonancelevel"))
+                .is_some())
+}
+
 fn resonance_level(screen: &Screen) -> Result<Option<u32>, String> {
-    if !hall(screen) {
+    if !level_up_hall(screen) {
         return Ok(None);
     }
-    amount(
+    amount_with_thresholds(
         &screen.gray,
         common::Rect {
             x: 690,
@@ -361,6 +378,8 @@ fn resonance_level(screen: &Screen) -> Result<Option<u32>, String> {
             width: 69,
             height: 42,
         },
+        &[180, 200, 190],
+        4,
     )
 }
 
@@ -368,7 +387,7 @@ fn ready_level_control(driver: &Driver<'_>) -> Result<Option<(Screen, Point, u32
     let mut absent = 0;
     for _ in 0..8 {
         let screen = driver.read()?;
-        if hall(&screen) {
+        if level_up_hall(&screen) {
             match screen.template(
                 "resonating_hall/level_up_all.png",
                 400..690,
@@ -1030,11 +1049,69 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "performs one Level Up All upgrade in the connected emulator"]
+    fn connected_emulator_single_resonance_upgrade() {
+        use super::super::{run, GameMode, RunState};
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let driver = Driver {
+            serial: &serial,
+            cancelled: &cancelled,
+        };
+        let before = resonance_level(&driver.read().unwrap()).unwrap().unwrap();
+        let mode = GameMode::LevelUpHeroes;
+        let mut state = RunState::default();
+        state.completed.insert(mode, 29);
+        let total = run(
+            &serial,
+            mode,
+            Default::default(),
+            &mut state,
+            &cancelled,
+            &mut |message| println!("{message}"),
+            &mut |event| println!("{event:?}"),
+        )
+        .unwrap();
+        assert_eq!(total, 30);
+        let after = resonance_level(&driver.read().unwrap()).unwrap().unwrap();
+        assert_eq!(after, before + 1);
+        println!("Resonance Level {before} -> {after}");
+    }
+
+    #[test]
     #[ignore = "requires Windows OCR and AFK Journey captures"]
     fn captured_hall_views() {
         let overview = captured("hall");
         assert!(hall(&overview));
         assert_eq!(resonance_level(&overview).unwrap(), Some(809));
+        for name in ["resonance_842_current", "resonance_842_report"] {
+            assert_eq!(
+                resonance_level(&captured(name)).unwrap(),
+                Some(842),
+                "{name}"
+            );
+        }
+        for name in [
+            "resonance_846_current",
+            "resonance_846_current_second",
+            "resonance_846_report",
+        ] {
+            assert_eq!(
+                resonance_level(&captured(name)).unwrap(),
+                Some(846),
+                "{name}"
+            );
+        }
+        let mut missing_roster_title = captured("resonance_846_current");
+        missing_roster_title
+            .lines
+            .retain(|line| key(&line.text) != "resonanceheroes");
+        assert!(!hall(&missing_roster_title));
+        assert_eq!(resonance_level(&missing_roster_title).unwrap(), Some(846));
+        assert_eq!(
+            resonance_level(&captured("resonance_847_live")).unwrap(),
+            Some(847)
+        );
         assert!(overview
             .template(
                 "resonating_hall/level_up_all.png",

@@ -28,6 +28,8 @@ pub enum GameMode {
     Emporium,
     SinglePull,
     EssenceSwap,
+    HeroScan,
+    GuildScan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -115,6 +117,8 @@ impl GameMode {
                 "Noble Tavern · Einzelrekrutierung",
             ),
             Self::EssenceSwap => text("Essence Swap", "Essenzen tauschen"),
+            Self::HeroScan => "AFKJ Tracker Scan",
+            Self::GuildScan => "Guild Manager Scan",
             Self::SeasonRankingRewards(RankingScope::District) => {
                 text("Season rewards · District", "Season-Belohnungen · District")
             }
@@ -154,6 +158,8 @@ impl GameMode {
                 | Self::Emporium
                 | Self::SinglePull
                 | Self::EssenceSwap
+                | Self::HeroScan
+                | Self::GuildScan
         )
     }
 

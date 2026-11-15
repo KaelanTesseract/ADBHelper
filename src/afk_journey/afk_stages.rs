@@ -196,6 +196,15 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         "progression/hero_profile_tab.png" => {
             include_bytes!("../../assets/AFKJourney/progression/hero_profile_tab.png")
         }
+        "progression/scan_paragon_three.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/scan_paragon_three.png")
+        }
+        "progression/scan_crown.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/scan_crown.png")
+        }
+        "progression/scan_paragon_badge.png" => {
+            include_bytes!("../../assets/AFKJourney/progression/scan_paragon_badge.png")
+        }
         "progression/hero_affinity_icon.png" => {
             include_bytes!("../../assets/AFKJourney/progression/hero_affinity_icon.png")
         }
@@ -1856,7 +1865,9 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
             | GameMode::EquipNewEquipment
             | GameMode::Emporium
             | GameMode::SinglePull
-            | GameMode::EssenceSwap => {
+            | GameMode::EssenceSwap
+            | GameMode::HeroScan
+            | GameMode::GuildScan => {
                 return Err(text("This is not an AFK Stages mode", "Kein AFK-Stages-Modus").into())
             }
         }));
@@ -1877,6 +1888,7 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
 enum OverviewAction {
     Reached,
     Back,
+    CancelExit,
     Tap(Match),
     EnterGame,
     SelectCrest(Match),
@@ -1900,7 +1912,7 @@ fn overview_action(screen: &GrayImage) -> Result<OverviewAction, String> {
     {
         return Ok(OverviewAction::Back);
     }
-    if let Some((_, close)) = get_match(
+    if let Some((control, close)) = get_match(
         screen,
         &[
             "cancel.png",
@@ -1920,6 +1932,11 @@ fn overview_action(screen: &GrayImage) -> Result<OverviewAction, String> {
         full_screen(),
         0.8,
     )? {
+        if control.contains("confirm")
+            && super::ocr::recognize(screen).is_ok_and(|lines| exit_prompt(&lines))
+        {
+            return Ok(OverviewAction::CancelExit);
+        }
         return Ok(OverviewAction::Tap(close));
     }
     if let Some(crest) = find_template(
@@ -1949,7 +1966,36 @@ fn overview_action(screen: &GrayImage) -> Result<OverviewAction, String> {
     {
         return Ok(OverviewAction::Reached);
     }
+    if let Ok(lines) = super::ocr::recognize(screen) {
+        if exit_prompt(&lines) {
+            return Ok(OverviewAction::CancelExit);
+        }
+        // The footer is also present with seasonal world layouts that have no
+        // matching shortcut or time-of-day icon.
+        let footer = |name: &str, range: std::ops::Range<u32>| {
+            lines.iter().any(|line| {
+                let (x, y) = line.center();
+                y >= 1850 && range.contains(&x) && line.text.trim().eq_ignore_ascii_case(name)
+            })
+        };
+        if footer("Battle Modes", 350..570)
+            && footer("Guild", 710..830)
+            && (footer("Hall", 540..680) || footer("House", 240..365))
+        {
+            return Ok(OverviewAction::Reached);
+        }
+    }
     Ok(OverviewAction::Back)
+}
+
+fn exit_prompt(lines: &[super::ocr::TextLine]) -> bool {
+    lines.iter().any(|line| {
+        (840..1030).contains(&line.center().1)
+            && line
+                .text
+                .to_ascii_lowercase()
+                .contains("you want to exit the")
+    })
 }
 
 pub(super) fn navigate_to_current_overview(
@@ -1979,6 +2025,9 @@ pub(super) fn navigate_to_current_overview(
         match overview_action(&screen)? {
             OverviewAction::Reached => return Ok(size),
             OverviewAction::Back => adb::press_back(serial).map_err(|error| error.to_string())?,
+            OverviewAction::CancelExit => {
+                adb::tap_game_point(serial, 635, 1270, size).map_err(|error| error.to_string())?;
+            }
             OverviewAction::Tap(found) => tap_match(serial, found, size)?,
             OverviewAction::EnterGame => {
                 adb::tap_game_point(serial, 540, 960, size).map_err(|error| error.to_string())?;

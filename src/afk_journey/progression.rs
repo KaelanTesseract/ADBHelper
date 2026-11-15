@@ -1,5 +1,6 @@
 //! Optional hero, equipment and shopping steps in the Daily routine.
 mod hall;
+pub mod scanner;
 mod shop;
 
 use super::{afk_stages as common, ocr, phase_rewards};
