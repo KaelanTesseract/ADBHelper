@@ -51,6 +51,7 @@ enum Outcome {
     FinalStage,
     DuraNoNext,
     DuraVictory,
+    UnionFloorReturned,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -937,10 +938,19 @@ fn copy_next_formation(
     Ok(FormationChoice::Exhausted)
 }
 
-fn ensure_battle_screen(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
+fn ensure_battle_screen(
+    serial: &str,
+    mode: GameMode,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
     for _ in 0..4 {
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
+        if mode == GameMode::UnionCampaign
+            && super::union_campaign::floor_battle_button(&screen)?.is_some()
+        {
+            return super::union_campaign::prepare_floor(serial, cancelled);
+        }
         if let Some(retry) = find_template(&screen, "retry.png", lower_screen(), 0.7)? {
             tap_match(serial, retry, size)?;
         } else if find_template(&screen, "battle/copy.png", lower_screen(), 0.75)?.is_some() {
@@ -998,13 +1008,14 @@ fn manual_formation_visible(screen: &GrayImage) -> Result<bool, String> {
 
 struct AdbFormationBrowser<'a, L> {
     serial: &'a str,
+    mode: GameMode,
     cancelled: &'a AtomicBool,
     log: &'a mut L,
 }
 
 impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
     fn open(&mut self) -> Result<bool, String> {
-        ensure_battle_screen(self.serial, self.cancelled)?;
+        ensure_battle_screen(self.serial, self.mode, self.cancelled)?;
         // The original retries Records while its button remains visible.
         for _ in 0..3 {
             let (screen, size) = screenshot(self.serial)?;
@@ -1162,20 +1173,24 @@ fn start_battle(
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
     ensure_not_cancelled(cancelled)?;
-    let (path, _, _) = wait_for_match(
-        serial,
-        &[
-            "battle/records.png",
-            "battle/formations_icon.png",
-            "battle/battle.png",
-        ],
-        lower_screen(),
-        Duration::from_secs(20),
-        cancelled,
-    )?;
-    log(format!(
-        "Battle setup detected ({path}); starting with the current formation."
-    ));
+    if mode == GameMode::UnionCampaign {
+        super::union_campaign::prepare_floor(serial, cancelled)?;
+    } else {
+        let (path, _, _) = wait_for_match(
+            serial,
+            &[
+                "battle/records.png",
+                "battle/formations_icon.png",
+                "battle/battle.png",
+            ],
+            lower_screen(),
+            Duration::from_secs(20),
+            cancelled,
+        )?;
+        log(format!(
+            "Battle setup detected ({path}); starting with the current formation."
+        ));
+    }
     adb::tap_game_point(serial, 850, 1780, size).map_err(|error| error.to_string())?;
     settle_cancellable(cancelled)?;
 
@@ -1307,6 +1322,9 @@ fn detect_outcome_for_mode(
         );
     }
     if mode == GameMode::UnionCampaign {
+        if let Some(button) = super::union_campaign::floor_battle_button(screen)? {
+            return Ok(Some((Outcome::UnionFloorReturned, button)));
+        }
         // Keep defeat and network indicators ahead of the Union victory button.
         if let Some((outcome, found)) = detect_decisive_outcome(screen)? {
             if outcome != Outcome::FinalStage {
@@ -1358,6 +1376,7 @@ fn detect_outcome_for_mode(
 enum ResultCheck {
     Retry,
     PowerUp,
+    UnionFloorReturned,
     NoDefeat,
 }
 
@@ -1373,22 +1392,23 @@ trait ResultDriver {
 /// Mirrors AFKJourneyBase._handle_ambiguous_result_screen:
 /// settle 2s, reject Retry/Power Up, continue, then optionally tap Next.
 /// The original returns success even when the optional Next wait times out.
-fn handle_ambiguous_result(driver: &mut impl ResultDriver) -> Result<bool, String> {
+fn handle_ambiguous_result(driver: &mut impl ResultDriver) -> Result<BattleOutcome, String> {
     driver.wait_for_controls()?;
     match driver.check_defeat()? {
         ResultCheck::Retry => {
             driver.retry()?;
-            return Ok(false);
+            return Ok(BattleOutcome::Lost);
         }
         ResultCheck::PowerUp => {
             driver.back()?;
-            return Ok(false);
+            return Ok(BattleOutcome::Lost);
         }
+        ResultCheck::UnionFloorReturned => return Ok(BattleOutcome::Unclear),
         ResultCheck::NoDefeat => {}
     }
     driver.continue_result()?;
     driver.advance_optional_next()?;
-    Ok(true)
+    Ok(BattleOutcome::Won)
 }
 
 struct AdbResultDriver<'a> {
@@ -1411,6 +1431,11 @@ impl ResultDriver for AdbResultDriver<'_> {
         ensure_not_cancelled(self.cancelled)?;
         let (screen, size) = screenshot(self.serial)?;
         self.size = size;
+        if self.mode == GameMode::UnionCampaign
+            && super::union_campaign::floor_battle_button(&screen)?.is_some()
+        {
+            return Ok(ResultCheck::UnionFloorReturned);
+        }
         self.retry = find_template(&screen, "retry.png", lower_screen(), 0.70)?;
         if self.retry.is_some() {
             return Ok(ResultCheck::Retry);
@@ -1501,12 +1526,21 @@ fn wait_for_outcome(
     cancelled: &AtomicBool,
 ) -> Result<(Outcome, Match, (u32, u32)), String> {
     let started = Instant::now();
+    let mut previous_floor_return = false;
     while started.elapsed() < Duration::from_secs(BATTLE_TIMEOUT_SECONDS) {
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
-        if let Some((outcome, found)) = detect_outcome_for_mode(&screen, mode)? {
-            log(format!("Battle result detected: {outcome:?}."));
-            return Ok((outcome, found, size));
+        match detect_outcome_for_mode(&screen, mode)? {
+            Some((Outcome::UnionFloorReturned, _)) if !previous_floor_return => {
+                previous_floor_return = true;
+                thread::sleep(Duration::from_millis(500));
+                continue;
+            }
+            Some((outcome, found)) => {
+                log(format!("Battle result detected: {outcome:?}."));
+                return Ok((outcome, found, size));
+            }
+            None => previous_floor_return = false,
         }
         if let Some(skip) = live_battle_skip(&screen, mode)? {
             ensure_not_cancelled(cancelled)?;
@@ -1624,16 +1658,23 @@ fn battle_with_current_team(
                     retry: None,
                     mode,
                 };
-                let won = handle_ambiguous_result(&mut driver).map_err(|error| {
+                let outcome = handle_ambiguous_result(&mut driver).map_err(|error| {
                     progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
                     error
                 })?;
-                if won {
-                    progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Won));
+                progress(ProgressEvent::BattleFinished(mode, outcome));
+                if matches!(outcome, BattleOutcome::Won) {
                     progress(ProgressEvent::StageCleared(mode));
                     return Ok(StageResult::Won);
                 }
-                progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Lost));
+            }
+            Outcome::UnionFloorReturned => {
+                progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
+                log(text(
+                    "Union Campaign returned to the floor before a battle result was confirmed.",
+                    "Union Campaign ist ohne bestätigtes Kampfergebnis zur Etage zurückgekehrt.",
+                )
+                .into());
             }
             Outcome::DuraNoNext | Outcome::DuraVictory => {
                 progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Won));
@@ -1687,7 +1728,7 @@ pub(super) fn play_one_stage(
         && (!copy_is_open || resume.is_some())
     {
         if copy_is_open {
-            ensure_battle_screen(serial, cancelled)?;
+            ensure_battle_screen(serial, settings.mode, cancelled)?;
         }
         log("Trying the currently selected team first.".into());
         match battle_with_current_team(serial, settings, log, size, cancelled, first, progress)? {
@@ -1721,6 +1762,7 @@ pub(super) fn play_one_stage(
             let choice = copy_next_formation(
                 &mut AdbFormationBrowser {
                     serial,
+                    mode: settings.mode,
                     cancelled,
                     log,
                 },
@@ -2911,7 +2953,10 @@ mod tests {
     #[test]
     fn original_fallback_accepts_result_when_optional_next_is_missing() {
         let mut driver = FakeResultDriver::new(ResultCheck::NoDefeat, false);
-        assert!(handle_ambiguous_result(&mut driver).unwrap());
+        assert!(matches!(
+            handle_ambiguous_result(&mut driver).unwrap(),
+            BattleOutcome::Won
+        ));
         assert_eq!(
             driver.steps,
             vec![
@@ -2926,7 +2971,10 @@ mod tests {
     #[test]
     fn original_fallback_taps_next_when_it_is_present() {
         let mut driver = FakeResultDriver::new(ResultCheck::NoDefeat, true);
-        assert!(handle_ambiguous_result(&mut driver).unwrap());
+        assert!(matches!(
+            handle_ambiguous_result(&mut driver).unwrap(),
+            BattleOutcome::Won
+        ));
         assert_eq!(
             driver.steps,
             vec![
@@ -2945,12 +2993,36 @@ mod tests {
             (ResultCheck::PowerUp, "back"),
         ] {
             let mut driver = FakeResultDriver::new(check, false);
-            assert!(!handle_ambiguous_result(&mut driver).unwrap());
+            assert!(matches!(
+                handle_ambiguous_result(&mut driver).unwrap(),
+                BattleOutcome::Lost
+            ));
             assert_eq!(
                 driver.steps,
                 vec!["wait-2-seconds", "check-retry-and-power-up", action]
             );
         }
+    }
+
+    #[test]
+    fn union_floor_during_result_transition_preserves_unknown_outcome() {
+        let mut driver = FakeResultDriver::new(ResultCheck::UnionFloorReturned, false);
+        assert!(matches!(
+            handle_ambiguous_result(&mut driver).unwrap(),
+            BattleOutcome::Unclear
+        ));
+        assert_eq!(driver.steps, ["wait-2-seconds", "check-retry-and-power-up"]);
+    }
+
+    #[test]
+    #[ignore = "requires a cropped Union Campaign floor screenshot"]
+    fn captured_union_direct_floor_return() {
+        let path = std::env::var_os("ADBHELPER_TEST_UNION_FLOOR").expect("set screenshot path");
+        let (screen, _) = normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        assert!(matches!(
+            detect_outcome_for_mode(&screen, GameMode::UnionCampaign).unwrap(),
+            Some((Outcome::UnionFloorReturned, _))
+        ));
     }
 
     #[test]

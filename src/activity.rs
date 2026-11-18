@@ -1,4 +1,4 @@
-use crate::localization::text;
+use crate::localization::{format_text, text};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -185,7 +185,62 @@ pub enum ActivityEvent {
     StageCleared(GameMode),
     Swept(GameMode, u32),
     Collected(GameMode, u32),
+    DiamondHourglassesStopped(HourglassStop),
     InviteLetterOverBudget { price: u32, budget: u32 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HourglassStop {
+    Disabled,
+    FreeAvailable,
+    Exhausted,
+    LimitReached,
+    InsufficientDiamonds { price: u32, balance: u32 },
+    OfferUnreadable,
+    BalanceUnreadable,
+    OfferChanged,
+}
+
+impl HourglassStop {
+    pub fn message(self) -> String {
+        match self {
+            Self::Disabled => text(
+                "The purchase count or budget is set to zero.",
+                "Kaufanzahl oder Budget steht auf null.",
+            ),
+            Self::FreeAvailable => text(
+                "Free Instant AFK attempts are still available.",
+                "Es sind noch kostenlose Instant-AFK-Versuche verfügbar.",
+            ),
+            Self::Exhausted => text(
+                "No Instant AFK attempts remain.",
+                "Keine Instant-AFK-Versuche mehr verfügbar.",
+            ),
+            Self::LimitReached => text(
+                "The daily hourglass count or diamond budget has been reached.",
+                "Die Tagesanzahl der Sanduhren oder das Diamantenbudget ist erreicht.",
+            ),
+            Self::OfferUnreadable => text(
+                "The Instant AFK offer could not be verified after retrying.",
+                "Das Instant-AFK-Angebot konnte auch beim zweiten Versuch nicht bestätigt werden.",
+            ),
+            Self::BalanceUnreadable => text(
+                "The diamond balance could not be verified after retrying.",
+                "Der Diamantenbestand konnte auch beim zweiten Versuch nicht bestätigt werden.",
+            ),
+            Self::OfferChanged => text(
+                "The Instant AFK offer changed during verification.",
+                "Das Instant-AFK-Angebot hat sich während der Prüfung verändert.",
+            ),
+            Self::InsufficientDiamonds { price, balance } => {
+                return format_text!(
+                    "Insufficient diamonds. Offer: {price} · balance: {balance}.",
+                    "Zu wenige Diamanten. Preis {price} · Bestand {balance}."
+                )
+            }
+        }
+        .into()
+    }
 }
 
 #[derive(Default, Debug)]
@@ -197,6 +252,7 @@ pub struct ModeStats {
     pub scored: u64,
     pub sweeps: u64,
     pub collected: u64,
+    pub hourglass_stop: Option<HourglassStop>,
     attempts_for_cleared: u64,
     battle_pending: bool,
     clear_pending: bool,
@@ -279,12 +335,16 @@ impl RunActivity {
             | ActivityEvent::BattleFinished(mode, _)
             | ActivityEvent::StageCleared(mode) => mode,
             ActivityEvent::Swept(mode, _) | ActivityEvent::Collected(mode, _) => mode,
+            ActivityEvent::DiamondHourglassesStopped(_) => GameMode::DiamondHourglasses,
             ActivityEvent::InviteLetterOverBudget { .. } => return,
             ActivityEvent::ModeEntered(_) | ActivityEvent::ModeOpening(_) => unreachable!(),
         };
         let stats = self.modes.entry(mode).or_default();
         let mut cleared = false;
         match event {
+            ActivityEvent::DiamondHourglassesStopped(reason) => {
+                stats.hourglass_stop = Some(reason);
+            }
             ActivityEvent::Swept(_, count) => {
                 stats.sweeps = stats.sweeps.saturating_add(u64::from(count));
             }
@@ -382,6 +442,24 @@ mod tests {
         }
     }
     const SEASON: GameMode = GameMode::SeasonAfkStages;
+
+    #[test]
+    fn diamond_hourglass_reason_stays_visible_after_daily_moves_on() {
+        let mut run = RunActivity::default();
+        let now = Instant::now();
+        run.start(GameMode::DiamondHourglasses, now);
+        run.apply(ActivityEvent::ModeEntered(GameMode::DiamondHourglasses));
+        run.apply(ActivityEvent::DiamondHourglassesStopped(
+            HourglassStop::BalanceUnreadable,
+        ));
+        run.apply(ActivityEvent::ModeEntered(GameMode::UnionCampaign));
+        run.finish(now);
+
+        let stats = &run.modes[&GameMode::DiamondHourglasses];
+        assert_eq!(stats.collected, 0);
+        assert_eq!(stats.hourglass_stop, Some(HourglassStop::BalanceUnreadable));
+        assert_eq!(run.current_mode, Some(GameMode::UnionCampaign));
+    }
 
     #[test]
     fn collection_counts_do_not_become_battles_clears_or_wins() {

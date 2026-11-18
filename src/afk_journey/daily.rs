@@ -148,6 +148,10 @@ fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, common::Match)>, Strin
     let Some(button) = hourglass_control(screen, "daily/free_hourglass.png")? else {
         return Ok(None);
     };
+    Ok(free_hourglass_count(screen)?.map(|count| (count, button)))
+}
+
+pub(super) fn free_hourglass_count(screen: &GrayImage) -> Result<Option<u32>, String> {
     let lines = ocr::repeated_numeric_patch(
         screen,
         common::Rect {
@@ -164,7 +168,7 @@ fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, common::Match)>, Strin
     let count = values
         .next()
         .filter(|first| values.all(|next| next == *first));
-    Ok(count.map(|count| (count, button)))
+    Ok(count)
 }
 
 fn timer_reset(screen: &GrayImage) -> Result<bool, String> {

@@ -1266,6 +1266,9 @@ impl PlayerApp {
                                     progress_metric(ui, "SWEEPS", stats.sweeps);
                                 }
                             });
+                            if let Some(reason) = stats.hourglass_stop {
+                                ui.label(reason.message());
+                            }
                         });
                     }
                         });

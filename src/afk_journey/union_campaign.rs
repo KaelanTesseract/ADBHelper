@@ -33,6 +33,13 @@ enum PreBattle {
 }
 
 fn pre_battle_state(screen: &GrayImage) -> Result<Option<(PreBattle, Match)>, String> {
+    if let Some(found) = floor_battle_button(screen)? {
+        return Ok(Some((PreBattle::FloorBattle, found)));
+    }
+    if let Some(found) = common::find_template(screen, "battle/records.png", records_region(), 0.8)?
+    {
+        return Ok(Some((PreBattle::Formation, found)));
+    }
     for (paths, state, roi) in [
         (
             &[
@@ -59,6 +66,38 @@ fn pre_battle_state(screen: &GrayImage) -> Result<Option<(PreBattle, Match)>, St
         if let Some((_, found)) = common::get_match(screen, paths, roi, 0.8)? {
             return Ok(Some((state, found)));
         }
+    }
+    Ok(None)
+}
+
+fn records_region() -> Rect {
+    Rect {
+        width: 430,
+        ..bottom_bar()
+    }
+}
+
+pub(super) fn floor_battle_button(screen: &GrayImage) -> Result<Option<Match>, String> {
+    let button = common::find_template(
+        screen,
+        "union_campaign/battle.png",
+        Rect {
+            x: 630,
+            width: 450,
+            ..bottom_bar()
+        },
+        0.8,
+    )?;
+    if button.is_some()
+        && common::find_template(
+            screen,
+            "union_campaign/current_label.png",
+            floor_label_region(),
+            0.78,
+        )?
+        .is_some()
+    {
+        return Ok(button);
     }
     Ok(None)
 }
@@ -187,7 +226,7 @@ pub(super) fn navigate(
     Err(text("Could not open Union Campaign. Check guild membership, game access, and connection.", "Union Campaign konnte nicht geöffnet werden. Bitte Gildenmitgliedschaft, Freischaltung und Spielverbindung prüfen.").into())
 }
 
-fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
+pub(super) fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(45) {
         common::ensure_not_cancelled(cancelled)?;
@@ -211,43 +250,57 @@ fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PostBattle {
     Ready,
+    FloorBattle,
     Continue,
     NoFurtherFloor,
 }
 
 fn post_battle_state(screen: &GrayImage) -> Result<Option<(PostBattle, Match)>, String> {
-    for (path, state) in [
-        ("battle/records.png", PostBattle::Ready),
-        ("arena/continue.png", PostBattle::Continue),
+    for (path, state, region) in [
+        ("arena/continue.png", PostBattle::Continue, bottom_bar()),
+        ("battle/records.png", PostBattle::Ready, records_region()),
     ] {
-        if let Some(found) = common::find_template(screen, path, bottom_bar(), 0.78)? {
+        if let Some(found) = common::find_template(screen, path, region, 0.78)? {
             return Ok(Some((state, found)));
         }
+    }
+    if common::find_template(
+        screen,
+        "union_campaign/current_label.png",
+        floor_label_region(),
+        0.78,
+    )?
+    .is_some()
+    {
+        return Ok(common::find_template(
+            screen,
+            "union_campaign/battle.png",
+            common::full_screen(),
+            0.8,
+        )?
+        .map(|found| (PostBattle::FloorBattle, found)));
     }
     Ok(None)
 }
 
 trait PostBattleDriver {
-    fn observe(&mut self) -> Result<PostBattle, String>;
+    fn observe(&mut self, after_tap: bool) -> Result<PostBattle, String>;
     fn tap_continue(&mut self) -> Result<(), String>;
-    fn wait_until_continue_disappears(&mut self) -> Result<(), String>;
 }
 
-fn advance_after_win(driver: &mut impl PostBattleDriver) -> Result<bool, String> {
+fn advance_after_win(driver: &mut impl PostBattleDriver) -> Result<PostBattle, String> {
     // At most three Continue taps. Observe once more after the last tap so
     // a successful third tap cannot be mistaken for the end of the campaign.
-    for taps in 0..=3 {
-        match driver.observe()? {
-            PostBattle::Ready => return Ok(true),
-            PostBattle::NoFurtherFloor => return Ok(false),
-            PostBattle::Continue if taps < 3 => {
-                driver.tap_continue()?;
-                driver.wait_until_continue_disappears()?;
-            }
-            PostBattle::Continue => return Ok(false),
+    for taps in 0..3 {
+        match driver.observe(taps > 0)? {
+            PostBattle::Continue => driver.tap_continue()?,
+            state => return Ok(state),
         }
     }
-    Ok(false)
+    Ok(match driver.observe(true)? {
+        PostBattle::Continue => PostBattle::NoFurtherFloor,
+        state => state,
+    })
 }
 
 struct AdbPostBattle<'a> {
@@ -258,17 +311,25 @@ struct AdbPostBattle<'a> {
 }
 
 impl PostBattleDriver for AdbPostBattle<'_> {
-    fn observe(&mut self) -> Result<PostBattle, String> {
+    fn observe(&mut self, mut waiting_for_transition: bool) -> Result<PostBattle, String> {
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(20) {
             common::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = common::screenshot(self.serial)?;
-            if let Some((state, found)) = post_battle_state(&screen)? {
+            let observation = post_battle_state(&screen)?;
+            if !matches!(observation, Some((PostBattle::Continue, _))) {
+                waiting_for_transition = false;
+            }
+            if let Some((state, found)) = observation.filter(|(state, _)| {
+                *state != PostBattle::Continue
+                    || !waiting_for_transition
+                    || started.elapsed() >= Duration::from_secs(5)
+            }) {
                 self.found = Some(found);
                 self.size = size;
                 return Ok(state);
             }
-            std::thread::sleep(Duration::from_millis(400));
+            std::thread::sleep(Duration::from_millis(250));
         }
         common::ensure_not_cancelled(self.cancelled)?;
         // Original's last-floor screen is unknown: only a genuine timeout ends
@@ -286,19 +347,6 @@ impl PostBattleDriver for AdbPostBattle<'_> {
             ))?,
             self.size,
         )
-    }
-
-    fn wait_until_continue_disappears(&mut self) -> Result<(), String> {
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(5) {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, _) = common::screenshot(self.serial)?;
-            if common::find_template(&screen, "arena/continue.png", bottom_bar(), 0.78)?.is_none() {
-                return Ok(());
-            }
-            std::thread::sleep(Duration::from_millis(350));
-        }
-        Ok(()) // Missed tap: the bounded outer loop may retry.
     }
 }
 
@@ -320,9 +368,12 @@ pub fn run(
     let size = adb::display_size(serial).map_err(|e| e.to_string())?;
     progress(ActivityEvent::ModeEntered(mode));
     let mut cleared = 0u32;
+    let mut formation_ready = false;
     loop {
         common::ensure_not_cancelled(cancelled)?;
-        prepare_floor(serial, cancelled)?;
+        if !formation_ready {
+            prepare_floor(serial, cancelled)?;
+        }
         match common::play_one_stage(
             serial,
             &mut log,
@@ -340,9 +391,16 @@ pub fn run(
                     found: None,
                     size,
                 };
-                if !advance_after_win(&mut driver)? {
-                    log("Union Campaign: Keine weitere Etage erkannt.".into());
-                    return Ok(cleared);
+                match advance_after_win(&mut driver)? {
+                    PostBattle::Ready => formation_ready = true,
+                    PostBattle::FloorBattle => formation_ready = false,
+                    PostBattle::NoFurtherFloor => {
+                        log("Union Campaign: Keine weitere Etage erkannt.".into());
+                        return Ok(cleared);
+                    }
+                    PostBattle::Continue => {
+                        unreachable!("Continue is handled by advance_after_win")
+                    }
                 }
             }
             StageResult::FormationFailed | StageResult::FinalStage => return Ok(cleared),
@@ -359,11 +417,14 @@ mod tests {
     struct FakePost {
         states: VecDeque<Result<PostBattle, String>>,
         trace: Vec<&'static str>,
-        disappear_error: Option<String>,
     }
     impl PostBattleDriver for FakePost {
-        fn observe(&mut self) -> Result<PostBattle, String> {
-            self.trace.push("observe");
+        fn observe(&mut self, after_tap: bool) -> Result<PostBattle, String> {
+            self.trace.push(if after_tap {
+                "observe_after_tap"
+            } else {
+                "observe"
+            });
             self.states
                 .pop_front()
                 .expect("unexpected extra observation")
@@ -372,16 +433,11 @@ mod tests {
             self.trace.push("tap");
             Ok(())
         }
-        fn wait_until_continue_disappears(&mut self) -> Result<(), String> {
-            self.trace.push("wait_gone");
-            self.disappear_error.clone().map_or(Ok(()), Err)
-        }
     }
     fn post(states: &[PostBattle]) -> FakePost {
         FakePost {
             states: states.iter().map(|s| Ok(*s)).collect(),
             trace: vec![],
-            disappear_error: None,
         }
     }
     fn screen(paths: &[(&str, i64, i64)]) -> GrayImage {
@@ -395,15 +451,15 @@ mod tests {
     #[test]
     fn next_floor_ready_does_not_tap_any_buttons() {
         let mut driver = post(&[PostBattle::Ready]);
-        assert!(advance_after_win(&mut driver).unwrap());
+        assert_eq!(advance_after_win(&mut driver).unwrap(), PostBattle::Ready);
         assert_eq!(driver.trace, vec!["observe"]);
     }
 
     #[test]
-    fn lingering_victory_waits_for_continue_to_disappear_before_reobserving() {
+    fn after_continue_the_next_observation_can_reuse_the_ready_frame() {
         let mut driver = post(&[PostBattle::Continue, PostBattle::Ready]);
-        assert!(advance_after_win(&mut driver).unwrap());
-        assert_eq!(driver.trace, vec!["observe", "tap", "wait_gone", "observe"]);
+        assert_eq!(advance_after_win(&mut driver).unwrap(), PostBattle::Ready);
+        assert_eq!(driver.trace, vec!["observe", "tap", "observe_after_tap"]);
     }
 
     #[test]
@@ -414,10 +470,14 @@ mod tests {
             PostBattle::Continue,
             PostBattle::Ready,
         ]);
-        assert!(advance_after_win(&mut driver).unwrap());
+        assert_eq!(advance_after_win(&mut driver).unwrap(), PostBattle::Ready);
         assert_eq!(driver.trace.iter().filter(|&&a| a == "tap").count(), 3);
         assert_eq!(
-            driver.trace.iter().filter(|&&a| a == "wait_gone").count(),
+            driver
+                .trace
+                .iter()
+                .filter(|&&a| a == "observe_after_tap")
+                .count(),
             3
         );
     }
@@ -425,10 +485,16 @@ mod tests {
     #[test]
     fn continue_retries_are_bounded_and_a_real_timeout_ends_progression() {
         let mut driver = post(&[PostBattle::Continue; 4]);
-        assert!(!advance_after_win(&mut driver).unwrap());
+        assert_eq!(
+            advance_after_win(&mut driver).unwrap(),
+            PostBattle::NoFurtherFloor
+        );
         assert_eq!(driver.trace.iter().filter(|&&a| a == "tap").count(), 3);
         let mut driver = post(&[PostBattle::NoFurtherFloor]);
-        assert!(!advance_after_win(&mut driver).unwrap());
+        assert_eq!(
+            advance_after_win(&mut driver).unwrap(),
+            PostBattle::NoFurtherFloor
+        );
         assert!(!driver.trace.contains(&"tap"));
     }
 
@@ -438,11 +504,29 @@ mod tests {
         driver.states.push_back(Err("ADB getrennt".into()));
         assert_eq!(advance_after_win(&mut driver).unwrap_err(), "ADB getrennt");
         let mut driver = post(&[PostBattle::Continue]);
-        driver.disappear_error = Some("Cancelled by user.".into());
+        driver.states.push_back(Err("Cancelled by user.".into()));
         assert_eq!(
             advance_after_win(&mut driver).unwrap_err(),
             "Cancelled by user."
         );
+    }
+
+    #[test]
+    fn continue_can_return_to_the_floor_battle_selection() {
+        let mut driver = post(&[PostBattle::Continue, PostBattle::FloorBattle]);
+        assert_eq!(
+            advance_after_win(&mut driver).unwrap(),
+            PostBattle::FloorBattle
+        );
+        let floor = &[
+            ("union_campaign/current_label.png", 250, 1180),
+            ("union_campaign/battle.png", 420, 1510),
+        ];
+        assert!(matches!(
+            post_battle_state(&screen(floor)).unwrap(),
+            Some((PostBattle::FloorBattle, _))
+        ));
+        assert!(post_battle_state(&screen(&floor[1..])).unwrap().is_none());
     }
 
     #[test]
@@ -543,6 +627,21 @@ mod tests {
         )
         .is_err());
         assert!(events.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires a cropped Union Campaign floor screenshot"]
+    fn captured_floor_battle_button() {
+        let path = std::env::var_os("ADBHELPER_TEST_UNION_FLOOR").expect("set screenshot path");
+        let (screen, _) = common::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        let found = floor_battle_button(&screen)
+            .unwrap()
+            .expect("verified floor Battle button");
+        assert!(found.center().0 > 630);
+        assert_eq!(
+            pre_battle_state(&screen).unwrap().unwrap().0,
+            PreBattle::FloorBattle
+        );
     }
 
     #[test]
