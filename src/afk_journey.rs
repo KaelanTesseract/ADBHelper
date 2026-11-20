@@ -22,6 +22,7 @@ mod ocr;
 pub mod phase_rewards;
 pub mod progression;
 pub mod recovery;
+mod text_match;
 pub mod union_campaign;
 pub(crate) mod vision;
 

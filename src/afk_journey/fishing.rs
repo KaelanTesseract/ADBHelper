@@ -1,6 +1,7 @@
 //! World-map navigation and the standard AFK Journey fishing minigame.
 use super::{afk_stages as common, ocr, BASE_RESOLUTION};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
@@ -155,19 +156,11 @@ impl Driver<'_> {
     }
 }
 
-fn normalized(value: &str) -> String {
-    value
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
-}
-
 fn is_map(frame: &Frame) -> Result<bool, ActionError> {
     let top = image::imageops::crop_imm(&frame.gray, 0, 0, 425, 200).to_image();
     Ok(ocr::recognize(&top)?
         .iter()
-        .any(|l| normalized(&l.text).contains("explorationprogress")))
+        .any(|l| ascii_key(&l.text).contains("explorationprogress")))
 }
 
 fn zero_attempts(label: &str) -> bool {
@@ -249,7 +242,7 @@ fn walking_button(frame: &Frame, marker: Point) -> Result<Option<Point>, ActionE
     let title = lines
         .iter()
         .filter(nearby)
-        .find(|l| normalized(&l.text).contains("ingspot"));
+        .find(|l| ascii_key(&l.text).contains("ingspot"));
     // The title can be clipped at the left map edge. The fish badge beside the
     // counter also identifies the spot panel.
     let mut counter = None;
@@ -390,9 +383,7 @@ fn remaining_status(frame: &Frame) -> Result<Option<bool>, ActionError> {
     let crop = image::imageops::crop_imm(&frame.gray, 160, 120, 760, 135).to_image();
     Ok(ocr::recognize(&crop)?
         .iter()
-        .find(|line| {
-            normalized(&line.text).contains("remainingattempts") && line.text.contains('/')
-        })
+        .find(|line| ascii_key(&line.text).contains("remainingattempts") && line.text.contains('/'))
         .map(|line| zero_attempts(&line.text)))
 }
 
@@ -409,12 +400,12 @@ fn catch_close(frame: &Frame) -> Result<Option<Point>, ActionError> {
     let close_lines = ocr::recognize(&close_region)?;
     let close = close_lines
         .iter()
-        .find(|l| normalized(&l.text) == "taptoclose");
+        .find(|l| ascii_key(&l.text) == "taptoclose");
     let Some(close) = close else {
         return Ok(None);
     };
     let receipt = ocr::recognize(&frame.gray)?.iter().any(|l| {
-        let label = normalized(&l.text);
+        let label = ascii_key(&l.text);
         label.contains("fishcaught")
             || label.contains("youcaught")
             || label.contains("caughtafish")

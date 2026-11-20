@@ -1,6 +1,7 @@
 //! Dream Realm challenges and the previous day's ranking reward.
 use super::{afk_stages as common, ocr, BATTLE_TIMEOUT_SECONDS};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::ascii_key_with;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, BattleOutcome, GameMode},
@@ -123,7 +124,7 @@ impl Frame {
                 && x < roi.x + roi.width
                 && y >= roi.y
                 && y < roi.y + roi.height
-                && matches(&compact(&line.text)))
+                && matches(&ascii_key_with(&line.text, &['/'])))
             .then_some((x, y))
         })
     }
@@ -286,7 +287,7 @@ impl Frame {
             if !(850..930).contains(&y) {
                 return None;
             }
-            let prompt = compact(&line.text);
+            let prompt = ascii_key_with(&line.text, &['/']);
             let price: u32 = prompt
                 .strip_prefix("use")?
                 .strip_suffix("topurchaseadream")?
@@ -299,7 +300,7 @@ impl Frame {
             if !(985..1065).contains(&y) {
                 return None;
             }
-            attempt_count(compact(&line.text).strip_prefix("dailyattempts")?)
+            attempt_count(ascii_key_with(&line.text, &['/']).strip_prefix("dailyattempts")?)
         });
         let (Some(price), Some(remaining)) = (price, remaining) else {
             return Ok(None);
@@ -335,16 +336,8 @@ impl Frame {
     }
 }
 
-fn compact(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '/')
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
-}
-
 fn chance_count(value: &str) -> Option<u32> {
-    let normalized = compact(value);
+    let normalized = ascii_key_with(value, &['/']);
     attempt_count(normalized.strip_prefix("chances")?)
 }
 

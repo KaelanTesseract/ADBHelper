@@ -1,6 +1,7 @@
 use super::{client, crop, text, ActivityEvent, Driver, GameMode, Screen};
 use crate::afk_journey::error::ActionError;
-use crate::afk_journey::progression::{hall, key};
+use crate::afk_journey::progression::hall;
+use crate::afk_journey::text_match::{ascii_key, ascii_key_with};
 use crate::afk_journey::vision;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,11 +24,7 @@ fn reference(name: &str) -> Result<Value, ActionError> {
 }
 
 fn ascension_label(label: &str) -> Option<&'static str> {
-    let compact: String = label
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '+')
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
+    let compact = ascii_key_with(label, &['+']);
     Some(match compact.as_str() {
         "elite" => "Elite",
         "elite+" => "Elite+",
@@ -136,11 +133,11 @@ pub(super) fn scan(
     let canonical: BTreeMap<_, _> = heroes
         .iter()
         .enumerate()
-        .filter_map(|(index, hero)| Some((key(hero.get("name")?.as_str()?), index)))
+        .filter_map(|(index, hero)| Some((ascii_key(hero.get("name")?.as_str()?), index)))
         .collect();
     let aliases: BTreeMap<_, _> = aliases
         .iter()
-        .filter_map(|(alias, name)| Some((key(alias), *canonical.get(&key(name))?)))
+        .filter_map(|(alias, name)| Some((ascii_key(alias), *canonical.get(&ascii_key(name))?)))
         .collect();
     let mut visited = BTreeSet::new();
     let mut count = 0;

@@ -1,5 +1,6 @@
 use super::{afk_stages as common, ocr, phase_rewards};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
@@ -48,14 +49,6 @@ struct Frame {
     size: Point,
 }
 
-fn normalized(value: &str) -> String {
-    value
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .map(|character| character.to_ascii_lowercase())
-        .collect()
-}
-
 impl Frame {
     fn decode(bytes: &[u8]) -> Result<Self, ActionError> {
         let (gray, size) = vision::normalize_screenshot(bytes)?;
@@ -84,7 +77,7 @@ impl Frame {
     ) -> Option<&ocr::TextLine> {
         self.lines.iter().find(|line| {
             let (px, py) = line.center();
-            x.contains(&px) && y.contains(&py) && matches(&normalized(&line.text))
+            x.contains(&px) && y.contains(&py) && matches(&ascii_key(&line.text))
         })
     }
 

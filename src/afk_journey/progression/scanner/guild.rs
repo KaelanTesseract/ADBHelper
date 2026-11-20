@@ -1,5 +1,6 @@
 use super::{client, crop, text, ActivityEvent, Driver, GameMode, GuildSettings, Screen};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::letters_key;
 use crate::afk_journey::vision;
 use crate::afk_journey::{arena, dream_realm, phase_rewards};
 use serde::Deserialize;
@@ -127,21 +128,14 @@ fn remote_members(input: &str, api_key: &str) -> Result<Vec<Member>, ActionError
     Ok(rows.remove(0).state.players)
 }
 
-fn name_key(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
 fn identity<'a>(name: &str, roster: &'a [Member]) -> Option<&'a Member> {
-    let name = name_key(name);
+    let name = letters_key(name);
     if name.is_empty() {
         return None;
     }
     let mut matches = roster
         .iter()
-        .filter(|member| name_key(&member.name) == name);
+        .filter(|member| letters_key(&member.name) == name);
     let member = matches.next()?;
     matches.next().is_none().then_some(member)
 }
@@ -155,10 +149,10 @@ fn corrected_identity<'a>(names: &[String], roster: &'a [Member]) -> Option<&'a 
     }
     let keys: Vec<Vec<char>> = names
         .iter()
-        .map(|name| name_key(name).chars().collect())
+        .map(|name| letters_key(name).chars().collect())
         .collect();
     let mut matches = roster.iter().filter(|member| {
-        let canonical: Vec<_> = name_key(&member.name).chars().collect();
+        let canonical: Vec<_> = letters_key(&member.name).chars().collect();
         canonical.len() >= 6 && keys.iter().any(|candidate| one_edit(candidate, &canonical))
     });
     let first = matches.next()?;
@@ -222,7 +216,7 @@ fn member_count(screen: &Screen) -> Option<usize> {
 fn clean_name(label: &str) -> Option<String> {
     let stripped = label.trim_matches(|c: char| !c.is_alphanumeric());
     let name = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
-    let key = name_key(&name);
+    let key = letters_key(&name);
     (key.len() >= 2
         && name.len() <= 90
         && !matches!(
@@ -393,7 +387,7 @@ fn activity_export(
             if let Some(member) = member {
                 put_identity(&mut record, member);
             }
-            rows.entry(name_key(output_name)).or_insert(record);
+            rows.entry(letters_key(output_name)).or_insert(record);
         }
         unchanged = if page == previous { unchanged + 1 } else { 0 };
         if unchanged >= 2 {
@@ -658,7 +652,7 @@ fn ranking_page(
         let in_guild = !guild.is_empty()
             && crop(screen, 352, center + 17, 422, 36)?
                 .iter()
-                .any(|l| name_key(&l.text) == name_key(guild));
+                .any(|l| letters_key(&l.text) == letters_key(guild));
         let names = rank_names(screen, center)?;
         let member = corrected_identity(&names, roster);
         let name = member.map(|m| m.name.as_str()).or_else(|| {
@@ -935,7 +929,7 @@ pub(super) fn scan(
                 if !(0..=1030).contains(&x) || !(690..790).contains(&y) {
                     return None;
                 }
-                let value = super::super::key(&line.text);
+                let value = crate::afk_journey::text_match::ascii_key(&line.text);
                 let n = digits(value.strip_prefix("phase")?)?;
                 let green = (x.saturating_sub(145)..x).any(|x| {
                     (790..805).any(|y| {

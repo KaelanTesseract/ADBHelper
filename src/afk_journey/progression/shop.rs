@@ -1,5 +1,6 @@
-use super::{key, text, Driver, Point, Progress, Screen};
+use super::{text, Driver, Point, Progress, Screen};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
 use crate::{
     activity::ActivityEvent,
@@ -172,7 +173,7 @@ fn purchased_hero(screen: &Screen) -> Option<String> {
     let line = screen.line(170..890, 1175..1235, |value| {
         value.starts_with("usedtolevelup") && value.contains("exclusiveequipmentfor")
     })?;
-    let compact = key(&line.text);
+    let compact = ascii_key(&line.text);
     let (_, hero) = compact.split_once("exclusiveequipmentfor")?;
     (hero.len() >= 3 && hero.chars().all(|c| c.is_ascii_alphabetic())).then(|| hero.to_owned())
 }
@@ -336,7 +337,7 @@ fn confirming_purchase(screen: &Screen, store: Store, offer: &Offer) -> Option<P
         .lines
         .iter()
         .filter(|line| (620..1330).contains(&line.center().1))
-        .map(|line| key(&line.text))
+        .map(|line| ascii_key(&line.text))
         .collect::<Vec<_>>()
         .join(" ");
     let amount_seen = screen
@@ -708,7 +709,7 @@ pub(super) fn recruit(
             return Ok(());
         }
         let max_warning = current.lines.iter().any(|line| {
-            let label = key(&line.text);
+            let label = ascii_key(&line.text);
             (label.contains("max") || label.contains("highest"))
                 && (label.contains("hero") || label.contains("ascension"))
         });
@@ -725,7 +726,7 @@ pub(super) fn recruit(
             }
         }
         let result = current.lines.iter().any(|line| {
-            let label = key(&line.text);
+            let label = ascii_key(&line.text);
             label.contains("recruitmentresult")
                 || label.contains("recruitagain")
                 || label.contains("tapanywheretocontinue")

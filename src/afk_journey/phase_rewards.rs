@@ -1,6 +1,7 @@
 //! Season Phase Rankings: free District / Server / Guild first-clear rewards.
 use super::{afk_stages as common, daily, ocr};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::letters_key;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode, RankingScope},
@@ -60,14 +61,6 @@ struct Frame {
     size: (u32, u32),
 }
 
-fn compact(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
 fn digits(value: &str) -> Option<u32> {
     (!value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
         .then(|| value.parse().ok())
@@ -120,7 +113,7 @@ fn scope_tab<'a>(lines: &'a [ocr::TextLine], scope: RankingScope) -> Option<&'a 
         l.y > 1730.0
             && l.y < 1830.0
             && l.x > 250.0
-            && compact(&l.text).starts_with(&scope.label().to_lowercase())
+            && letters_key(&l.text).starts_with(&scope.label().to_lowercase())
     })
 }
 
@@ -131,7 +124,7 @@ fn first_clear_header(lines: &[ocr::TextLine]) -> Option<(u32, RankingScope)> {
             if !(440.0..620.0).contains(&l.y) {
                 return None;
             }
-            let title = compact(&l.text).replace("istclear", "1stclear");
+            let title = letters_key(&l.text).replace("istclear", "1stclear");
             // The decorative final word can become "Rewa1üs" in Windows
             // OCR. Phase/scope/1st Clear plus the independently verified table
             // and active footer tab identify this page without guessing it.
@@ -172,7 +165,7 @@ fn first_clear(frame: &Frame) -> Option<(u32, RankingScope)> {
         if !frame.lines.iter().any(|l| {
             (700.0..830.0).contains(&l.y)
                 && l.x > minimum_x
-                && compact(&l.text).replace("1st", "ist") == label
+                && letters_key(&l.text).replace("1st", "ist") == label
         }) {
             return None;
         }
@@ -188,7 +181,7 @@ fn phase_tabs(lines: &[ocr::TextLine]) -> BTreeMap<u32, (u32, u32)> {
             if !(700..=800).contains(&l.center().1) {
                 return None;
             }
-            let label = compact(&l.text);
+            let label = letters_key(&l.text);
             let suffix = label.strip_prefix("phase")?;
             let number = digits(suffix).or_else(|| matches!(suffix, "i" | "l").then_some(1))?;
             (1..=99).contains(&number).then_some((number, l.center()))
@@ -200,7 +193,7 @@ fn ranking_control(frame: &Frame, label: &str, top: std::ops::Range<f32>) -> Opt
     frame
         .lines
         .iter()
-        .find(|line| line.x > 850.0 && top.contains(&line.y) && compact(&line.text) == label)
+        .find(|line| line.x > 850.0 && top.contains(&line.y) && letters_key(&line.text) == label)
         .map(|line| line.y)
 }
 
@@ -211,13 +204,13 @@ fn ranking(frame: &Frame) -> bool {
                 && l.x < 850.0
                 && l.y > 350.0
                 && l.y < 600.0
-                && (compact(&l.text).contains("rankingrewards")
-                    || compact(&l.text).contains("seasonprogressrewards"))
+                && (letters_key(&l.text).contains("rankingrewards")
+                    || letters_key(&l.text).contains("seasonprogressrewards"))
         })
         && frame
             .lines
             .iter()
-            .any(|l| l.y > 1800.0 && compact(&l.text) == "phaserankings")
+            .any(|l| l.y > 1800.0 && letters_key(&l.text) == "phaserankings")
         && !phase_tabs(&frame.lines).is_empty()
         && ranking_control(frame, "phase", 100.0..300.0).is_some()
         && ranking_control(frame, "season", 300.0..570.0).is_some()
@@ -254,7 +247,7 @@ fn first_clear_entry(frame: &Frame) -> Option<(u32, u32)> {
         .find(|l| {
             l.x > 850.0
                 && (150.0..590.0).contains(&l.y)
-                && matches!(compact(&l.text).as_str(), "1stclear" | "istclear")
+                && matches!(letters_key(&l.text).as_str(), "1stclear" | "istclear")
         })
         .map(|l| (l.center().0, l.center().1.saturating_sub(45)))
 }
@@ -309,7 +302,7 @@ fn rows(frame: &Frame) -> Result<Vec<Row>, ActionError> {
         if status_line.x < 820.0 || !(810.0..1600.0).contains(&status_line.y) {
             continue;
         }
-        let status = match compact(&status_line.text).as_str() {
+        let status = match letters_key(&status_line.text).as_str() {
             "claim" if green_control(&frame.color, status_line) => Status::Claimable,
             "claimed" => Status::Claimed,
             "notcleared" => Status::Locked,
@@ -331,10 +324,10 @@ fn rows(frame: &Frame) -> Result<Vec<Row>, ActionError> {
                     l.x < 300.0
                         && l.y < number.y
                         && l.y > number.y - 120.0
-                        && matches!(compact(&l.text).as_str(), "apex" | "stage" | "afkstage")
+                        && matches!(letters_key(&l.text).as_str(), "apex" | "stage" | "afkstage")
                 })?;
                 Some(Stage {
-                    kind: compact(&kind.text),
+                    kind: letters_key(&kind.text),
                     number: floor,
                 })
             })
@@ -363,7 +356,7 @@ fn quick_claim(frame: &Frame) -> Option<(u32, u32)> {
         .find(|l| {
             l.x > 600.0
                 && (1500.0..1700.0).contains(&l.y)
-                && compact(&l.text) == "quickclaim"
+                && letters_key(&l.text) == "quickclaim"
                 && green_control(&frame.color, l)
         })
         .map(ocr::TextLine::center)
@@ -388,7 +381,7 @@ pub(super) fn loot_close(lines: &[ocr::TextLine]) -> Option<(u32, u32)> {
             && l.x > 40.0
             && l.width > 150.0
             && matches!(
-                compact(&l.text).as_str(),
+                letters_key(&l.text).as_str(),
                 "rewards"
                     | "obtained"
                     | "rewardsobtained"
@@ -405,7 +398,7 @@ pub(super) fn loot_close(lines: &[ocr::TextLine]) -> Option<(u32, u32)> {
         .find(|l| {
             l.y > 1500.0
                 && matches!(
-                    compact(&l.text).as_str(),
+                    letters_key(&l.text).as_str(),
                     "taptoclose" | "tapanywheretoclose"
                 )
         })

@@ -1,6 +1,7 @@
 //! Optional paid Instant AFK and the original stage-reward collection path.
 use super::{afk_stages as common, daily, ocr};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::letters_key;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode, HourglassStop},
@@ -356,26 +357,18 @@ enum StageView {
     Other,
 }
 
-fn compact(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
 fn stage_view(lines: &[ocr::TextLine]) -> StageView {
     let title = lines.iter().any(|l| {
-        let s = compact(&l.text);
+        let s = letters_key(&l.text);
         l.y < 1350.0 && (s.contains("stagereward") || s.contains("progressreward"))
     });
     let close = lines
         .iter()
-        .find(|l| compact(&l.text) == "taptoclose" && l.y > 1000.0);
+        .find(|l| letters_key(&l.text) == "taptoclose" && l.y > 1000.0);
     let loot = lines.iter().any(|l| {
         l.y < 1000.0
             && matches!(
-                compact(&l.text).as_str(),
+                letters_key(&l.text).as_str(),
                 "rewards" | "reward" | "youreceived" | "youobtained" | "obtained"
             )
     });
@@ -386,12 +379,16 @@ fn stage_view(lines: &[ocr::TextLine]) -> StageView {
     }
     if title {
         if let Some(claim) = lines.iter().find(|l| {
-            l.y > 650.0 && matches!(compact(&l.text).as_str(), "claim" | "claimall" | "collect")
+            l.y > 650.0
+                && matches!(
+                    letters_key(&l.text).as_str(),
+                    "claim" | "claimall" | "collect"
+                )
         }) {
             return StageView::Claim(claim.center());
         }
         if lines.iter().any(|l| {
-            let s = compact(&l.text);
+            let s = letters_key(&l.text);
             s == "claimed"
                 || s.contains("allrewardsclaimed")
                 || s.contains("clearafkstage")
@@ -407,7 +404,7 @@ fn stage_target(lines: &[ocr::TextLine]) -> Option<(u32, u32)> {
     lines
         .iter()
         .find(|line| {
-            let name = compact(&line.text);
+            let name = letters_key(&line.text);
             line.y < 1000.0 && (name.contains("stagereward") || name.contains("progressreward"))
         })
         .map(ocr::TextLine::center)

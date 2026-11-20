@@ -1,5 +1,6 @@
 //! Optional hero, equipment and shopping steps in the Daily routine.
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::ascii_key;
 mod hall;
 pub mod scanner;
 mod shop;
@@ -34,14 +35,6 @@ struct Screen {
     size: Point,
 }
 
-fn key(value: &str) -> String {
-    value
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .map(|character| character.to_ascii_lowercase())
-        .collect()
-}
-
 impl Screen {
     fn decode(bytes: &[u8]) -> Result<Self, ActionError> {
         let (gray, size) = vision::normalize_screenshot(bytes)?;
@@ -70,7 +63,7 @@ impl Screen {
     ) -> Option<&ocr::TextLine> {
         self.lines.iter().find(|line| {
             let (px, py) = line.center();
-            x.contains(&px) && y.contains(&py) && matches(&key(&line.text))
+            x.contains(&px) && y.contains(&py) && matches(&ascii_key(&line.text))
         })
     }
 

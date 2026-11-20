@@ -1,5 +1,6 @@
-use super::{key, ocr, text, Driver, Point, Progress, Screen};
+use super::{ocr, text, Driver, Point, Progress, Screen};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
 use crate::afk_journey::{daily_extras::amount_with_thresholds, BASE_RESOLUTION};
 use image::{GrayImage, Luma};
@@ -77,7 +78,7 @@ pub(super) fn hero_name(screen: &Screen) -> Option<String> {
                     && line.text.chars().any(char::is_alphabetic)
             })
             .max_by(|a, b| a.height.total_cmp(&b.height))
-            .map(|line| key(&line.text))
+            .map(|line| ascii_key(&line.text))
             .filter(|name| name.len() >= 2)
     })
 }
@@ -104,7 +105,7 @@ fn name_from_header(screen: &Screen) -> Option<String> {
             .iter()
             .filter(|line| line.height >= 108.0 && line.text.chars().any(char::is_alphabetic))
             .max_by(|a, b| a.height.total_cmp(&b.height))
-            .map(|line| key(&line.text))
+            .map(|line| ascii_key(&line.text))
             .filter(|name| name.len() >= 2)
     })
 }
@@ -154,7 +155,7 @@ impl HeroNameplate {
             {
                 return None;
             }
-            let title = key(&line.text);
+            let title = ascii_key(&line.text);
             (title.len() >= 5
                 && title
                     .bytes()
@@ -533,7 +534,7 @@ fn equipment_class(screen: &Screen, class: &str) -> bool {
     let Ok(lines) = ocr::recognize(&heading) else {
         return false;
     };
-    let labels: Vec<_> = lines.iter().map(|line| key(&line.text)).collect();
+    let labels: Vec<_> = lines.iter().map(|line| ascii_key(&line.text)).collect();
     labels.iter().any(|label| label.starts_with(&class_heading))
         && labels.iter().any(|label| label.contains("forginglevel"))
 }
@@ -1119,7 +1120,7 @@ mod tests {
         let mut missing_roster_title = captured("resonance_846_current");
         missing_roster_title
             .lines
-            .retain(|line| key(&line.text) != "resonanceheroes");
+            .retain(|line| ascii_key(&line.text) != "resonanceheroes");
         assert!(!hall(&missing_roster_title));
         assert_eq!(resonance_level(&missing_roster_title).unwrap(), Some(846));
         assert_eq!(
