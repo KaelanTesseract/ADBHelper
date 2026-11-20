@@ -29,8 +29,8 @@ confidence-threshold = 0.9
 # Approved by the maintainer on 2026-11-20. Both crates ship in every release since 0.2.
 exceptions = [
     # egui's built-in interface fonts (Hack, Ubuntu Light, emoji). Both font licenses
-    # allow embedding and redistribution with the license notice; the notice belongs
-    # in the third-party notes.
+    # allow embedding and redistribution with the license notice, which is in
+    # THIRD_PARTY.md and licenses/.
     { crate = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
     # Mozilla's root certificate list for HTTPS (update check, Guild Manager roster).
     { crate = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },

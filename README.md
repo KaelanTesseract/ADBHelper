@@ -190,4 +190,4 @@ Report issues through the **[issue tracker](https://github.com/KaelanTesseract/A
 
 Workflow inspiration and original recognition templates come from **[ADBAutoPlayer](https://github.com/AdbAutoPlayer/AdbAutoPlayer)**. ADBHelper adapts its AFK Journey workflows into a native Rust application.
 
-Distributed under the **[MIT License](LICENSE)**. The original template copyright notice is preserved in the license file.
+Distributed under the **[MIT License](LICENSE)**. The original template copyright notice is preserved in the license file. Template sources, interface fonts, root certificates, and other third-party notices are listed in **[THIRD_PARTY.md](THIRD_PARTY.md)**.
