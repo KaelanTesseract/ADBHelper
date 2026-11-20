@@ -6,7 +6,7 @@ use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
     adb,
-    localization::text,
+    localization::tr,
 };
 use image::{DynamicImage, GrayImage, RgbaImage};
 use std::{
@@ -119,11 +119,7 @@ impl Driver<'_> {
         };
         let size = pixels.dimensions();
         if (size.0 as f32 / size.1 as f32 - 9.0 / 16.0).abs() > 0.04 {
-            return Err(text(
-                "Fishing requires a portrait 9:16 emulator.",
-                "Angeln benötigt einen Emulator im Hochformat 9:16.",
-            )
-            .into());
+            return Err(tr!("fishing-fishing-requires-a-portrait-9-16").into());
         }
         let pixels = if size == BASE_RESOLUTION {
             pixels
@@ -190,11 +186,7 @@ fn open_map(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Frame, 
             return Ok(frame);
         }
     }
-    Err(text(
-        "Could not verify the world map.",
-        "Die Weltkarte konnte nicht erkannt werden.",
-    )
-    .into())
+    Err(tr!("fishing-could-not-verify-the-world-map").into())
 }
 
 fn next_marker(frame: &Frame, rejected: &[Point]) -> Result<Option<Point>, ActionError> {
@@ -314,7 +306,7 @@ fn approach_spot(
         driver.settle()?;
         let panel = driver.read()?;
         if let Some(walk) = walking_button(&panel, marker)? {
-            log(text("Walking to the fishing spot.", "Läuft zur Angelstelle.").into());
+            log(tr!("fishing-walking-to-the-fishing-spot").into());
             driver.tap(panel.size, walk)?;
             driver.settle()?;
             let deadline = Instant::now() + crate::timing::secs(65);
@@ -327,11 +319,7 @@ fn approach_spot(
                 }
                 driver.settle()?;
             }
-            return Err(text(
-                "The character did not reach the fishing spot.",
-                "Die Spielfigur hat die Angelstelle nicht erreicht.",
-            )
-            .into());
+            return Err(tr!("fishing-the-character-did-not-reach-the").into());
         }
         rejected.push(marker);
     }
@@ -509,11 +497,7 @@ fn fish_spot(
         }
         thread::sleep(Duration::from_millis(50));
     }
-    Err(text(
-        "Fishing did not return to a verified cast or catch screen.",
-        "Beim Angeln wurde keine eindeutige Auswurf- oder Fangansicht mehr erkannt.",
-    )
-    .into())
+    Err(tr!("fishing-fishing-did-not-return-to-a").into())
 }
 
 pub fn run(
@@ -537,7 +521,7 @@ pub fn run(
             return if index > 0 {
                 Ok(count)
             } else {
-                Err(text("No reachable fishing spot with attempts was found on the current map.", "Auf der aktuellen Karte wurde keine erreichbare Angelstelle mit freien Versuchen gefunden.").into())
+                Err(tr!("fishing-no-reachable-fishing-spot-with-attempts").into())
             };
         }
         report(ActivityEvent::ModeEntered(GameMode::Fishing));

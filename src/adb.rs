@@ -1,4 +1,4 @@
-use crate::localization::{format_text, text};
+use crate::localization::tr;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -128,17 +128,15 @@ pub enum AdbError {
 impl std::fmt::Display for AdbError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotInstalled(error) => formatter.write_str(&format_text!(
-                "Could not start ADB: {error}",
-                "ADB konnte nicht gestartet werden: {error}"
-            )),
-            Self::Failed(message) => formatter.write_str(&format_text!(
-                "ADB command failed: {message}",
-                "ADB-Befehl fehlgeschlagen: {message}"
-            )),
-            Self::InvalidOutput(message) => formatter.write_str(&format_text!(
-                "Could not read ADB output: {message}",
-                "ADB-Ausgabe konnte nicht gelesen werden: {message}"
+            Self::NotInstalled(error) => {
+                formatter.write_str(&tr!("adb-could-not-start-adb-error", error = error))
+            }
+            Self::Failed(message) => {
+                formatter.write_str(&tr!("adb-adb-command-failed-message", message = message))
+            }
+            Self::InvalidOutput(message) => formatter.write_str(&tr!(
+                "adb-could-not-read-adb-output-message",
+                message = message
             )),
         }
     }
@@ -377,11 +375,7 @@ pub(crate) fn disconnect_for_recovery_test(serial: &str) -> Result<(), AdbError>
 fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
     let Some((pids, status)) = stdout.rsplit_once("ADBHELPER_PID_EXIT:") else {
         return Err(AdbError::InvalidOutput(
-            text(
-                "The process check returned no status marker",
-                "Prozessprüfung ohne Statusmarker",
-            )
-            .into(),
+            tr!("adb-the-process-check-returned-no-status").into(),
         ));
     };
     let pids = pids.trim();
@@ -395,11 +389,7 @@ fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
         }
         "1" if pids.is_empty() => Ok(false),
         _ => Err(AdbError::InvalidOutput(
-            text(
-                "The process check could not confirm a game crash",
-                "Prozessprüfung nicht eindeutig; kein Spielabsturz bestätigt",
-            )
-            .into(),
+            tr!("adb-the-process-check-could-not-confirm").into(),
         )),
     }
 }

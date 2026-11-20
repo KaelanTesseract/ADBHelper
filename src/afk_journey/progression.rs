@@ -10,7 +10,7 @@ use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
     adb,
-    localization::{format_text, text},
+    localization::tr,
     routine::EmporiumSettings,
 };
 use image::{GrayImage, RgbImage};
@@ -193,11 +193,7 @@ pub fn run(
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, ActionError> {
     if state.pending {
-        return Err(text(
-            "The previous operation could not be confirmed. Check its result in the game.",
-            "Die letzte Änderung konnte nicht bestätigt werden. Bitte prüfe das Ergebnis im Spiel.",
-        )
-        .into());
+        return Err(tr!("progression-the-previous-operation-could-not-be").into());
     }
     report(ActivityEvent::ModeOpening(mode));
     let driver = Driver { serial, cancelled };
@@ -214,10 +210,9 @@ pub fn run(
         GameMode::Emporium => shop::purchase(&driver, &mut progress, settings, log)?,
         GameMode::SinglePull => shop::recruit(&driver, &mut progress, log)?,
         _ => {
-            return Err(format_text!(
-                "Invalid progression step {}",
-                "Ungültiger Fortschrittsschritt {}",
-                mode.label()
+            return Err(tr!(
+                "progression-invalid-progression-step-label",
+                label = mode.label()
             )
             .into())
         }

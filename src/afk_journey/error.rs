@@ -4,7 +4,7 @@
 //! translated message. Signals the recovery loop acts on have their own
 //! variant; every other failure keeps its readable text in `Message`.
 
-use crate::localization::text;
+use crate::localization::tr;
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,15 +28,9 @@ impl ActionError {
     /// The text shown to the user, in the selected language.
     pub fn as_text(&self) -> &str {
         match self {
-            Self::Cancelled => text("Cancelled by user.", "Vom Benutzer abgebrochen."),
-            Self::BattleResultTimeout => text(
-                "No battle result appeared before the time limit.",
-                "Vor Ablauf des Zeitlimits erschien kein Kampfergebnis.",
-            ),
-            Self::GameCrashed => text(
-                "AFK Journey exited unexpectedly.",
-                "AFK Journey wurde unerwartet beendet.",
-            ),
+            Self::Cancelled => tr!("error-cancelled-by-user"),
+            Self::BattleResultTimeout => tr!("error-no-battle-result-appeared-before-the"),
+            Self::GameCrashed => tr!("error-afk-journey-exited-unexpectedly"),
             Self::Message(message) => message,
         }
     }

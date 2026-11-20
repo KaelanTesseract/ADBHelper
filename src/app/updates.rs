@@ -12,13 +12,7 @@ impl PlayerApp {
         self.last_update_check = Some(Instant::now());
         if self.update_requests.send(()).is_err() {
             self.update_checking = false;
-            self.update_error = Some(
-                text(
-                    "The update service is unavailable.",
-                    "Der Update-Dienst ist nicht verfügbar.",
-                )
-                .into(),
-            );
+            self.update_error = Some(tr!("app-updates-the-update-service-is-unavailable").into());
         }
     }
 
@@ -46,7 +40,7 @@ impl PlayerApp {
             card(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(notice);
-                    if ui.small_button(text("Close", "Schließen")).clicked() {
+                    if ui.small_button(tr!("app-action-settings-close")).clicked() {
                         self.update_notice = None;
                     }
                 });
@@ -101,26 +95,24 @@ impl PlayerApp {
                 ui.set_width((context.content_rect().width() - 64.0).clamp(260.0, 560.0));
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(format_text!(
-                            "Update {} available",
-                            "Update {} verfügbar",
-                            release.version
+                        egui::RichText::new(tr!(
+                            "app-updates-update-version-available",
+                            version = release.version
                         ))
                         .color(ColorTokens::GLOW),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(text("Close", "Schließen")).clicked() {
+                        if ui.button(tr!("app-action-settings-close")).clicked() {
                             close = true;
                         }
                     });
                 });
-                ui.label(format_text!(
-                    "Installed: {} · New: {}",
-                    "Installiert: {} · Neu: {}",
-                    updater::VERSION,
-                    release.version
+                ui.label(tr!(
+                    "app-updates-installed-version-new-version2",
+                    version = updater::VERSION,
+                    version2 = release.version
                 ));
-                ui.strong(text("Patch notes", "Patchnotes"));
+                ui.strong(tr!("app-updates-patch-notes"));
                 egui::ScrollArea::vertical()
                     .id_salt("update-patchnotes")
                     .max_height((context.content_rect().height() - 260.0).clamp(80.0, 360.0))
@@ -144,17 +136,11 @@ impl PlayerApp {
                                         );
                                     }
                                     Some((_, ArtworkState::Loading)) => {
-                                        ui.small(text(
-                                            "Loading release graphic …",
-                                            "Release-Grafik wird geladen …",
-                                        ));
+                                        ui.small(tr!("app-updates-loading-release-graphic"));
                                     }
                                     _ => {
                                         ui.hyperlink_to(
-                                            text(
-                                                "View release graphic on GitHub",
-                                                "Release-Grafik auf GitHub ansehen",
-                                            ),
+                                            tr!("app-updates-view-release-graphic-on-github"),
                                             &release.url,
                                         );
                                     }
@@ -175,41 +161,27 @@ impl PlayerApp {
                     if ui
                         .add_enabled(
                             !self.busy,
-                            primary_button(text(
-                                "Download and install",
-                                "Herunterladen und installieren",
-                            )),
+                            primary_button(tr!("app-updates-download-and-install")),
                         )
                         .clicked()
                     {
                         self.install_update();
                     }
-                    ui.hyperlink_to(
-                        text("Release on GitHub", "Release auf GitHub"),
-                        &release.url,
-                    );
+                    ui.hyperlink_to(tr!("app-updates-release-on-github"), &release.url);
                 });
-                ui.small(text(
-                    "ADBHelper will restart automatically after installation.",
-                    "Nach der Installation startet ADBHelper automatisch neu.",
+                ui.small(tr!(
+                    "app-updates-adbhelper-will-restart-automatically-after-installation"
                 ));
                 if let Some(percent) = self.update_progress {
                     ui.add(egui::ProgressBar::new(f32::from(percent) / 100.0).text(
                         if percent == 100 {
-                            text(
-                                "Verifying and preparing the update …",
-                                "Update wird geprüft und vorbereitet …",
-                            )
-                            .into()
+                            tr!("app-updates-verifying-and-preparing-the-update").into()
                         } else {
-                            format_text!("Download: {percent}%", "Download: {percent} %")
+                            tr!("app-updates-download-percent", percent = percent)
                         },
                     ));
                 } else if self.busy {
-                    ui.small(text(
-                        "The update can be installed after the current action finishes.",
-                        "Das Update kann nach dem laufenden Vorgang installiert werden.",
-                    ));
+                    ui.small(tr!("app-updates-the-update-can-be-installed-after"));
                 }
                 if let Some(error) = &self.update_error {
                     ui.add(egui::Label::new(error).wrap());
@@ -230,15 +202,15 @@ pub(super) fn update_icon(ui: &mut egui::Ui, version: &str) -> egui::Response {
             egui::vec2(32.0, GeometryTokens::TITLEBAR_HEIGHT),
             egui::Button::new("").frame(false),
         )
-        .on_hover_text(format_text!(
-            "Update {version} available – View patch notes",
-            "Update {version} verfügbar – Patchnotes anzeigen"
+        .on_hover_text(tr!(
+            "app-updates-update-version-available-view-patch-notes",
+            version = version
         ));
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::Role::Button,
             true,
-            format_text!("Update {version} available", "Update {version} verfügbar"),
+            tr!("app-updates-update-version-available", version = version),
         )
     });
     let color = if response.hovered() {

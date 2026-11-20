@@ -18,7 +18,7 @@ impl PlayerApp {
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = SpaceTokens::SM;
-                    ui.heading(egui::RichText::new(text("Actions", "Aktionen")).color(ColorTokens::TEXT_PRIMARY));
+                    ui.heading(egui::RichText::new(tr!("app-dashboard-actions")).color(ColorTokens::TEXT_PRIMARY));
                     ui.add_space(SpaceTokens::SM);
                     egui::ScrollArea::vertical()
                         .id_salt("dashboard-actions")
@@ -31,7 +31,7 @@ impl PlayerApp {
                                 && self.stage_cancel.is_some();
                             design_system::state_card(ui, active, |ui| {
                                 self.show_action_header(ui, StageAction::AfkStages, active);
-                                ui.label(text("Push selected stages", "Ausgewählte Stages pushen"));
+                                ui.label(tr!("app-dashboard-push-selected-stages"));
                                 ui.add_space(SpaceTokens::SM);
                                 ui.add_enabled_ui(!self.busy, |ui| {
                                     ui.spacing_mut().interact_size.y = 20.0;
@@ -39,17 +39,17 @@ impl PlayerApp {
                                         design_system::active_checkbox(
                                             ui,
                                             &mut self.stage_selection.season,
-                                            text("Season Stages", "Season-Stages"),
+                                            tr!("app-action-settings-season-stages"),
                                         );
                                         design_system::active_checkbox(
                                             ui,
                                             &mut self.stage_selection.normal,
-                                            text("Normal Stages", "Normale Stages"),
+                                            tr!("app-action-settings-normal-stages"),
                                         );
                                     });
                                 });
                                 if self.stage_selection.season && self.stage_selection.normal {
-                                    ui.small(text("Season Stages first", "Zuerst Season, dann Normal"));
+                                    ui.small(tr!("app-dashboard-season-stages-first"));
                                 }
                                 ui.add_space(SpaceTokens::SM);
                                 ui.separator();
@@ -59,7 +59,7 @@ impl PlayerApp {
                                     !self.busy
                                         && (self.stage_selection.season
                                             || self.stage_selection.normal),
-                                    primary_button(text("Start", "Starten")),
+                                    primary_button(tr!("app-dashboard-start")),
                                 )
                                 .clicked()
                             {
@@ -69,7 +69,7 @@ impl PlayerApp {
                                 let cancel = cancel.clone();
                                 if ui.add(design_system::stop_button("Stop")).clicked() {
                                     cancel.store(true, Ordering::Relaxed);
-                                    self.log(text("Stop requested for the AFK Stages run.", "Stop für den gesamten AFK-Stages-Lauf angefordert."));
+                                    self.log(tr!("app-dashboard-stop-requested-for-the-afk-stages"));
                                 }
                             }
                         });
@@ -95,17 +95,15 @@ impl PlayerApp {
                                     StageAction::SeasonLegendTrial,
                                     legend_active,
                                 );
-                                ui.label(text("Push available faction towers", "Verfügbare Fraktionstürme pushen"));
-                                ui.small(format_text!("{} towers selected", "{} Türme ausgewählt",
-                                    self.tower_selection.selected().len()
-                                ));
+                                ui.label(tr!("app-dashboard-push-available-faction-towers"));
+                                ui.small(tr!("app-dashboard-selected-towers-selected", selected = self.tower_selection.selected().len()));
                                 ui.add_space(SpaceTokens::SM);
                                 ui.horizontal(|ui| {
                                     if ui
                                         .add_enabled(
                                             !self.busy
                                                 && !self.tower_selection.selected().is_empty(),
-                                            primary_button(text("Start", "Starten")),
+                                            primary_button(tr!("app-dashboard-start")),
                                         )
                                         .clicked()
                                     {
@@ -117,7 +115,7 @@ impl PlayerApp {
                                             {
                                                 cancel.store(true, Ordering::Relaxed);
                                                 self.log(
-                                            text("Stop requested for the Legend Trial run.", "Stop für den gesamten Legend-Trial-Lauf angefordert."),
+                                            tr!("app-dashboard-stop-requested-for-the-legend-trial"),
                                         );
                                             }
                                         }
@@ -145,11 +143,11 @@ impl PlayerApp {
                                     StageAction::UnionCampaign,
                                     union_active,
                                 );
-                                ui.label(text("Push guild floors", "Gilden-Etagen pushen"));
+                                ui.label(tr!("app-dashboard-push-guild-floors"));
                                 ui.add_space(SpaceTokens::SM);
                                 ui.horizontal(|ui| {
                                     if ui
-                                        .add_enabled(!self.busy, primary_button(text("Start", "Starten")))
+                                        .add_enabled(!self.busy, primary_button(tr!("app-dashboard-start")))
                                         .clicked()
                                     {
                                         self.start_action(StageAction::UnionCampaign);
@@ -160,7 +158,7 @@ impl PlayerApp {
                                             {
                                                 cancel.store(true, Ordering::Relaxed);
                                                 self.log(
-                                                    text("Stop requested for Union Campaign.", "Stop für die Union Campaign angefordert."),
+                                                    tr!("app-dashboard-stop-requested-for-union-campaign"),
                                                 );
                                             }
                                         }
@@ -183,11 +181,11 @@ impl PlayerApp {
                                 && self.stage_cancel.is_some();
                             design_system::state_card(ui, dura_active, |ui| {
                                 self.show_action_header(ui, StageAction::DurasTrials, dura_active);
-                                ui.label(text("Push stages · Sweep when available", "Stufen pushen · Sweep bei Verfügbarkeit"));
+                                ui.label(tr!("app-dashboard-push-stages-sweep-when-available"));
                                 ui.add_space(SpaceTokens::SM);
                                 ui.horizontal(|ui| {
                                     if ui
-                                        .add_enabled(!self.busy, primary_button(text("Start", "Starten")))
+                                        .add_enabled(!self.busy, primary_button(tr!("app-dashboard-start")))
                                         .clicked()
                                     {
                                         self.start_action(StageAction::DurasTrials);
@@ -197,7 +195,7 @@ impl PlayerApp {
                                             if ui.add(design_system::stop_button("Stop")).clicked()
                                             {
                                                 cancel.store(true, Ordering::Relaxed);
-                                                self.log(text("Stop requested for Dura’s Trials.", "Stop für Dura’s Trials angefordert."));
+                                                self.log(tr!("app-dashboard-stop-requested-for-dura-s-trials"));
                                             }
                                         }
                                     }
@@ -216,21 +214,21 @@ impl PlayerApp {
                             });
                             ui.add_space(SpaceTokens::MD);
                             let dream_description = if self.dream_battle_limit == 1 {
-                                text("Up to one battle per run", "Maximal ein Kampf pro Lauf").to_owned()
+                                tr!("app-dashboard-up-to-one-battle-per-run").to_owned()
                             } else {
-                                format_text!("Up to {} battles per run", "Bis zu {} Kämpfe pro Lauf", self.dream_battle_limit)
+                                tr!("app-dashboard-up-to-dream-battle-limit-battles", dream_battle_limit = self.dream_battle_limit)
                             };
                             self.show_battle_card(ui, StageAction::DreamRealm, &dream_description);
                             ui.add_space(SpaceTokens::MD);
-                            self.show_battle_card(ui, StageAction::Arena, text("Play daily Arena battles", "Tägliche Arena-Kämpfe spielen"));
+                            self.show_battle_card(ui, StageAction::Arena, tr!("app-dashboard-play-daily-arena-battles"));
                             ui.add_space(SpaceTokens::MD);
-                            self.show_battle_card(ui, StageAction::SupremeArena, text("Play daily Supreme Arena battles", "Tägliche Supreme-Arena-Kämpfe spielen"));
+                            self.show_battle_card(ui, StageAction::SupremeArena, tr!("app-dashboard-play-daily-supreme-arena-battles"));
                             ui.add_space(SpaceTokens::MD);
-                            self.show_battle_card(ui, StageAction::HeroScan, text("Export your hero roster for AFKJ Tracker", "Heldenkader für AFKJ Tracker exportieren"));
+                            self.show_battle_card(ui, StageAction::HeroScan, tr!("app-dashboard-export-your-hero-roster-for-afkj"));
                             ui.add_space(SpaceTokens::MD);
-                            self.show_battle_card(ui, StageAction::GuildScan, text("Export guild activity and rankings", "Gildenaktivität und Ranglisten exportieren"));
+                            self.show_battle_card(ui, StageAction::GuildScan, tr!("app-dashboard-export-guild-activity-and-rankings"));
                             ui.add_space(SpaceTokens::MD);
-                            self.show_battle_card(ui, StageAction::Fishing, text("Walk to fishing spots and fish", "Angelstellen anlaufen und angeln"));
+                            self.show_battle_card(ui, StageAction::Fishing, tr!("app-dashboard-walk-to-fishing-spots-and-fish"));
                         });
                 },
             );
@@ -250,13 +248,13 @@ impl PlayerApp {
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = SpaceTokens::SM;
-                    ui.heading(egui::RichText::new(text("Activity", "Aktivität")).color(ColorTokens::TEXT_PRIMARY));
+                    ui.heading(egui::RichText::new(tr!("app-dashboard-activity")).color(ColorTokens::TEXT_PRIMARY));
                     ui.add_space(SpaceTokens::SM);
                     card(ui, |ui| {
                         ui.small(if self.activity.is_running() {
-                            text("CURRENT GAME MODE", "AKTUELLER SPIELMODUS")
+                            tr!("app-dashboard-current-game-mode")
                         } else {
-                            text("LAST GAME MODE", "LETZTER SPIELMODUS")
+                            tr!("app-dashboard-last-game-mode")
                         });
                         match self.activity.current_mode {
                             Some(mode) => {
@@ -267,13 +265,13 @@ impl PlayerApp {
                                 );
                             }
                             None if self.activity.is_running() => {
-                                ui.label(text("Opening game mode …", "Spielmodus wird geöffnet …"));
+                                ui.label(tr!("app-dashboard-opening-game-mode"));
                                 if let Some(target) = self.activity.target {
-                                    ui.small(format_text!("Target: {}", "Ziel: {}", target.label()));
+                                    ui.small(tr!("app-dashboard-target-label", label = target.label()));
                                 }
                             }
                             None => {
-                                ui.label(text("No mode started yet", "Noch kein Modus gestartet"));
+                                ui.label(tr!("app-dashboard-no-mode-started-yet"));
                             }
                         }
                     });
@@ -297,31 +295,31 @@ impl PlayerApp {
                             ui.horizontal(|ui| {
                                 if mode.is_collection() {
                                     let label = match mode {
-                                        GameMode::CollectAffinity => text("HEROES VISITED", "HELDEN BESUCHT"),
-                                        GameMode::LevelUpHeroes => text("LEVELS GAINED", "STUFEN GEWONNEN"),
-                                        GameMode::EquipNewEquipment => text("CLASSES EQUIPPED", "KLASSEN AUSGERÜSTET"),
-                                        GameMode::Emporium => text("PURCHASES", "KÄUFE"),
-                                        GameMode::SinglePull => text("RECRUITS", "REKRUTIERUNGEN"),
-                                        GameMode::EssenceSwap => text("SWAPS", "TAUSCHE"),
-                                        GameMode::HeroScan => text("HEROES SCANNED", "HELDEN ERFASST"),
-                                        GameMode::GuildScan => text("ROWS EXPORTED", "ZEILEN EXPORTIERT"),
-                                        GameMode::Fishing => text("CAUGHT", "GEFANGEN"),
-                                        _ => text("COLLECTED", "ABGEHOLT"),
+                                        GameMode::CollectAffinity => tr!("app-dashboard-heroes-visited"),
+                                        GameMode::LevelUpHeroes => tr!("app-dashboard-levels-gained"),
+                                        GameMode::EquipNewEquipment => tr!("app-dashboard-classes-equipped"),
+                                        GameMode::Emporium => tr!("app-dashboard-purchases"),
+                                        GameMode::SinglePull => tr!("app-dashboard-recruits"),
+                                        GameMode::EssenceSwap => tr!("app-dashboard-swaps"),
+                                        GameMode::HeroScan => tr!("app-dashboard-heroes-scanned"),
+                                        GameMode::GuildScan => tr!("app-dashboard-rows-exported"),
+                                        GameMode::Fishing => tr!("app-dashboard-caught"),
+                                        _ => tr!("app-dashboard-collected"),
                                     };
                                     progress_metric(ui, label, stats.collected);
                                     return;
                                 }
-                                progress_metric(ui, text("ATTEMPTS", "VERSUCHE"), stats.attempts);
+                                progress_metric(ui, tr!("app-dashboard-attempts"), stats.attempts);
                                 ui.add_space(SpaceTokens::MD);
                                 if *mode == GameMode::DreamRealm {
-                                    progress_metric(ui, text("COMPLETED", "ABGESCHLOSSEN"), stats.scored);
+                                    progress_metric(ui, tr!("app-dashboard-completed"), stats.scored);
                                     ui.add_space(SpaceTokens::SM);
-                                    progress_metric(ui, text("COLLECTED", "ABGEHOLT"), stats.collected);
+                                    progress_metric(ui, tr!("app-dashboard-collected"), stats.collected);
                                     return;
                                 }
                                 progress_metric(
                                     ui,
-                                    if mode.is_pvp() { text("WINS", "SIEGE") } else { text("CLEARED", "GECLEART") },
+                                    if mode.is_pvp() { tr!("app-dashboard-wins") } else { tr!("app-dashboard-cleared") },
                                     if mode.is_pvp() {
                                         stats.wins
                                     } else {
@@ -357,7 +355,7 @@ impl PlayerApp {
             ui.add_space(SpaceTokens::SM);
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!self.busy, primary_button(text("Start", "Starten")))
+                    .add_enabled(!self.busy, primary_button(tr!("app-dashboard-start")))
                     .clicked()
                 {
                     self.start_action(action);
@@ -366,10 +364,9 @@ impl PlayerApp {
                     if let Some(cancel) = self.stage_cancel.clone() {
                         if ui.add(design_system::stop_button("Stop")).clicked() {
                             cancel.store(true, Ordering::Relaxed);
-                            self.log(format_text!(
-                                "Stop requested for {}.",
-                                "Stop für {} angefordert.",
-                                action.label()
+                            self.log(tr!(
+                                "app-dashboard-stop-requested-for-label",
+                                label = action.label()
                             ));
                         }
                     }
@@ -381,7 +378,7 @@ impl PlayerApp {
                 .filter(|(owner, _)| *owner == action)
             {
                 if ui
-                    .small_button(text("Copy export path", "Exportpfad kopieren"))
+                    .small_button(tr!("app-dashboard-copy-export-path"))
                     .on_hover_text(path.display().to_string())
                     .clicked()
                 {
@@ -411,19 +408,17 @@ impl PlayerApp {
             self.show_action_header(ui, StageAction::Daily, active);
             if let Some(index) = self.daily_step.filter(|_| active) {
                 if let Some(step) = self.daily_routine.steps.get(index) {
-                    ui.label(format_text!(
-                        "Step {}/{} · {}",
-                        "Schritt {}/{} · {}",
-                        index + 1,
-                        self.daily_routine.steps.len(),
-                        step.label()
+                    ui.label(tr!(
+                        "app-dashboard-step-index-steps-label",
+                        index = index + 1,
+                        steps = self.daily_routine.steps.len(),
+                        label = step.label()
                     ));
                 }
             } else {
-                ui.label(format_text!(
-                    "{} steps · Your daily routine",
-                    "{} Schritte · Deine tägliche Routine",
-                    self.daily_routine.steps.len()
+                ui.label(tr!(
+                    "app-dashboard-steps-steps-your-daily-routine",
+                    steps = self.daily_routine.steps.len()
                 ));
             }
             ui.add_space(SpaceTokens::SM);
@@ -431,7 +426,7 @@ impl PlayerApp {
                 if ui
                     .add_enabled(
                         !self.busy && !self.daily_routine.steps.is_empty(),
-                        primary_button(text("Start", "Starten")),
+                        primary_button(tr!("app-dashboard-start")),
                     )
                     .clicked()
                 {
@@ -479,9 +474,9 @@ impl PlayerApp {
                     status_badge(
                         ui,
                         if self.recovery_notice.is_some() {
-                            text("RECOVERING", "NEUSTART")
+                            tr!("app-dashboard-recovering")
                         } else {
-                            text("RUNNING", "LÄUFT")
+                            tr!("app-dashboard-running")
                         },
                         true,
                     );

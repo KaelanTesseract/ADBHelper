@@ -3,7 +3,7 @@ use crate::afk_journey::error::ActionError;
 mod guild;
 mod hero;
 
-use super::{text, Driver, Screen};
+use super::{tr, Driver, Screen};
 use crate::activity::{ActivityEvent, GameMode};
 use crate::afk_journey::vision;
 use serde::Serialize;

@@ -2,7 +2,7 @@
 
 use super::{get_match, screenshot, Match, Rect, MATCH_THRESHOLD};
 use crate::afk_journey::error::ActionError;
-use crate::localization::{format_text, text};
+use crate::localization::tr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,10 +16,9 @@ pub(in crate::afk_journey) fn wait_for_match(
 ) -> Result<(String, Match, (u32, u32)), ActionError> {
     poll_for_match(serial, paths, roi, timeout, cancelled)?
         .ok_or_else(|| {
-            format_text!(
-                "Timed out waiting for {}.",
-                "Zeitlimit beim Warten auf {} erreicht.",
-                paths.join(text(" or ", " oder "))
+            tr!(
+                "vision-wait-timed-out-waiting-for-or",
+                or = paths.join(tr!("vision-wait-or"))
             )
         })
         .map_err(ActionError::from)

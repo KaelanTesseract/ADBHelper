@@ -1,4 +1,4 @@
-use crate::localization::{format_text, text};
+use crate::localization::tr;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -89,8 +89,8 @@ impl LegendTower {
 impl GameMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::SeasonAfkStages => text("Season AFK Stages", "Season-AFK-Stages"),
-            Self::AfkStages => text("AFK Stages", "AFK-Stages"),
+            Self::SeasonAfkStages => tr!("activity-season-afk-stages"),
+            Self::AfkStages => tr!("activity-afk-stages"),
             Self::SeasonLegendTrial(LegendTower::Lightbearer) => "Legend Trial · Lightbearer",
             Self::SeasonLegendTrial(LegendTower::Wilder) => "Legend Trial · Wilder",
             Self::SeasonLegendTrial(LegendTower::Graveborn) => "Legend Trial · Graveborn",
@@ -100,35 +100,32 @@ impl GameMode {
             Self::Arena => "Arena",
             Self::SupremeArena => "Supreme Arena",
             Self::DreamRealm => "Dream Realm",
-            Self::AfkRewards => text("AFK rewards", "AFK-Belohnungen"),
-            Self::FreeHourglasses => text("Free hourglasses", "Kostenlose Sanduhren"),
-            Self::DiamondHourglasses => text("Diamond hourglasses", "Diamanten-Sanduhren"),
-            Self::StageRewards => text("AFK stage rewards", "AFK-Stufenbelohnungen"),
-            Self::FriendRewards => text("Friend rewards", "Freundesbelohnungen"),
-            Self::MailRewards => text("Mail rewards", "Postbelohnungen"),
-            Self::BattlePassRewards => text("Battle Pass rewards", "Battle-Pass-Belohnungen"),
-            Self::DailyQuestRewards => text("Daily Quest rewards", "Daily-Questbelohnungen"),
-            Self::GuildQuestRewards => text("Guild Quest rewards", "Gildenquestbelohnungen"),
-            Self::CollectAffinity => text("Collect Affinity", "Affinität sammeln"),
-            Self::LevelUpHeroes => text("Level Up All Heroes", "Alle Helden aufwerten"),
-            Self::EquipNewEquipment => text("Equip New Equipment", "Neue Ausrüstung anlegen"),
-            Self::Emporium => text("Emporium purchases", "Emporium-Einkäufe"),
-            Self::SinglePull => text(
-                "Noble Tavern · Single Pull",
-                "Noble Tavern · Einzelrekrutierung",
-            ),
-            Self::EssenceSwap => text("Essence Swap", "Essenzen tauschen"),
+            Self::AfkRewards => tr!("activity-afk-rewards"),
+            Self::FreeHourglasses => tr!("activity-free-hourglasses"),
+            Self::DiamondHourglasses => tr!("activity-diamond-hourglasses"),
+            Self::StageRewards => tr!("activity-afk-stage-rewards"),
+            Self::FriendRewards => tr!("activity-friend-rewards"),
+            Self::MailRewards => tr!("activity-mail-rewards"),
+            Self::BattlePassRewards => tr!("activity-battle-pass-rewards"),
+            Self::DailyQuestRewards => tr!("activity-daily-quest-rewards"),
+            Self::GuildQuestRewards => tr!("activity-guild-quest-rewards"),
+            Self::CollectAffinity => tr!("activity-collect-affinity"),
+            Self::LevelUpHeroes => tr!("activity-level-up-all-heroes"),
+            Self::EquipNewEquipment => tr!("activity-equip-new-equipment"),
+            Self::Emporium => tr!("activity-emporium-purchases"),
+            Self::SinglePull => tr!("activity-noble-tavern-single-pull"),
+            Self::EssenceSwap => tr!("activity-essence-swap"),
             Self::HeroScan => "AFKJ Tracker Scan",
             Self::GuildScan => "Guild Manager Scan",
-            Self::Fishing => text("Fishing", "Angeln"),
+            Self::Fishing => tr!("activity-fishing"),
             Self::SeasonRankingRewards(RankingScope::District) => {
-                text("Season rewards · District", "Season-Belohnungen · District")
+                tr!("activity-season-rewards-district")
             }
             Self::SeasonRankingRewards(RankingScope::Server) => {
-                text("Season rewards · Server", "Season-Belohnungen · Server")
+                tr!("activity-season-rewards-server")
             }
             Self::SeasonRankingRewards(RankingScope::Guild) => {
-                text("Season rewards · Guild", "Season-Belohnungen · Guild")
+                tr!("activity-season-rewards-guild")
             }
         }
     }
@@ -207,38 +204,18 @@ pub enum HourglassStop {
 impl HourglassStop {
     pub fn message(self) -> String {
         match self {
-            Self::Disabled => text(
-                "The purchase count or budget is set to zero.",
-                "Kaufanzahl oder Budget steht auf null.",
-            ),
-            Self::FreeAvailable => text(
-                "Free Instant AFK attempts are still available.",
-                "Es sind noch kostenlose Instant-AFK-Versuche verfügbar.",
-            ),
-            Self::Exhausted => text(
-                "No Instant AFK attempts remain.",
-                "Keine Instant-AFK-Versuche mehr verfügbar.",
-            ),
-            Self::LimitReached => text(
-                "The daily hourglass count or diamond budget has been reached.",
-                "Die Tagesanzahl der Sanduhren oder das Diamantenbudget ist erreicht.",
-            ),
-            Self::OfferUnreadable => text(
-                "The Instant AFK offer could not be verified after retrying.",
-                "Das Instant-AFK-Angebot konnte auch beim zweiten Versuch nicht bestätigt werden.",
-            ),
-            Self::BalanceUnreadable => text(
-                "The diamond balance could not be verified after retrying.",
-                "Der Diamantenbestand konnte auch beim zweiten Versuch nicht bestätigt werden.",
-            ),
-            Self::OfferChanged => text(
-                "The Instant AFK offer changed during verification.",
-                "Das Instant-AFK-Angebot hat sich während der Prüfung verändert.",
-            ),
+            Self::Disabled => tr!("activity-the-purchase-count-or-budget-is"),
+            Self::FreeAvailable => tr!("activity-free-instant-afk-attempts-are-still"),
+            Self::Exhausted => tr!("activity-no-instant-afk-attempts-remain"),
+            Self::LimitReached => tr!("activity-the-daily-hourglass-count-or-diamond"),
+            Self::OfferUnreadable => tr!("activity-the-instant-afk-offer-could-not"),
+            Self::BalanceUnreadable => tr!("activity-the-diamond-balance-could-not-be"),
+            Self::OfferChanged => tr!("activity-the-instant-afk-offer-changed-during"),
             Self::InsufficientDiamonds { price, balance } => {
-                return format_text!(
-                    "Insufficient diamonds. Offer: {price} · balance: {balance}.",
-                    "Zu wenige Diamanten. Preis {price} · Bestand {balance}."
+                return tr!(
+                    "activity-insufficient-diamonds-offer-price-balance-balance",
+                    price = price,
+                    balance = balance
                 )
             }
         }

@@ -1,4 +1,4 @@
-use super::{client, crop, text, ActivityEvent, Driver, GameMode, Screen};
+use super::{client, crop, tr, ActivityEvent, Driver, GameMode, Screen};
 use crate::afk_journey::error::ActionError;
 use crate::afk_journey::progression::hall;
 use crate::afk_journey::text_match::{ascii_key, ascii_key_with};
@@ -202,17 +202,14 @@ pub(super) fn scan(
     }
     result?;
     if !finished || unresolved > 0 {
-        return Err(crate::localization::format_text!(
-            "Partial roster scan. {unresolved} profiles or weapon levels could not be verified. Review the export before importing.",
-            "Teilweiser Kaderscan. {unresolved} Profile oder Waffenstufen konnten nicht bestätigt werden. Prüfe den Export vor dem Import."
-        ).into());
-    }
-    if count == 0 {
-        return Err(text(
-            "No heroes could be exported.",
-            "Es konnten keine Helden exportiert werden.",
+        return Err(tr!(
+            "scanner-hero-partial-roster-scan-unresolved-profiles-or",
+            unresolved = unresolved
         )
         .into());
+    }
+    if count == 0 {
+        return Err(tr!("scanner-hero-no-heroes-could-be-exported").into());
     }
     Ok(count)
 }

@@ -1,7 +1,7 @@
 //! Template images embedded in the executable, decoded once and cached.
 
 use crate::afk_journey::error::ActionError;
-use crate::localization::{format_text, text};
+use crate::localization::tr;
 use image::GrayImage;
 use std::sync::{Mutex, OnceLock};
 
@@ -13,9 +13,9 @@ mod generated {
 fn embedded_template(relative_path: &str) -> Result<&'static [u8], ActionError> {
     generated::embedded(relative_path)
         .ok_or_else(|| {
-            format_text!(
-                "Template is not embedded in this build: {relative_path}",
-                "Die Vorlage fehlt in dieser Version: {relative_path}"
+            tr!(
+                "vision-templates-template-is-not-embedded-in-this",
+                relative_path = relative_path
             )
         })
         .map_err(ActionError::from)
@@ -26,13 +26,7 @@ pub(in crate::afk_journey) fn load_template(relative_path: &str) -> Result<GrayI
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     if let Some(image) = cache
         .lock()
-        .map_err(|_| {
-            text(
-                "template cache is unavailable",
-                "Der Vorlagenspeicher ist nicht verfügbar",
-            )
-            .to_owned()
-        })?
+        .map_err(|_| tr!("vision-templates-template-cache-is-unavailable").to_owned())?
         .get(relative_path)
         .cloned()
     {
@@ -41,21 +35,16 @@ pub(in crate::afk_journey) fn load_template(relative_path: &str) -> Result<GrayI
 
     let image = image::load_from_memory(embedded_template(relative_path)?)
         .map_err(|error| {
-            format_text!(
-                "Could not decode template {relative_path}: {error}",
-                "Die Vorlage {relative_path} konnte nicht gelesen werden: {error}"
+            tr!(
+                "vision-templates-could-not-decode-template-relative-path",
+                relative_path = relative_path,
+                error = error
             )
         })?
         .to_luma8();
     cache
         .lock()
-        .map_err(|_| {
-            text(
-                "template cache is unavailable",
-                "Der Vorlagenspeicher ist nicht verfügbar",
-            )
-            .to_owned()
-        })?
+        .map_err(|_| tr!("vision-templates-template-cache-is-unavailable").to_owned())?
         .insert(relative_path.to_owned(), image.clone());
     Ok(image)
 }

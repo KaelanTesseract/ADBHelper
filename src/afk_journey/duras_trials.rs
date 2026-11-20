@@ -5,7 +5,7 @@ use crate::adb;
 use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::afk_journey::vision::Rect;
-use crate::localization::{format_text, text};
+use crate::localization::tr;
 use std::sync::atomic::AtomicBool;
 
 fn overview_region() -> Rect {
@@ -104,11 +104,7 @@ fn navigate(
                     0.78,
                 )? {
                     if coming_soon.center().1 < entry.center().1 {
-                        return Err(text(
-                            "Dura’s Trials is not unlocked yet (Coming Soon).",
-                            "Dura’s Trials sind noch nicht freigeschaltet (Coming Soon).",
-                        )
-                        .into());
+                        return Err(tr!("duras-trials-dura-s-trials-is-not-unlocked").into());
                     }
                 }
                 vision::tap_match(serial, entry, size)?;
@@ -144,11 +140,7 @@ fn navigate(
             }
         }
     }
-    Err(text(
-        "Could not open Dura’s Trials.",
-        "Dura’s Trials konnten nicht geöffnet werden.",
-    )
-    .into())
+    Err(tr!("duras-trials-could-not-open-dura-s-trials").into())
 }
 
 fn enabled_sweep_color(image: &image::RgbImage, rect: Rect) -> bool {
@@ -381,33 +373,17 @@ struct SweepPermit {
 fn confirm_sweep(first: &Snapshot, second: &Snapshot) -> Result<SweepPermit, ActionError> {
     for frame in [first, second] {
         if frame.action() != Some(TrialAction::Sweep) {
-            return Err(text(
-                "Could not verify the Sweep button on the Dura stage screen.",
-                "Die Sweep-Schaltfläche in der Dura-Stufenansicht konnte nicht bestätigt werden.",
-            )
-            .into());
+            return Err(tr!("duras-trials-could-not-verify-the-sweep-button").into());
         }
         let Some(remaining @ 0..=99) = frame.daily_remaining else {
-            return Err(text(
-                "Could not read the remaining daily attempts for Sweep.",
-                "Die verbleibenden täglichen Sweep-Versuche sind unlesbar.",
-            )
-            .into());
+            return Err(tr!("duras-trials-could-not-read-the-remaining-daily").into());
         };
         if remaining > 0 && !frame.sweep_enabled {
-            return Err(text(
-                "The Sweep button is disabled.",
-                "Die Sweep-Schaltfläche ist deaktiviert.",
-            )
-            .into());
+            return Err(tr!("duras-trials-the-sweep-button-is-disabled").into());
         }
     }
     if first.daily_remaining != second.daily_remaining {
-        return Err(text(
-            "The number of daily attempts changed. Sweeps stopped.",
-            "Tagesversuche haben sich geändert; kein weiterer Sweep.",
-        )
-        .into());
+        return Err(tr!("duras-trials-the-number-of-daily-attempts-changed").into());
     }
     Ok(SweepPermit {
         daily_remaining: first.daily_remaining.unwrap(),
@@ -445,11 +421,7 @@ pub(super) fn ensure_formation(serial: &str, cancelled: &AtomicBool) -> Result<(
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "Could not reopen the Dura formation screen. Sweeps stopped.",
-        "Die Dura-Teamaufstellung konnte nicht wieder geöffnet werden. Es wird nicht gesweept.",
-    )
-    .into())
+    Err(tr!("duras-trials-could-not-reopen-the-dura-formation").into())
 }
 
 fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), ActionError> {
@@ -517,11 +489,7 @@ fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), ActionError
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "Could not verify that the Dura battle ended. Sweeps stopped.",
-        "Dura-Ergebnis nicht eindeutig abgeschlossen; kein Sweep.",
-    )
-    .into())
+    Err(tr!("duras-trials-could-not-verify-that-the-dura").into())
 }
 
 trait SweepDriver {
@@ -552,20 +520,12 @@ fn daily_sweeps(driver: &mut impl SweepDriver, budget: u32) -> Result<u32, Actio
             .min(budget - total);
         let remaining = driver.sweep(&permit, quantity)?;
         if remaining.checked_add(quantity) != Some(permit.daily_remaining) {
-            return Err(text(
-                "Could not verify the attempt spent on the sweep. Sweeps stopped.",
-                "Sweep-Verbrauch nicht eindeutig bestätigt; kein weiterer Sweep.",
-            )
-            .into());
+            return Err(tr!("duras-trials-could-not-verify-the-attempt-spent").into());
         }
         total += quantity;
         driver.report(quantity);
     }
-    Err(text(
-        "An unexpected number of daily Dura attempts was detected. Sweeps stopped.",
-        "Unerwartet viele tägliche Dura-Versuche; Sweep beendet.",
-    )
-    .into())
+    Err(tr!("duras-trials-an-unexpected-number-of-daily-dura").into())
 }
 
 struct AdbSweep<'a, P> {
@@ -600,11 +560,7 @@ fn validate_sweep_dialog(
                 cost: quantity,
             })
     {
-        return Err(text(
-            "Could not verify the quantity or daily-token cost in the Sweep dialog.",
-            "Sweep-Dialog: Menge oder Kosten in täglichen Versuchen nicht bestätigt.",
-        )
-        .into());
+        return Err(tr!("duras-trials-could-not-verify-the-quantity-or").into());
     }
     Ok(())
 }
@@ -876,22 +832,14 @@ fn wait_for_sweep_result(
                         return Ok(remaining);
                     }
                     if remaining > permit.daily_remaining {
-                        return Err(text(
-                            "The number of daily attempts changed. Sweeps stopped.",
-                            "Tagesversuche haben sich geändert; kein weiterer Sweep.",
-                        )
-                        .into());
+                        return Err(tr!("duras-trials-the-number-of-daily-attempts-changed").into());
                     }
                 }
             }
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "Could not verify the sweep cost. Sweeps stopped.",
-        "Kein bestätigter Sweep-Verbrauch erkannt; kein weiterer Sweep.",
-    )
-    .into())
+    Err(tr!("duras-trials-could-not-verify-the-sweep-cost").into())
 }
 
 impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
@@ -906,11 +854,7 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
         let frame = read_frame(self.serial, self.cancelled)?;
         let fresh = confirm_sweep(&frame.snapshot, &frame.snapshot)?;
         if fresh != *permit {
-            return Err(text(
-                "The number of daily attempts changed before Sweep.",
-                "Tagesversuche haben sich vor dem Sweep verändert.",
-            )
-            .into());
+            return Err(tr!("duras-trials-the-number-of-daily-attempts-changed-2").into());
         }
         let sweep = vision::find_template(
             &frame.gray,
@@ -923,7 +867,7 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
             },
             0.9,
         )?
-        .ok_or(text("Sweep button not found", "Sweep-Schaltfläche fehlt"))?;
+        .ok_or(tr!("duras-trials-sweep-button-not-found"))?;
         vision::ensure_not_cancelled(self.cancelled)?;
         vision::tap_match(self.serial, sweep, frame.size)?;
         vision::settle_cancellable(self.cancelled)?;
@@ -931,35 +875,26 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
             let mut after = read_frame(self.serial, self.cancelled)?;
             if let Some(remaining) = after.snapshot.daily_remaining {
                 if remaining != permit.daily_remaining {
-                    return Err(text(
-                        "The number of daily attempts changed. Sweeps stopped.",
-                        "Tagesversuche haben sich geändert; kein weiterer Sweep.",
-                    )
-                    .into());
+                    return Err(tr!("duras-trials-the-number-of-daily-attempts-changed").into());
                 }
             }
             if let Some((dialog, _)) = read_sweep_dialog(&after)? {
                 validate_sweep_dialog(&dialog, permit, 1)?;
                 for selected in 2..=quantity {
-                    let plus = find_sweep_plus(&after.gray)?.ok_or(text(
-                        "Could not verify the Sweep plus button.",
-                        "Die Plus-Schaltfläche für Sweeps wurde nicht eindeutig erkannt.",
-                    ))?;
+                    let plus = find_sweep_plus(&after.gray)?
+                        .ok_or(tr!("duras-trials-could-not-verify-the-sweep-plus"))?;
                     vision::ensure_not_cancelled(self.cancelled)?;
                     vision::tap_match(self.serial, plus, after.size)?;
                     vision::settle_cancellable(self.cancelled)?;
                     after = read_frame(self.serial, self.cancelled)?;
-                    let (dialog, _) = read_sweep_dialog(&after)?.ok_or(text(
-                        "The Sweep dialog changed while setting the quantity.",
-                        "Der Sweep-Dialog hat sich beim Einstellen der Menge verändert.",
-                    ))?;
+                    let (dialog, _) = read_sweep_dialog(&after)?
+                        .ok_or(tr!("duras-trials-the-sweep-dialog-changed-while-setting"))?;
                     validate_sweep_dialog(&dialog, permit, selected)?;
                 }
                 vision::settle_cancellable(self.cancelled)?;
                 let fresh = read_frame(self.serial, self.cancelled)?;
-                let (dialog, button) = read_sweep_dialog(&fresh)?.ok_or(text(
-                    "The sweep dialog changed before confirmation.",
-                    "Sweep-Dialog verändert; kein Verbrauch.",
+                let (dialog, button) = read_sweep_dialog(&fresh)?.ok_or(tr!(
+                    "duras-trials-the-sweep-dialog-changed-before-confirmation"
                 ))?;
                 validate_sweep_dialog(&dialog, permit, quantity)?;
                 vision::ensure_not_cancelled(self.cancelled)?;
@@ -974,19 +909,11 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
                     && line.y < 1400.0
                     && ["confirm", "bestätigen"].contains(&line.text.to_lowercase().as_str())
             }) {
-                return Err(text(
-                    "The sweep dialog was left open because its details could not be verified.",
-                    "Sweep-Dialog noch nicht eindeutig verifiziert; keine Bestätigung ausgeführt.",
-                )
-                .into());
+                return Err(tr!("duras-trials-the-sweep-dialog-was-left-open").into());
             }
             vision::settle_cancellable(self.cancelled)?;
         }
-        Err(text(
-            "The Sweep dialog could not be verified.",
-            "Der Sweep-Dialog konnte nicht bestätigt werden.",
-        )
-        .into())
+        Err(tr!("duras-trials-the-sweep-dialog-could-not-be").into())
     }
     fn report(&mut self, count: u32) {
         (self.progress)(ActivityEvent::Swept(GameMode::DurasTrials, count));
@@ -1044,19 +971,15 @@ fn run_with_budget(
                     },
                     budget,
                 )?;
-                log(format_text!(
-                    "Completed {count} daily Dura Sweeps.",
-                    "{count} tägliche Dura-Sweeps abgeschlossen."
+                log(tr!(
+                    "duras-trials-completed-count-daily-dura-sweeps",
+                    count = count
                 ));
                 return Ok(cleared);
             }
             Some(TrialAction::Sweep) => return Ok(cleared),
             None => {
-                return Err(text(
-                    "Could not verify the Battle or Sweep button on the Dura stage screen.",
-                    "Battle oder Sweep konnte in der Dura-Stufenansicht nicht eindeutig erkannt werden.",
-                )
-                .into());
+                return Err(tr!("duras-trials-could-not-verify-the-battle-or").into());
             }
         }
         ensure_formation(serial, cancelled)?;
@@ -1073,11 +996,7 @@ fn run_with_budget(
                 after_victory(serial, cancelled)?;
             }
             StageResult::FormationFailed | StageResult::FinalStage => {
-                log(text(
-                    "Dura team attempts are exhausted.",
-                    "Dura-Teamversuche ausgeschöpft.",
-                )
-                .into());
+                log(tr!("duras-trials-dura-team-attempts-are-exhausted").into());
                 return Ok(cleared);
             }
         }

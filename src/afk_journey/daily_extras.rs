@@ -6,7 +6,7 @@ use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode, HourglassStop},
     adb,
-    localization::{format_text, text},
+    localization::tr,
     routine::DiamondHourglassSettings,
 };
 use image::GrayImage;
@@ -214,11 +214,9 @@ fn finish_purchase(
     let Some(Receipt::Purchase { price }) = cursor.pending else {
         return Err("No pending hourglass purchase.".into());
     };
-    let confirmed = stable_paid_status(serial, cancelled, |status| confirms_purchase(price, status))?
-        .ok_or_else(|| text(
-            "The hourglass purchase could not be verified. Check Instant AFK before retrying.",
-            "Der Sanduhrenkauf konnte nicht bestätigt werden. Prüfe Instant AFK vor einem erneuten Versuch.",
-        ).to_owned())?;
+    let confirmed =
+        stable_paid_status(serial, cancelled, |status| confirms_purchase(price, status))?
+            .ok_or_else(|| tr!("daily-extras-the-hourglass-purchase-could-not-be").to_owned())?;
     cursor.pending = None;
     cursor.after_purchase = Some(confirmed.0);
     cursor.confirmed += 1;
@@ -430,11 +428,7 @@ fn finish_stage_claim(
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "The stage reward could not be confirmed. No further claim was attempted.",
-        "Die Stufenbelohnung konnte nicht bestätigt werden. Kein weiterer Abholversuch.",
-    )
-    .into())
+    Err(tr!("daily-extras-the-stage-reward-could-not-be").into())
 }
 
 fn run_stage_rewards(
@@ -452,7 +446,7 @@ fn run_stage_rewards(
             // A crash can discard the free reward overlay. Its receipt remains
             // uncounted; revisit the AFK page and check remaining rewards.
             cursor.pending = None;
-            log(text("An interrupted stage reward was not counted. Checking the remaining free rewards.", "Eine unterbrochene Stufenbelohnung wurde nicht gezählt. Die übrigen kostenlosen Belohnungen werden geprüft.").into());
+            log(tr!("daily-extras-an-interrupted-stage-reward-was-not").into());
         }
     }
     common::navigate_to_afk_stages(serial, cancelled, log)?;
@@ -461,11 +455,7 @@ fn run_stage_rewards(
         vision::ensure_not_cancelled(cancelled)?;
         let (screen, size) = vision::screenshot(serial)?;
         if !daily::page(&screen)? {
-            return Err(text(
-                "The AFK stage reward page could not be verified.",
-                "Die AFK-Stufenbelohnungsseite konnte nicht bestätigt werden.",
-            )
-            .into());
+            return Err(tr!("daily-extras-the-afk-stage-reward-page-could").into());
         }
         let target = stage_target(&ocr::recognize(&screen)?).unwrap_or((770, 500));
         // The original opens/claims here. Only probe once on a verified AFK
@@ -503,11 +493,7 @@ fn run_stage_rewards(
                         settled_page = 0;
                     }
                     if settled_page >= 3 {
-                        log(text(
-                            "No claimable AFK stage rewards found.",
-                            "Keine abholbaren AFK-Stufenbelohnungen gefunden.",
-                        )
-                        .into());
+                        log(tr!("daily-extras-no-claimable-afk-stage-rewards-found").into());
                         return Ok(cursor.confirmed);
                     }
                 }
@@ -515,20 +501,12 @@ fn run_stage_rewards(
             vision::settle_cancellable(cancelled)?;
         }
         if !claim_started {
-            return Err(text(
-                "The stage reward dialog was not recognized.",
-                "Der Stufenbelohnungsdialog wurde nicht erkannt.",
-            )
-            .into());
+            return Err(tr!("daily-extras-the-stage-reward-dialog-was-not").into());
         }
         finish_stage_claim(serial, cursor, cancelled, report)?;
         common::navigate_to_afk_stages(serial, cancelled, log)?;
     }
-    Err(text(
-        "Stage reward collection reached its safety limit.",
-        "Das Limit für Stufenbelohnungen wurde erreicht.",
-    )
-    .into())
+    Err(tr!("daily-extras-stage-reward-collection-reached-its-safety").into())
 }
 
 pub fn run(
@@ -552,11 +530,10 @@ pub fn run(
         _ => Err("Invalid collection mode.".into()),
     };
     if result.is_ok() {
-        log(format_text!(
-            "{} · {} collected.",
-            "{} · {} abgeholt.",
-            mode.label(),
-            cursor.confirmed
+        log(tr!(
+            "daily-label-confirmed-collected",
+            label = mode.label(),
+            confirmed = cursor.confirmed
         ));
     }
     result

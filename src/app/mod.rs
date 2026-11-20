@@ -28,7 +28,7 @@ use crate::design_system::{
     self, card, primary_button, status_badge, ColorTokens, GeometryTokens, SizeTokens, SpaceTokens,
     TypeTokens,
 };
-use crate::localization::{format_text, text, Language};
+use crate::localization::{tr, Language};
 use crate::routine::{Action as StageAction, DailyCategory, Routine};
 use crate::updater;
 use eframe::egui;
@@ -294,7 +294,7 @@ impl PlayerApp {
             updater::VERSION,
             std::env::consts::OS
         ));
-        app.log(text("AFK Journey · App started. Connect an Android device with ADB debugging enabled.", "AFK Journey · App gestartet. Verbinde ein Android-Gerät mit aktiviertem ADB-Debugging."));
+        app.log(tr!("app-afk-journey-app-started-connect-an"));
         app.refresh_devices();
         let update_sender = app.sender.clone();
         let update_context = context.egui_ctx.clone();
@@ -347,23 +347,18 @@ impl PlayerApp {
                         self.selected_serial = devices.first().map(|device| device.serial.clone());
                     }
                     if devices.is_empty() {
-                        self.log(text(
-                            "No authorized ADB devices found.",
-                            "Keine autorisierten ADB-Geräte gefunden.",
-                        ));
+                        self.log(tr!("app-no-authorized-adb-devices-found"));
                     } else {
-                        self.log(format_text!(
-                            "Found {} authorized ADB device(s).",
-                            "{} autorisierte(s) ADB-Gerät(e) gefunden.",
-                            devices.len()
+                        self.log(tr!(
+                            "app-found-devices-authorized-adb-device-s",
+                            devices = devices.len()
                         ));
                     }
                     self.devices = devices;
                 }
-                Event::Devices(Err(error)) => self.log(format_text!(
-                    "ADB device discovery failed: {error}",
-                    "ADB-Suche fehlgeschlagen: {error}"
-                )),
+                Event::Devices(Err(error)) => {
+                    self.log(tr!("app-adb-device-discovery-failed-error", error = error))
+                }
                 Event::Log(message) => self.log(message),
                 Event::RecoveryStatus(message) => {
                     self.log(&message);
@@ -371,9 +366,10 @@ impl PlayerApp {
                 }
                 Event::Activity(event) => {
                     if let ActivityEvent::InviteLetterOverBudget { price, budget } = event {
-                        let notice = format_text!(
-                            "Invite Letter skipped. Price {price} diamonds · budget {budget}.",
-                            "Invite Letter übersprungen. Preis {price} Diamanten · Budget {budget}."
+                        let notice = tr!(
+                            "app-invite-letter-skipped-price-price-diamonds",
+                            price = price,
+                            budget = budget
                         );
                         self.log(&notice);
                         self.daily_notice = Some(notice);
@@ -498,7 +494,7 @@ impl eframe::App for PlayerApp {
                             if nav_tab(
                                 ui,
                                 self.page == Page::Settings,
-                                text("Settings", "Einstellungen"),
+                                tr!("app-settings"),
                                 GeometryTokens::NAV_SETTINGS_WIDTH,
                             ) {
                                 self.page = Page::Settings;
@@ -534,9 +530,9 @@ impl eframe::App for PlayerApp {
                                         ui.colored_label(
                                             ColorTokens::TEXT_PRIMARY,
                                             if self.update_progress.is_some() {
-                                                text("Downloading update", "Update wird geladen")
+                                                tr!("app-downloading-update")
                                             } else {
-                                                text("Automation running", "Automation läuft")
+                                                tr!("app-automation-running")
                                             },
                                         );
                                         ui.add_space(SpaceTokens::SM);
@@ -544,10 +540,7 @@ impl eframe::App for PlayerApp {
                                     if let Some(serial) = &self.selected_serial {
                                         status_badge(
                                             ui,
-                                            &format_text!(
-                                                "CONNECTED · {serial}",
-                                                "VERBUNDEN · {serial}"
-                                            ),
+                                            &tr!("app-connected-serial", serial = serial),
                                             true,
                                         );
                                         ui.add_space(SpaceTokens::MD);

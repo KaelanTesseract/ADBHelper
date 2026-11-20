@@ -6,7 +6,7 @@ use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode, RankingScope},
     adb,
-    localization::{format_text, text},
+    localization::tr,
 };
 use image::{GrayImage, RgbImage};
 use std::{
@@ -339,11 +339,7 @@ fn rows(frame: &Frame) -> Result<Vec<Row>, ActionError> {
                 point: status_line.center(),
             });
         } else if status == Status::Claimable {
-            return Err(text(
-                "The ranking reward's stage could not be verified.",
-                "Die Stufe der Ranglistenbelohnung konnte nicht bestätigt werden.",
-            )
-            .into());
+            return Err(tr!("phase-rewards-the-ranking-reward-s-stage-could").into());
         }
     }
     Ok(result)
@@ -424,11 +420,7 @@ fn wait_ranking(serial: &str, cancelled: &AtomicBool) -> Result<Frame, ActionErr
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "Season Phase Rankings could not be verified.",
-        "Season Phase Rankings konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("phase-rewards-season-phase-rankings-could-not-be").into())
 }
 
 fn open_ranking(
@@ -447,11 +439,7 @@ fn open_ranking(
     common::navigate_to_afk_stages(serial, cancelled, log)?;
     let frame = read(serial, cancelled)?;
     if !daily::page(&frame.gray)? {
-        return Err(text(
-            "The AFK page was not verified.",
-            "Die AFK-Ansicht wurde nicht bestätigt.",
-        )
-        .into());
+        return Err(tr!("phase-rewards-the-afk-page-was-not-verified").into());
     }
     let entry = vision::find_template(
         &frame.gray,
@@ -464,10 +452,7 @@ fn open_ranking(
         },
         0.8,
     )?
-    .ok_or(text(
-        "Season Rankings entry not found.",
-        "Einstieg zu Season Rankings nicht gefunden.",
-    ))?;
+    .ok_or(tr!("phase-rewards-season-rankings-entry-not-found"))?;
     vision::ensure_not_cancelled(cancelled)?;
     vision::tap_match(serial, entry, frame.size)?;
     vision::settle_cancellable(cancelled)?;
@@ -496,11 +481,7 @@ fn discover_phases(serial: &str, cancelled: &AtomicBool) -> Result<Vec<u32>, Act
         tap(serial, (1023, 746), &frame, cancelled)?;
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "The ranking phase list did not stabilize.",
-        "Die Phasenliste der Rangliste ist nicht stabil.",
-    )
-    .into())
+    Err(tr!("phase-rewards-the-ranking-phase-list-did-not").into())
 }
 
 fn open_scope(
@@ -526,13 +507,8 @@ fn open_scope(
         vision::settle_cancellable(cancelled)?;
         frame = wait_ranking(serial, cancelled)?;
     }
-    let phase_tab = phase_tab.ok_or_else(|| {
-        text(
-            "The selected ranking phase could not be found.",
-            "Die gewählte Ranglistenphase wurde nicht gefunden.",
-        )
-        .to_owned()
-    })?;
+    let phase_tab = phase_tab
+        .ok_or_else(|| tr!("phase-rewards-the-selected-ranking-phase-could-not").to_owned())?;
     if selected_phase(&frame) != Some(phase) {
         tap(serial, phase_tab, &frame, cancelled)?;
         frame = read(serial, cancelled)?;
@@ -554,21 +530,13 @@ fn open_scope(
         frame = read(serial, cancelled)?;
     }
     if !opened {
-        return Err(text(
-            "The First Clear entry for the selected phase could not be verified.",
-            "Der First-Clear-Einstieg für die ausgewählte Phase konnte nicht bestätigt werden.",
-        )
-        .into());
+        return Err(tr!("phase-rewards-the-first-clear-entry-for-the").into());
     }
     for _ in 0..18 {
         let next = read(serial, cancelled)?;
         if let Some((number, _)) = first_clear(&next) {
             if number != phase {
-                return Err(text(
-                    "The ranking phase changed.",
-                    "Die Ranglistenphase hat sich verändert.",
-                )
-                .into());
+                return Err(tr!("phase-rewards-the-ranking-phase-changed").into());
             }
             let tab = scope_tab(&next.lines, scope).expect("first clear tabs verified");
             tap(serial, tab.center(), &next, cancelled)?;
@@ -583,11 +551,7 @@ fn open_scope(
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "The ranking reward tab could not be verified.",
-        "Der Reiter für Ranglistenbelohnungen konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("phase-rewards-the-ranking-reward-tab-could-not").into())
 }
 
 fn finish_claim(
@@ -659,11 +623,7 @@ fn finish_claim(
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "The ranking reward was not confirmed as claimed. No further claim was attempted.",
-        "Die Ranglistenbelohnung wurde nicht als abgeholt bestätigt. Kein weiterer Abholversuch.",
-    )
-    .into())
+    Err(tr!("phase-rewards-the-ranking-reward-was-not-confirmed").into())
 }
 
 fn collect_scope(
@@ -679,11 +639,7 @@ fn collect_scope(
     for _ in 0..120 {
         let frame = read(serial, cancelled)?;
         if first_clear(&frame) != Some((phase, scope)) {
-            return Err(text(
-                "The ranking reward view changed.",
-                "Die Ansicht der Ranglistenbelohnungen hat sich verändert.",
-            )
-            .into());
+            return Err(tr!("phase-rewards-the-ranking-reward-view-changed").into());
         }
         if !reward_badge(&frame, scope) {
             quiet += 1;
@@ -696,11 +652,7 @@ fn collect_scope(
         quiet = 0;
         let Some((claim, _)) = claim_control(&frame)? else {
             if scrolls >= 30 {
-                return Err(text(
-                    "Claimable ranking rewards could not be located.",
-                    "Abholbare Ranglistenbelohnungen konnten nicht gefunden werden.",
-                )
-                .into());
+                return Err(tr!("phase-rewards-claimable-ranking-rewards-could-not-be").into());
             }
             vision::ensure_not_cancelled(cancelled)?;
             adb::swipe_game_points(serial, (540, 1510), (540, 930), frame.size, 650)
@@ -731,11 +683,7 @@ fn collect_scope(
         tap(serial, point, &fresh, cancelled)?;
         finish_claim(serial, cursor, cancelled, report)?;
     }
-    Err(text(
-        "Ranking rewards reached the collection limit.",
-        "Das Abhollimit für Ranglistenbelohnungen wurde erreicht.",
-    )
-    .into())
+    Err(tr!("phase-rewards-ranking-rewards-reached-the-collection-limit").into())
 }
 
 pub fn run(
@@ -749,10 +697,8 @@ pub fn run(
     if let Some(pending) = cursor.pending.clone() {
         let mode = GameMode::SeasonRankingRewards(pending.scope);
         report(ActivityEvent::ModeOpening(mode));
-        open_scope(serial, pending.phase, pending.scope, cancelled, log)?.ok_or(text(
-            "The pending reward's phase is no longer available.",
-            "Die Phase der unbestätigten Belohnung ist nicht mehr verfügbar.",
-        ))?;
+        open_scope(serial, pending.phase, pending.scope, cancelled, log)?
+            .ok_or(tr!("phase-rewards-the-pending-reward-s-phase-is"))?;
         report(ActivityEvent::ModeEntered(mode));
         finish_claim(serial, cursor, cancelled, report)?;
     }
@@ -772,19 +718,19 @@ pub fn run(
                 for skipped in RankingScope::ALL {
                     cursor.completed.insert((phase, skipped));
                 }
-                log(format_text!(
-                    "Phase {phase} has no first-clear rewards section.",
-                    "Phase {phase} hat keinen First-Clear-Belohnungsbereich."
+                log(tr!(
+                    "phase-rewards-phase-phase-has-no-first-clear",
+                    phase = phase
                 ));
                 break;
             }
             report(ActivityEvent::ModeEntered(mode));
             collect_scope(serial, phase, scope, cursor, cancelled, report)?;
             cursor.completed.insert((phase, scope));
-            log(format_text!(
-                "Phase {phase} · {} rewards checked.",
-                "Phase {phase} · {}-Belohnungen geprüft.",
-                scope.label()
+            log(tr!(
+                "phase-rewards-phase-phase-label-rewards-checked",
+                phase = phase,
+                label = scope.label()
             ));
         }
     }

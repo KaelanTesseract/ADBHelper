@@ -6,7 +6,7 @@ use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, BattleOutcome, GameMode},
     adb,
-    localization::{format_text, text},
+    localization::tr,
 };
 use image::GrayImage;
 use std::{
@@ -325,13 +325,7 @@ impl Frame {
 
     fn battle_button(&self) -> Result<(u32, u32), ActionError> {
         self.point("battle/battle.png", FOOTER, 0.8)?
-            .ok_or_else(|| {
-                text(
-                    "The Dream Realm Battle button could not be verified.",
-                    "Der Dream-Realm-Battle-Button konnte nicht bestätigt werden.",
-                )
-                .to_owned()
-            })
+            .ok_or_else(|| tr!("dream-realm-the-dream-realm-battle-button-could").to_owned())
             .map_err(ActionError::from)
     }
 }
@@ -366,11 +360,7 @@ fn purchase_chance(
         if offer.remaining == 0 {
             vision::ensure_not_cancelled(cancelled)?;
             adb::press_back(serial).map_err(|e| e.to_string())?;
-            log(text(
-                "No extra Dream Realm chances remain.",
-                "Keine zusätzlichen Dream-Realm-Versuche mehr verfügbar.",
-            )
-            .into());
+            log(tr!("dream-realm-no-extra-dream-realm-chances-remain").into());
             return Ok(None);
         }
         let Some(confirm) = offer.confirm else {
@@ -388,29 +378,20 @@ fn purchase_chance(
                 || next.formation_control()?.is_some()
             {
                 cursor.confirming_gold = false;
-                log(format_text!(
-                    "Bought an extra Dream Realm chance for {} Gold.",
-                    "Zusätzlicher Dream-Realm-Versuch für {} Gold gekauft.",
-                    offer.price
+                log(tr!(
+                    "dream-realm-bought-an-extra-dream-realm-chance",
+                    price = offer.price
                 ));
                 return Ok(Some(next));
             }
         }
         return Err(unconfirmed_purchase().into());
     }
-    Err(text(
-        "A Dream Realm offer with a verified Gold price was not found.",
-        "Es wurde kein Dream-Realm-Angebot mit bestätigtem Goldpreis gefunden.",
-    )
-    .into())
+    Err(tr!("dream-realm-a-dream-realm-offer-with-a").into())
 }
 
 fn unconfirmed_purchase() -> String {
-    text(
-        "The extra Dream Realm chance could not be confirmed.",
-        "Der zusätzliche Dream-Realm-Versuch konnte nicht bestätigt werden.",
-    )
-    .into()
+    tr!("dream-realm-the-extra-dream-realm-chance-could").into()
 }
 
 fn wait_home(serial: &str, cancelled: &AtomicBool) -> Result<Frame, ActionError> {
@@ -422,11 +403,7 @@ fn wait_home(serial: &str, cancelled: &AtomicBool) -> Result<Frame, ActionError>
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "The Dream Realm overview could not be verified.",
-        "Die Dream-Realm-Übersicht konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("dream-realm-the-dream-realm-overview-could-not").into())
 }
 
 pub(super) fn open_rankings_for_scan(
@@ -451,11 +428,7 @@ pub(super) fn open_rankings_for_scan(
             frame.tap(serial, close, cancelled)?;
         }
     }
-    Err(text(
-        "Dream Realm rankings could not be opened.",
-        "Die Dream-Realm-Rangliste konnte nicht geöffnet werden.",
-    )
-    .into())
+    Err(tr!("dream-realm-dream-realm-rankings-could-not-be").into())
 }
 
 fn navigate(
@@ -505,11 +478,7 @@ fn return_from_rankings(
         vision::settle_cancellable(cancelled)?;
         frame = Frame::read(serial, cancelled)?;
     }
-    Err(text(
-        "Could not return from the rankings to the Dream Realm overview.",
-        "Die Rückkehr von der Rangliste zur Dream-Realm-Übersicht konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("dream-realm-could-not-return-from-the-rankings").into())
 }
 
 fn claim_yesterday(
@@ -541,11 +510,7 @@ fn claim_yesterday(
             return Ok(home);
         }
     }
-    Err(text(
-        "The Dream Realm ranking rewards could not be verified.",
-        "Die Dream-Realm-Ranglistenbelohnung konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("dream-realm-the-dream-realm-ranking-rewards-could").into())
 }
 
 fn formation(
@@ -560,11 +525,7 @@ fn formation(
             return Ok((frame, button, skipped));
         }
     }
-    Err(text(
-        "The Dream Realm team or Battle button could not be verified.",
-        "Die Dream-Realm-Aufstellung oder der Battle-Button konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("dream-realm-the-dream-realm-team-or-battle").into())
 }
 
 fn finish_battle(
@@ -593,11 +554,7 @@ fn finish_battle(
         } else if frame.home()?.is_some() {
             if !scored {
                 progress(ActivityEvent::BattleFinished(MODE, BattleOutcome::Unclear));
-                return Err(text(
-                    "Dream Realm returned without a confirmed battle result.",
-                    "Dream Realm ist ohne bestätigtes Kampfergebnis zur Übersicht zurückgekehrt.",
-                )
-                .into());
+                return Err(tr!("dream-realm-dream-realm-returned-without-a-confirmed").into());
             }
             return Ok(frame);
         } else if !scored
@@ -648,26 +605,14 @@ pub fn run(
     while cursor.launched < limit {
         vision::ensure_not_cancelled(cancelled)?;
         if settings.daily && home.ranked()? {
-            log(text(
-                "Today's Dream Realm ranking is already recorded.",
-                "Die heutige Dream-Realm-Platzierung steht bereits fest.",
-            )
-            .into());
+            log(tr!("dream-realm-today-s-dream-realm-ranking-is").into());
             break;
         }
-        let remaining = home.remaining()?.ok_or_else(|| {
-            text(
-                "The remaining Dream Realm chances could not be read.",
-                "Die verbleibenden Dream-Realm-Versuche konnten nicht gelesen werden.",
-            )
-            .to_owned()
-        })?;
+        let remaining = home
+            .remaining()?
+            .ok_or_else(|| tr!("dream-realm-the-remaining-dream-realm-chances-could").to_owned())?;
         if remaining == 0 && !settings.spend_gold {
-            log(text(
-                "No free Dream Realm chances remain.",
-                "Keine kostenlosen Dream-Realm-Versuche mehr verfügbar.",
-            )
-            .into());
+            log(tr!("dream-realm-no-free-dream-realm-chances-remain").into());
             break;
         }
         let ready = if remaining == 0 {
@@ -691,16 +636,11 @@ pub fn run(
         team.tap(serial, battle, cancelled)?;
         progress(ActivityEvent::BattleStarted(MODE));
         if skipped {
-            log(text(
-                "Using the game's Dream Realm Skip button.",
-                "Die Skip-Schaltfläche von Dream Realm wird verwendet.",
-            )
-            .into());
+            log(tr!("dream-realm-using-the-game-s-dream-realm").into());
         }
-        log(format_text!(
-            "Dream Realm battle {} started.",
-            "Dream-Realm-Kampf {} gestartet.",
-            cursor.launched
+        log(tr!(
+            "dream-realm-dream-realm-battle-launched-started",
+            launched = cursor.launched
         ));
         home = finish_battle(serial, cursor, cancelled, progress)?;
     }

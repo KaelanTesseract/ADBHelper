@@ -6,6 +6,7 @@
 //! a little further, so the next attempt (for example after a recovery restart)
 //! is more patient. Successful waits let that extra patience fade again.
 
+use crate::localization::tr;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -73,13 +74,14 @@ impl Timing {
     pub fn summary(&self) -> String {
         let factor = self.factor();
         match self.average_ms {
-            Some(average) => crate::localization::format_text!(
-                "Wait times ×{factor:.2} (screenshot {average:.0} ms)",
-                "Wartezeiten ×{factor:.2} (Screenshot {average:.0} ms)"
+            Some(average) => tr!(
+                "timing-wait-times-factor-screenshot-average-ms",
+                factor = format!("{:.2}", factor),
+                average = format!("{:.0}", average)
             ),
-            None => crate::localization::format_text!(
-                "Wait times ×{factor:.2}",
-                "Wartezeiten ×{factor:.2}"
+            None => tr!(
+                "timing-wait-times-factor",
+                factor = format!("{:.2}", factor)
             ),
         }
     }

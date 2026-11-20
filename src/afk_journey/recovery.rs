@@ -6,7 +6,7 @@ use super::{
 };
 use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
-use crate::localization::{format_text, text};
+use crate::localization::tr;
 use crate::{
     activity::{ActivityEvent, BattleOutcome, GameMode, LegendTower},
     adb,
@@ -258,7 +258,10 @@ fn connected_state(
             Err(error) if error.is_transport() => {
                 last_error = error.into();
                 if attempt == 0 {
-                    log(text("ADB connection interrupted. Reconnecting before checking the game.", "ADB-Verbindung unterbrochen. Verbindung wird vor der Spielprüfung wiederhergestellt.").into());
+                    log(
+                        tr!("recovery-adb-connection-interrupted-reconnecting-before-checking")
+                            .into(),
+                    );
                 }
                 if attempt + 1 == MAX_CONNECTION_PROBES {
                     break;
@@ -276,9 +279,9 @@ fn connected_state(
             Err(error) => return Err(error),
         }
     }
-    Err(format_text!(
-        "ADB is still unavailable; recovery stopped: {last_error}",
-        "ADB ist weiterhin nicht erreichbar; Wiederherstellung beendet: {last_error}"
+    Err(tr!(
+        "recovery-adb-is-still-unavailable-recovery-stopped",
+        last_error = last_error
     )
     .into())
 }
@@ -382,15 +385,11 @@ fn supervised_with_driver(
                 report(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
             }
             if transport_recoveries == MAX_TRANSPORT_RECOVERIES {
-                return Err(text("ADB kept interrupting the action. Recovery stopped after three retries without confirmed progress.", "ADB unterbricht die Aktion weiterhin. Nach drei Wiederholungen ohne bestätigten Fortschritt wurde die Wiederherstellung beendet.").into());
+                return Err(tr!("recovery-adb-kept-interrupting-the-action-recovery").into());
             }
             transport_recoveries += 1;
             ready_after_recovery(serial);
-            log(text(
-                "ADB connection restored. Reopening the current game mode.",
-                "ADB-Verbindung wiederhergestellt. Der aktuelle Spielmodus wird erneut geöffnet.",
-            )
-            .into());
+            log(tr!("recovery-adb-connection-restored-reopening-the-current").into());
             continue;
         }
         if !needs_restart {
@@ -401,10 +400,10 @@ fn supervised_with_driver(
                 let mode = checkpoint
                     .mode
                     .map(GameMode::label)
-                    .unwrap_or(text("the selected action", "der ausgewählten Aktion"));
-                log(format_text!(
-                    "No battle result after 100 seconds. Reopening {mode}.",
-                    "Kein Kampfergebnis nach 100 Sekunden. {mode} wird erneut geöffnet."
+                    .unwrap_or(tr!("recovery-the-selected-action"));
+                log(tr!(
+                    "recovery-no-battle-result-after-100-seconds",
+                    mode = mode
                 ));
                 continue;
             }
@@ -416,21 +415,20 @@ fn supervised_with_driver(
         loop {
             vision::ensure_not_cancelled(cancelled)?;
             if restart_count == MAX_RESTARTS {
-                return Err(text("Automatic recovery failed after three game restarts.", "Die automatische Wiederherstellung ist nach drei Spielneustarts fehlgeschlagen.").into());
+                return Err(tr!("recovery-automatic-recovery-failed-after-three-game").into());
             }
             restart_count += 1;
             if let Some(reason) = &restart_reason {
                 log(reason.clone());
             }
-            log(format_text!(
-                "Restarting the game ({}/{}). Resuming {}.",
-                "Spiel wird neu gestartet ({}/{}); fortsetzen bei {}.",
-                restart_count,
-                MAX_RESTARTS,
-                checkpoint
+            log(tr!(
+                "recovery-restarting-the-game-restart-count-max",
+                restart_count = restart_count,
+                max_restarts = MAX_RESTARTS,
+                action = checkpoint
                     .mode
                     .map(GameMode::label)
-                    .unwrap_or(text("the selected action", "der ausgewählten Aktion"))
+                    .unwrap_or(tr!("recovery-the-selected-action"))
             ));
             match driver.restart() {
                 Ok(()) => {

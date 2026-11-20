@@ -1,9 +1,6 @@
 //! Local Windows OCR; no server, Python runtime or downloaded model is used.
 use crate::afk_journey::error::ActionError;
-#[cfg(windows)]
-use crate::localization::format_text;
-#[cfg(not(windows))]
-use crate::localization::text;
+use crate::localization::tr;
 use image::GrayImage;
 
 #[derive(Clone, Debug)]
@@ -137,21 +134,17 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, ActionError>
     })();
     outcome
         .map_err(|error| {
-            format_text!(
-            "The action stopped because local Windows OCR is unavailable: {error}.",
-            "Lokale Windows-Texterkennung nicht verfügbar: {error}. Die Aktion wurde angehalten."
-        )
+            tr!(
+                "ocr-the-action-stopped-because-local-windows",
+                error = error
+            )
         })
         .map_err(ActionError::from)
 }
 
 #[cfg(not(windows))]
 pub(super) fn recognize(_: &GrayImage) -> Result<Vec<TextLine>, ActionError> {
-    Err(text(
-        "This action requires local Windows OCR.",
-        "Für diese Aktion wird die lokale Windows-Texterkennung benötigt.",
-    )
-    .into())
+    Err(tr!("ocr-this-action-requires-local-windows-ocr").into())
 }
 
 pub(super) fn repeated_counter(text: &str) -> Option<u32> {

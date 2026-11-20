@@ -1,4 +1,4 @@
-use super::{client, crop, text, ActivityEvent, Driver, GameMode, GuildSettings, Screen};
+use super::{client, crop, tr, ActivityEvent, Driver, GameMode, GuildSettings, Screen};
 use crate::afk_journey::error::ActionError;
 use crate::afk_journey::text_match::letters_key;
 use crate::afk_journey::vision;
@@ -53,11 +53,7 @@ fn members_url(input: &str) -> Result<ureq::http::Uri, ActionError> {
 }
 
 fn invalid_endpoint() -> String {
-    text(
-        "Use the HTTPS guild_states API URL from AFKJ Guild Manager.",
-        "Verwende die HTTPS-URL für guild_states aus AFKJ Guild Manager.",
-    )
-    .into()
+    tr!("scanner-guild-use-the-https-guild-states-api").into()
 }
 
 /// Splits a pasted Guild Manager URL into the URL without `apikey` and that key.
@@ -111,19 +107,9 @@ fn remote_members(input: &str, api_key: &str) -> Result<Vec<Member>, ActionError
                 .limit(4 * 1024 * 1024)
                 .read_json()
         })
-        .map_err(|_| {
-            text(
-                "The Supabase guild roster could not be read.",
-                "Die Supabase-Mitgliederliste konnte nicht gelesen werden.",
-            )
-            .to_owned()
-        })?;
+        .map_err(|_| tr!("scanner-guild-the-supabase-guild-roster-could-not").to_owned())?;
     if rows.len() != 1 {
-        return Err(text(
-            "The API URL must select exactly one guild state.",
-            "Die API-URL muss genau einen Gildenstatus auswählen.",
-        )
-        .into());
+        return Err(tr!("scanner-guild-the-api-url-must-select-exactly").into());
     }
     Ok(rows.remove(0).state.players)
 }
@@ -300,11 +286,7 @@ fn open_members(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Scr
 }
 
 fn member_error() -> String {
-    text(
-        "Guild Members could not be opened.",
-        "Die Gildenmitgliederliste konnte nicht geöffnet werden.",
-    )
-    .into()
+    tr!("scanner-guild-guild-members-could-not-be-opened").into()
 }
 
 fn swipe(
@@ -374,11 +356,7 @@ fn activity_export(
         expected = expected.or_else(|| member_count(&screen));
         let page = read_members(&screen)?;
         if page.is_empty() {
-            return Err(text(
-                "The activity rows could not be read.",
-                "Die Aktivitätswerte konnten nicht gelesen werden.",
-            )
-            .into());
+            return Err(tr!("scanner-guild-the-activity-rows-could-not-be").into());
         }
         for (name, value) in &page {
             let member = corrected_identity(std::slice::from_ref(name), roster);
@@ -495,11 +473,7 @@ fn open_rankings(
 }
 
 fn rank_error() -> String {
-    text(
-        "The ranking view could not be verified.",
-        "Die Rangliste konnte nicht bestätigt werden.",
-    )
-    .into()
+    tr!("scanner-guild-the-ranking-view-could-not-be").into()
 }
 
 fn card_centers(screen: &Screen, top: u32) -> Vec<u32> {
@@ -728,11 +702,7 @@ fn scan_ranks(
         swipe(driver, &screen, (960, 1470), (960, 980))?;
         screen = driver.read()?;
     }
-    Err(text(
-        "The end of the ranking list could not be verified.",
-        "Das Ende der Rangliste konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("scanner-guild-the-end-of-the-ranking-list").into())
 }
 
 fn dates(days_ago: u64) -> ((u32, u32), &'static str) {
@@ -823,11 +793,7 @@ fn select_date(
         swipe(driver, &screen, (930, 745), (230, 745))?;
         screen = driver.read()?;
     }
-    Err(text(
-        "The requested Dream Realm date was not found.",
-        "Das gewünschte Dream-Realm-Datum wurde nicht gefunden.",
-    )
-    .into())
+    Err(tr!("scanner-guild-the-requested-dream-realm-date-was").into())
 }
 
 pub(super) fn scan(
@@ -842,11 +808,7 @@ pub(super) fn scan(
         && !settings.activeness
         && !settings.afk_stages
     {
-        return Err(text(
-            "Select at least one Guild Manager export.",
-            "Wähle mindestens einen Guild-Manager-Export.",
-        )
-        .into());
+        return Err(tr!("scanner-guild-select-at-least-one-guild-manager").into());
     }
     let remote = if settings.guild_members_url.trim().is_empty() {
         Vec::new()
@@ -953,11 +915,7 @@ pub(super) fn scan(
         )?;
     }
     if partial_activity {
-        Err(text(
-            "The activity export is partial. Review it before importing.",
-            "Der Aktivitätsexport ist unvollständig. Prüfe ihn vor dem Import.",
-        )
-        .into())
+        Err(tr!("scanner-guild-the-activity-export-is-partial-review").into())
     } else {
         Ok(total)
     }

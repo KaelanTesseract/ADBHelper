@@ -121,6 +121,10 @@ Start **Fishing** from the dashboard while in an unlocked region with fishing sp
 
 English is the default interface language. Select **Settings → Language → Deutsch** for German. The language choice and Daily routine are saved between launches. Action controls are read-only while a run is active.
 
+### Add a language
+
+All interface texts live in [`locales/en.ftl`](locales/en.ftl) and [`locales/de.ftl`](locales/de.ftl) ([Fluent](https://projectfluent.org/) format). To add a language, copy `en.ftl`, translate the text after each `=`, set `language-name`, and save it as `%APPDATA%\ADBHelper\languages\<code>.ftl`, for example `fr.ftl` or `pt_BR.ftl`. After a restart it appears under **Settings → Language**. Texts that are missing in the file are shown in English.
+
 ## Progress and recovery
 
 - **Activity** shows the current game mode and separate counters for each mode visited during the run.

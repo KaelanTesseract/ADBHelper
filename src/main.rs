@@ -46,10 +46,7 @@ fn main() -> ExitCode {
             Ok(None) => {
                 println!(
                     "{}",
-                    localization::text(
-                        "No newer release is available.",
-                        "Kein neueres Release verfügbar."
-                    )
+                    localization::tr!("main-no-newer-release-is-available")
                 );
                 ExitCode::SUCCESS
             }

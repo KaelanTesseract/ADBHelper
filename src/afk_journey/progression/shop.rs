@@ -1,4 +1,4 @@
-use super::{text, Driver, Point, Progress, Screen};
+use super::{tr, Driver, Point, Progress, Screen};
 use crate::afk_journey::error::ActionError;
 use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
@@ -96,13 +96,9 @@ fn open_house(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Scree
         return Ok(screen);
     }
     driver.overview_tab(310, log)?;
-    driver.wait_for(is_house)?.ok_or_else(|| {
-        text(
-            "Could not verify the Mystical House.",
-            "Das Mystische Haus konnte nicht eindeutig erkannt werden.",
-        )
-        .into()
-    })
+    driver
+        .wait_for(is_house)?
+        .ok_or_else(|| tr!("shop-could-not-verify-the-mystical-house").into())
 }
 
 fn shop_entry(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, ActionError> {
@@ -115,13 +111,9 @@ fn shop_entry(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Scree
         .point(70..450, 920..1090, "emporium")
         .expect("verified house");
     driver.tap(&house, emporium)?;
-    driver.wait_for(shop_screen)?.ok_or_else(|| {
-        text(
-            "Could not verify Emporium.",
-            "Das Emporium konnte nicht eindeutig erkannt werden.",
-        )
-        .into()
-    })
+    driver
+        .wait_for(shop_screen)?
+        .ok_or_else(|| tr!("shop-could-not-verify-emporium").into())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -386,13 +378,7 @@ fn commit_purchase(
             driver.back()?;
             return driver
                 .wait_for(|screen| selected(screen, store))?
-                .ok_or_else(|| {
-                    text(
-                        "Could not return to the shop.",
-                        "Der Shop konnte nicht wieder geöffnet werden.",
-                    )
-                    .into()
-                });
+                .ok_or_else(|| tr!("shop-could-not-return-to-the-shop").into());
         }
         if !confirmed_dialog {
             if let Some(confirm) = confirming_purchase(&current, store, offer) {
@@ -403,11 +389,7 @@ fn commit_purchase(
         }
         vision::settle_cancellable(driver.cancelled)?;
     }
-    Err(text(
-        "The purchase charge could not be verified.",
-        "Die Abbuchung für den Einkauf konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("shop-the-purchase-charge-could-not-be").into())
 }
 
 pub(super) fn purchase(
@@ -433,11 +415,7 @@ pub(super) fn purchase(
         )?
     {
         progress.entered();
-        log(text(
-            "Emporium purchases were already made today.",
-            "Heute wurde bereits im Emporium eingekauft.",
-        )
-        .into());
+        log(tr!("shop-emporium-purchases-were-already-made-today").into());
         return Ok(());
     }
     let mut screen = shop_entry(driver, log)?;
@@ -461,13 +439,7 @@ pub(super) fn purchase(
             driver.tap(&screen, (100, store.tab().1))?;
             screen = driver
                 .wait_for(|frame| selected(frame, store))?
-                .ok_or_else(|| {
-                    text(
-                        "Could not verify the selected store.",
-                        "Der ausgewählte Shop konnte nicht eindeutig erkannt werden.",
-                    )
-                    .to_owned()
-                })?;
+                .ok_or_else(|| tr!("shop-could-not-verify-the-selected-store").to_owned())?;
         }
         for x in [326, 485, 644, 803, 962] {
             if progress.state.shop.slots.contains(&(store, x)) {
@@ -501,23 +473,11 @@ pub(super) fn purchase(
                 driver.back()?;
                 screen = driver
                     .wait_for(|frame| selected(frame, store))?
-                    .ok_or_else(|| {
-                        text(
-                            "Could not close the offer details.",
-                            "Die Angebotsdetails konnten nicht geschlossen werden.",
-                        )
-                        .to_owned()
-                    })?;
+                    .ok_or_else(|| tr!("shop-could-not-close-the-offer-details").to_owned())?;
             } else {
                 screen = driver
                     .wait_for(|frame| selected(frame, store))?
-                    .ok_or_else(|| {
-                        text(
-                            "Could not verify the offer details.",
-                            "Die Angebotsdetails konnten nicht eindeutig erkannt werden.",
-                        )
-                        .to_owned()
-                    })?;
+                    .ok_or_else(|| tr!("shop-could-not-verify-the-offer-details").to_owned())?;
             }
         }
     }
@@ -646,13 +606,9 @@ fn open_all_hero(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Sc
                 .point(105..530, 490..615, "nobletavern")
                 .expect("verified house"),
         )?;
-        screen = driver.wait_for(tavern)?.ok_or_else(|| {
-            text(
-                "Could not verify Noble Tavern.",
-                "Noble Tavern konnte nicht eindeutig erkannt werden.",
-            )
-            .to_owned()
-        })?;
+        screen = driver
+            .wait_for(tavern)?
+            .ok_or_else(|| tr!("shop-could-not-verify-noble-tavern").to_owned())?;
     }
     let tab = screen
         .template(
@@ -661,23 +617,11 @@ fn open_all_hero(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Sc
             1795..1920,
             0.84,
         )?
-        .ok_or_else(|| {
-            text(
-                "Could not find All-Hero Recruitment.",
-                "All-Hero Recruitment konnte nicht gefunden werden.",
-            )
-            .to_owned()
-        })?;
+        .ok_or_else(|| tr!("shop-could-not-find-all-hero-recruitment").to_owned())?;
     driver.tap(&screen, (tab.0, tab.1.saturating_sub(57)))?;
     driver
         .wait_for(|frame| tavern(frame) && frame.point(85..392, 1510..1605, "recruit1").is_some())?
-        .ok_or_else(|| {
-            text(
-                "Could not verify the recruitment options.",
-                "Die Rekrutierungsoptionen konnten nicht eindeutig erkannt werden.",
-            )
-            .to_owned()
-        })
+        .ok_or_else(|| tr!("shop-could-not-verify-the-recruitment-options").to_owned())
         .map_err(ActionError::from)
 }
 
@@ -745,11 +689,7 @@ pub(super) fn recruit(
         }
         vision::settle_cancellable(driver.cancelled)?;
     }
-    Err(text(
-        "The Invite Letter consumption could not be confirmed.",
-        "Der Verbrauch des Invite Letters konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("shop-the-invite-letter-consumption-could-not").into())
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
     adb,
-    localization::{format_text, text},
+    localization::tr,
 };
 use image::{GrayImage, RgbImage};
 use std::sync::atomic::AtomicBool;
@@ -308,13 +308,7 @@ impl Session<'_> {
             .map_err(|error| error.to_string())?;
         vision::settle_cancellable(self.cancelled)?;
         self.wait_for(|frame| frame.page() == Some(Page::Pass))?
-            .ok_or_else(|| {
-                text(
-                    "Could not verify the Noble Path tabs.",
-                    "Die Noble-Path-Tabs konnten nicht eindeutig erkannt werden.",
-                )
-                .into()
-            })
+            .ok_or_else(|| tr!("menu-rewards-could-not-verify-the-noble-path").into())
     }
 
     fn wait_for(&self, accept: impl Fn(&Frame) -> bool) -> Result<Option<Frame>, ActionError> {
@@ -364,11 +358,7 @@ impl Session<'_> {
             };
             frame = next;
         }
-        Err(text(
-            "The reward screen could not be verified.",
-            "Die Belohnungsansicht konnte nicht eindeutig erkannt werden.",
-        )
-        .into())
+        Err(tr!("menu-rewards-the-reward-screen-could-not-be").into())
     }
 
     fn wait_for_page_change(&self, previous: Option<Page>) -> Result<Option<Frame>, ActionError> {
@@ -404,13 +394,7 @@ impl Session<'_> {
                 self.tap(&frame, close)?;
                 return self
                     .wait_for(|frame| frame.page() == Some(page))?
-                    .ok_or_else(|| {
-                        text(
-                            "Could not close the reward summary.",
-                            "Die Belohnungsübersicht konnte nicht geschlossen werden.",
-                        )
-                        .into()
-                    });
+                    .ok_or_else(|| tr!("menu-rewards-could-not-close-the-reward-summary").into());
             }
             let gone = frame.page() == Some(page)
                 && if milestone {
@@ -427,11 +411,7 @@ impl Session<'_> {
             missing = gone;
             vision::settle_cancellable(self.cancelled)?;
         }
-        Err(text(
-            "The game did not confirm the reward claim.",
-            "Das Spiel hat das Abholen der Belohnung nicht bestätigt.",
-        )
-        .into())
+        Err(tr!("menu-rewards-the-game-did-not-confirm-the").into())
     }
 }
 
@@ -637,19 +617,17 @@ pub fn run(
                 return Ok(cursor.collected);
             };
             session.tap(&frame, tab)?;
-            frame = session.wait_for(|next| next.page() == Some(page) && next.claim_button(page).is_some())?
-                .ok_or_else(|| format_text!(
-                    "{} shows an available reward, but its Quick Claim button could not be verified.",
-                    "{} zeigt eine verfügbare Belohnung, aber Quick Claim konnte nicht eindeutig erkannt werden.",
-                    mode.label()
-                ))?;
+            frame = session
+                .wait_for(|next| next.page() == Some(page) && next.claim_button(page).is_some())?
+                .ok_or_else(|| {
+                    tr!(
+                        "menu-rewards-label-shows-an-available-reward-but",
+                        label = mode.label()
+                    )
+                })?;
         } else {
             return Ok(cursor.collected);
         }
     }
-    Err(text(
-        "The reward screen did not settle after several claims.",
-        "Die Belohnungsansicht wurde nach mehreren Abholversuchen nicht stabil.",
-    )
-    .into())
+    Err(tr!("menu-rewards-the-reward-screen-did-not-settle").into())
 }

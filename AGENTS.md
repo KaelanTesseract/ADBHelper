@@ -9,3 +9,4 @@
 - Vor einem Release `scripts/Build-Release.ps1` ausführen und die Tests bestehen lassen.
 - Der feste Download-Assetname für den eingebauten Updater ist `ADBHelper-Windows-x64.exe`.
 - Die Checkboxen für normale und Season-Stages bleiben nebeneinander. Bei gemeinsamer Auswahl läuft Season vor Normal; Stop beendet die ganze Sequenz.
+- Neue Oberflächentexte nur über `tr!("id")` bzw. `tr!("id", name = wert)`, mit Eintrag in `locales/en.ftl` und `locales/de.ftl`. Die Tests in `src/localization/tests.rs` prüfen gleiche Ids und Platzhalter.

@@ -8,10 +8,7 @@ impl PlayerApp {
         F: FnOnce(String) -> Result<String, String> + Send + 'static,
     {
         let Some(serial) = self.selected_serial() else {
-            self.log(text(
-                "Select a connected device first.",
-                "Bitte zuerst ein verbundenes Gerät auswählen.",
-            ));
+            self.log(tr!("app-run-select-a-connected-device-first"));
             return;
         };
         self.busy = true;
@@ -21,7 +18,7 @@ impl PlayerApp {
             let message = match action(serial) {
                 Ok(details) => format!("{label}: {details}"),
                 Err(error) => {
-                    format_text!("{label} failed: {error}", "{label} fehlgeschlagen: {error}")
+                    tr!("app-run-label-failed-error", label = label, error = error)
                 }
             };
             let _ = sender.send(Event::Log(message));
@@ -48,14 +45,7 @@ impl PlayerApp {
             vec![action]
         };
         if steps.is_empty() {
-            self.action_error = Some((
-                action,
-                text(
-                    "Add at least one step in the Daily settings.",
-                    "Füge in den Daily-Einstellungen mindestens einen Schritt hinzu.",
-                )
-                .into(),
-            ));
+            self.action_error = Some((action, tr!("app-run-add-at-least-one-step-in").into()));
             return;
         }
         let settings = RunSettings {
@@ -75,10 +65,9 @@ impl PlayerApp {
             if settings.mode(*step).is_none() {
                 self.action_error = Some((
                     action,
-                    format_text!(
-                        "Select stages or towers for {} in its settings.",
-                        "Wähle Stufen oder Türme für {} in den Einstellungen.",
-                        step.label()
+                    tr!(
+                        "app-run-select-stages-or-towers-for-label",
+                        label = step.label()
                     ),
                 ));
                 return;
@@ -87,11 +76,7 @@ impl PlayerApp {
         let Some(serial) = self.selected_serial() else {
             self.action_error = Some((
                 action,
-                text(
-                    "Connect a device in Settings first.",
-                    "Bitte zuerst unter Einstellungen ein Gerät verbinden.",
-                )
-                .into(),
+                tr!("app-run-connect-a-device-in-settings-first").into(),
             ));
             return;
         };
@@ -103,7 +88,7 @@ impl PlayerApp {
         self.stage_cancel = Some(cancelled.clone());
         self.active_action = Some(action);
         self.busy = true;
-        self.log(format_text!("{} started.", "{} gestartet.", action.label()));
+        self.log(tr!("app-run-label-started", label = action.label()));
         let sender = self.sender.clone();
         thread::spawn(move || {
             let mut progression = progression::RunState::default();
@@ -128,9 +113,13 @@ impl PlayerApp {
                 .map_err(|error| format!("{} · {error}", step.label()))
             });
             let message = match &result {
-                Ok(_) => format_text!("{} finished.", "{} abgeschlossen.", action.label()),
+                Ok(_) => tr!("app-run-label-finished", label = action.label()),
                 Err(error) => {
-                    format_text!("{} stopped: {error}", "{} beendet: {error}", action.label())
+                    tr!(
+                        "app-run-label-stopped-error",
+                        label = action.label(),
+                        error = error
+                    )
                 }
             };
             let _ = sender.send(Event::Log(message));
@@ -155,10 +144,9 @@ pub(super) fn run_step(
     sender: &Sender<Event>,
 ) -> Result<u32, String> {
     let mode = settings.mode(action).ok_or_else(|| {
-        format_text!(
-            "Select stages or towers for {} in its settings.",
-            "Wähle Stufen oder Türme für {} in den Einstellungen.",
-            action.label()
+        tr!(
+            "app-run-select-stages-or-towers-for-label",
+            label = action.label()
         )
     })?;
     let mut log = |message| {

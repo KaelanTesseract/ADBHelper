@@ -4,7 +4,7 @@ use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
     adb,
-    localization::{format_text, text},
+    localization::tr,
 };
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
@@ -200,11 +200,7 @@ fn wait_hourglasses(
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "The free hourglass count could not be verified.",
-        "Die Anzahl kostenloser Sanduhren konnte nicht bestätigt werden.",
-    )
-    .into())
+    Err(tr!("daily-the-free-hourglass-count-could-not").into())
 }
 
 fn free_confirmation(lines: &[ocr::TextLine], expected: u32) -> bool {
@@ -248,10 +244,7 @@ fn verify_pending(
         }
         vision::settle_cancellable(cancelled)?;
     }
-    Err(text(
-        "The collection could not be confirmed. Check the AFK screen before restarting the Daily routine.",
-        "Das Abholen konnte nicht bestätigt werden. Prüfe die AFK-Ansicht vor einem erneuten Daily-Start.",
-    ).into())
+    Err(tr!("daily-the-collection-could-not-be-confirmed").into())
 }
 
 pub fn run(
@@ -277,11 +270,7 @@ pub fn run(
             Pending::AfkRewards => {
                 let (screen, _) = vision::screenshot(serial)?;
                 if !page(&screen)? {
-                    return Err(text(
-                        "The AFK page changed during recovery.",
-                        "Die AFK-Ansicht hat sich während der Wiederherstellung verändert.",
-                    )
-                    .into());
+                    return Err(tr!("daily-the-afk-page-changed-during-recovery").into());
                 }
                 timer_reset(&screen)?
             }
@@ -294,7 +283,7 @@ pub fn run(
             // An old chest timer is no proof of collection after a long restart.
             // Do not count it. Fresh free chest collections can still complete
             // the requested daily progress, without buying any hourglass.
-            log(text("An interrupted AFK chest claim could not be counted. Continuing with confirmed free collections.", "Eine unterbrochene AFK-Truhenabholung konnte nicht gezählt werden. Es folgen bestätigte kostenlose Abholungen.").into());
+            log(tr!("daily-an-interrupted-afk-chest-claim-could").into());
         }
     }
     while cursor.confirmed < collection.limit() {
@@ -306,11 +295,7 @@ pub fn run(
                 }
                 let (screen, size) = vision::screenshot(serial)?;
                 if !page(&screen)? {
-                    return Err(text(
-                        "The AFK rewards page was not verified.",
-                        "Die AFK-Belohnungsseite wurde nicht bestätigt.",
-                    )
-                    .into());
+                    return Err(tr!("daily-the-afk-rewards-page-was-not").into());
                 }
                 adb::tap_game_point(serial, 520, 1400, size).map_err(|e| e.to_string())?;
                 let (_, claim, size) = vision::wait_for_match(
@@ -327,11 +312,7 @@ pub fn run(
                 )?;
                 let (screen, _) = vision::screenshot(serial)?;
                 if claim_control(&screen)?.is_none() {
-                    return Err(text(
-                        "The AFK claim dialog changed.",
-                        "Der AFK-Abholdialog hat sich verändert.",
-                    )
-                    .into());
+                    return Err(tr!("daily-the-afk-claim-dialog-changed").into());
                 }
                 cursor.pending = Some(Pending::AfkRewards);
                 vision::ensure_not_cancelled(cancelled)?;
@@ -340,11 +321,7 @@ pub fn run(
             Collection::FreeHourglasses => {
                 let (before, button, size) = wait_hourglasses(serial, cancelled)?;
                 if before == 0 {
-                    log(text(
-                        "No free hourglasses remain.",
-                        "Keine kostenlosen Sanduhren mehr verfügbar.",
-                    )
-                    .into());
+                    log(tr!("daily-no-free-hourglasses-remain").into());
                     break;
                 }
                 cursor.pending = Some(Pending::FreeHourglasses(before));
@@ -362,20 +339,12 @@ pub fn run(
                     let lines = crop_lines(&screen, rect)?;
                     if !free_confirmation(&lines, before) {
                         adb::press_back(serial).map_err(|e| e.to_string())?;
-                        return Err(text(
-                            "The Instant AFK offer was not explicitly free.",
-                            "Das Instant-AFK-Angebot war nicht eindeutig kostenlos.",
-                        )
-                        .into());
+                        return Err(tr!("daily-the-instant-afk-offer-was-not").into());
                     }
                     vision::settle_cancellable(cancelled)?;
                     let (screen, _) = vision::screenshot(serial)?;
                     if !free_confirmation(&crop_lines(&screen, rect)?, before) {
-                        return Err(text(
-                            "The free Instant AFK offer changed.",
-                            "Das kostenlose Instant-AFK-Angebot hat sich verändert.",
-                        )
-                        .into());
+                        return Err(tr!("daily-the-free-instant-afk-offer-changed").into());
                     }
                     let (_, confirm) = vision::get_match(
                         &screen,
@@ -383,10 +352,7 @@ pub fn run(
                         vision::lower_screen(),
                         0.9,
                     )?
-                    .ok_or(text(
-                        "Free Instant AFK confirmation not found.",
-                        "Die kostenlose Instant-AFK-Bestätigung wurde nicht erkannt.",
-                    ))?;
+                    .ok_or(tr!("daily-free-instant-afk-confirmation-not-found"))?;
                     vision::ensure_not_cancelled(cancelled)?;
                     vision::tap_match(serial, confirm, size)?;
                 }
@@ -401,11 +367,10 @@ pub fn run(
         cursor.pending = None;
         cursor.confirmed += 1;
         report(ActivityEvent::Collected(mode, 1));
-        log(format_text!(
-            "{} · {} collected.",
-            "{} · {} abgeholt.",
-            mode.label(),
-            cursor.confirmed
+        log(tr!(
+            "daily-label-confirmed-collected",
+            label = mode.label(),
+            confirmed = cursor.confirmed
         ));
     }
     Ok(cursor.confirmed)

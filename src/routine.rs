@@ -1,4 +1,4 @@
-use crate::{activity::GameMode, localization::text};
+use crate::{activity::GameMode, localization::tr};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,10 +46,10 @@ impl DailyCategory {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Rewards => text("Rewards", "Belohnungen"),
-            Self::Battles => text("Battles", "Kämpfe"),
-            Self::Heroes => text("Heroes", "Helden"),
-            Self::Shop => text("Shop", "Shop"),
+            Self::Rewards => tr!("routine-rewards"),
+            Self::Battles => tr!("routine-battles"),
+            Self::Heroes => tr!("routine-heroes"),
+            Self::Shop => tr!("routine-shop"),
         }
     }
 
@@ -143,17 +143,11 @@ impl Action {
             Self::GuildScan => GameMode::GuildScan.label(),
             Self::Fishing => GameMode::Fishing.label(),
             Self::Daily => "Daily",
-            Self::AfkRewards => text("AFK rewards · 2 claims", "AFK-Belohnungen · 2× abholen"),
-            Self::FreeHourglasses => text(
-                "Free hourglasses · up to 3",
-                "Kostenlose Sanduhren · bis zu 3",
-            ),
-            Self::DiamondHourglasses => text("Diamond hourglasses", "Diamanten-Sanduhren"),
-            Self::StageRewards => text("AFK stage rewards", "AFK-Stufenbelohnungen"),
-            Self::SeasonRankingRewards => text(
-                "Season Phase Ranking rewards",
-                "Season-Phase-Ranglistenbelohnungen",
-            ),
+            Self::AfkRewards => tr!("routine-afk-rewards-2-claims"),
+            Self::FreeHourglasses => tr!("routine-free-hourglasses-up-to-3"),
+            Self::DiamondHourglasses => tr!("activity-diamond-hourglasses"),
+            Self::StageRewards => tr!("activity-afk-stage-rewards"),
+            Self::SeasonRankingRewards => tr!("routine-season-phase-ranking-rewards"),
         }
     }
 }
@@ -229,11 +223,7 @@ impl Routine {
     pub fn validate(&self) -> Result<(), String> {
         for (index, action) in self.steps.iter().enumerate() {
             if *action == Action::Daily || self.steps[..index].contains(action) {
-                return Err(text(
-                    "The Daily routine contains an invalid or duplicate step.",
-                    "Die Daily-Routine enthält einen ungültigen oder doppelten Schritt.",
-                )
-                .into());
+                return Err(tr!("routine-the-daily-routine-contains-an-invalid").into());
             }
         }
         Ok(())

@@ -1,4 +1,4 @@
-use super::{ocr, text, Driver, Point, Progress, Screen};
+use super::{ocr, tr, Driver, Point, Progress, Screen};
 use crate::afk_journey::error::ActionError;
 use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
@@ -22,13 +22,9 @@ fn open_hall(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen
         return Ok(screen);
     }
     driver.overview_tab(620, log)?;
-    driver.wait_for(hall)?.ok_or_else(|| {
-        text(
-            "Could not verify the Resonating Hall.",
-            "Die Resonanzhalle konnte nicht eindeutig erkannt werden.",
-        )
-        .into()
-    })
+    driver
+        .wait_for(hall)?
+        .ok_or_else(|| tr!("hall-could-not-verify-the-resonating-hall").into())
 }
 
 fn hero_profile(screen: &Screen) -> bool {
@@ -198,13 +194,7 @@ fn interact_for_affinity(
     attempted: &mut Vec<HeroNameplate>,
 ) -> Result<Screen, ActionError> {
     let center = (BASE_RESOLUTION.0 / 2, BASE_RESOLUTION.1 / 2);
-    let interaction_error = || {
-        text(
-            "The hero interaction view could not be verified.",
-            "Die Ansicht für die Heldeninteraktion konnte nicht eindeutig erkannt werden.",
-        )
-        .to_owned()
-    };
+    let interaction_error = || tr!("hall-the-hero-interaction-view-could-not").to_owned();
     driver.tap(detail, center)?;
     let model = driver.wait_for(model_view)?.ok_or_else(interaction_error)?;
     // Reserve the second click before sending input so recovery cannot repeat
@@ -226,13 +216,7 @@ fn interact_for_affinity(
     // Its controls are sufficient to confirm this transition during animations.
     driver
         .wait_for(hero_profile)?
-        .ok_or_else(|| {
-            text(
-                "The hero details could not be restored.",
-                "Die Heldenansicht konnte nicht wiederhergestellt werden.",
-            )
-            .to_owned()
-        })
+        .ok_or_else(|| tr!("hall-the-hero-details-could-not-be").to_owned())
         .map_err(ActionError::from)
 }
 
@@ -249,24 +233,13 @@ pub(super) fn first_hero(
     log: &mut impl FnMut(String),
 ) -> Result<Screen, ActionError> {
     open_first_hero(driver, log)?;
-    wait_for_hero(driver, None)?.ok_or_else(|| {
-        text(
-            "Could not verify the first hero.",
-            "Der erste Held konnte nicht eindeutig erkannt werden.",
-        )
-        .into()
-    })
+    wait_for_hero(driver, None)?.ok_or_else(|| tr!("hall-could-not-verify-the-first-hero").into())
 }
 
 fn next_hero(driver: &Driver<'_>, detail: &Screen, hero: &str) -> Result<Screen, ActionError> {
     driver.tap(detail, NEXT_HERO)?;
-    wait_for_hero(driver, Some(hero))?.ok_or_else(|| {
-        text(
-            "Could not verify the next hero.",
-            "Der nächste Held konnte nicht eindeutig erkannt werden.",
-        )
-        .into()
-    })
+    wait_for_hero(driver, Some(hero))?
+        .ok_or_else(|| tr!("hall-could-not-verify-the-next-hero").into())
 }
 
 fn wait_for_hero(
@@ -299,13 +272,7 @@ pub(super) fn wait_for_affinity_profile(
     })?;
     screen
         .zip(observed)
-        .ok_or_else(|| {
-            text(
-                "Could not verify the hero profile for Affinity.",
-                "Das Heldenprofil für die Affinität konnte nicht eindeutig erkannt werden.",
-            )
-            .to_owned()
-        })
+        .ok_or_else(|| tr!("hall-could-not-verify-the-hero-profile").to_owned())
         .map_err(ActionError::from)
 }
 
@@ -360,11 +327,7 @@ fn collect_affinity_profiles(
         driver.tap(&detail, NEXT_HERO)?;
         (detail, hero) = wait_for_affinity_profile(driver, Some(&previous))?;
     }
-    Err(text(
-        "The hero list did not reach its end.",
-        "Das Ende der Heldenliste wurde nicht erreicht.",
-    )
-    .into())
+    Err(tr!("hall-the-hero-list-did-not-reach").into())
 }
 
 fn level_up_hall(screen: &Screen) -> bool {
@@ -424,11 +387,7 @@ fn ready_level_control(driver: &Driver<'_>) -> Result<Option<(Screen, Point, u32
         }
         vision::settle_cancellable(driver.cancelled)?;
     }
-    Err(text(
-        "The current Resonance Level could not be verified.",
-        "Die aktuelle Resonanzstufe konnte nicht eindeutig erkannt werden.",
-    )
-    .into())
+    Err(tr!("hall-the-current-resonance-level-could-not").into())
 }
 
 pub(super) fn level_up(
@@ -461,11 +420,7 @@ pub(super) fn level_up(
             vision::settle_cancellable(driver.cancelled)?;
         }
         if progress.state.pending {
-            return Err(text(
-                "The new Resonance Level could not be confirmed.",
-                "Die neue Resonanzstufe konnte nicht bestätigt werden.",
-            )
-            .into());
+            return Err(tr!("hall-the-new-resonance-level-could-not").into());
         }
     }
     Ok(())
@@ -555,13 +510,7 @@ pub(super) fn equipment(
     let hall = open_hall(driver, log)?;
     let entry = hall
         .template("resonating_hall/equipment.png", 670..1070, 1530..1765, 0.84)?
-        .ok_or_else(|| {
-            text(
-                "Could not locate Equipment.",
-                "Ausrüstung konnte nicht gefunden werden.",
-            )
-            .to_owned()
-        })?;
+        .ok_or_else(|| tr!("hall-could-not-locate-equipment").to_owned())?;
     driver.tap(&hall, entry)?;
     let mut screen = driver.read()?;
     for _ in 0..8 {
@@ -578,53 +527,29 @@ pub(super) fn equipment(
         screen = driver.read()?;
     }
     if !equipment_overview(&screen) {
-        return Err(text(
-            "Could not verify the Equipment overview.",
-            "Die Ausrüstungsübersicht konnte nicht eindeutig erkannt werden.",
-        )
-        .into());
+        return Err(tr!("hall-could-not-verify-the-equipment-overview").into());
     }
     progress.entered();
     for (class, center) in CLASSES {
-        let point = equipment_class_button(&screen, class, center).ok_or_else(|| {
-            crate::localization::format_text!(
-                "Could not locate the equipment icon for {class}.",
-                "Das Ausrüstungssymbol für {class} konnte nicht gefunden werden."
-            )
-        })?;
+        let point = equipment_class_button(&screen, class, center)
+            .ok_or_else(|| tr!("hall-could-not-locate-the-equipment-icon", class = class))?;
         driver.tap(&screen, point)?;
         let detail = driver
             .wait_for(|frame| equipment_class(frame, class))?
-            .ok_or_else(|| {
-                text(
-                    "The equipment class could not be verified.",
-                    "Die Ausrüstungsklasse konnte nicht eindeutig erkannt werden.",
-                )
-                .to_owned()
-            })?;
+            .ok_or_else(|| tr!("hall-the-equipment-class-could-not-be").to_owned())?;
         if let Some(button) =
             detail.template("equipment/quick_equip.png", 140..950, 1390..1740, 0.9)?
         {
             driver.tap(&detail, button)?;
             driver
                 .wait_for(|frame| equipment_class(frame, class) && equipment_exhausted(frame))?
-                .ok_or_else(|| {
-                    text(
-                        "Quick Equip could not be confirmed.",
-                        "Schnellausrüstung konnte nicht bestätigt werden.",
-                    )
-                    .to_owned()
-                })?;
+                .ok_or_else(|| tr!("hall-quick-equip-could-not-be-confirmed").to_owned())?;
             progress.completed();
         }
         driver.back()?;
-        screen = driver.wait_for(equipment_overview)?.ok_or_else(|| {
-            text(
-                "Could not return to the Equipment overview.",
-                "Die Ausrüstungsübersicht konnte nicht wieder geöffnet werden.",
-            )
-            .to_owned()
-        })?;
+        screen = driver
+            .wait_for(equipment_overview)?
+            .ok_or_else(|| tr!("hall-could-not-return-to-the-equipment").to_owned())?;
     }
     Ok(())
 }
@@ -664,11 +589,7 @@ fn find_hero(
         }
         detail = next_hero(driver, &detail, &name)?;
     }
-    Err(text(
-        "The hero list did not reach its end.",
-        "Das Ende der Heldenliste wurde nicht erreicht.",
-    )
-    .into())
+    Err(tr!("hall-the-hero-list-did-not-reach").into())
 }
 
 fn exclusive_equipment(screen: &Screen, hero: &str) -> bool {
@@ -743,13 +664,7 @@ pub(super) fn swap(
         driver.tap(&detail, (105, 1600))?;
         let mut screen = driver
             .wait_for(|frame| exclusive_equipment(frame, &hero))?
-            .ok_or_else(|| {
-                text(
-                    "The hero's Exclusive Equipment could not be verified.",
-                    "Die exklusive Ausrüstung des Helden konnte nicht eindeutig erkannt werden.",
-                )
-                .to_owned()
-            })?;
+            .ok_or_else(|| tr!("hall-the-hero-s-exclusive-equipment-could").to_owned())?;
         if swap_button(&screen).is_none() {
             let Some(action) = swap_action(&screen)? else {
                 progress.state.purchased_essences.remove(0);
@@ -768,24 +683,12 @@ pub(super) fn swap(
         }
         let dialog = driver
             .wait_for(|frame| swap_confirm(frame).is_some())?
-            .ok_or_else(|| {
-                text(
-                    "The Essence Swap confirmation could not be verified.",
-                    "Der Tauschdialog der Essenz konnte nicht eindeutig erkannt werden.",
-                )
-                .to_owned()
-            })?;
+            .ok_or_else(|| tr!("hall-the-essence-swap-confirmation-could-not").to_owned())?;
         progress.state.pending = true;
         driver.tap(&dialog, swap_confirm(&dialog).expect("verified swap"))?;
         let result = driver
             .wait_for(|frame| frame.receipt_close().is_some())?
-            .ok_or_else(|| {
-                text(
-                    "The Essence Swap result could not be confirmed.",
-                    "Der Tausch der Essenz konnte nicht bestätigt werden.",
-                )
-                .to_owned()
-            })?;
+            .ok_or_else(|| tr!("hall-the-essence-swap-result-could-not").to_owned())?;
         progress.state.purchased_essences.remove(0);
         progress.completed();
         driver.tap(&result, result.receipt_close().expect("verified receipt"))?;

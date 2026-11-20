@@ -17,24 +17,18 @@ impl PlayerApp {
             .frame(design_system::panel_frame())
             .show(context, |ui| {
                 ui.set_width((context.content_rect().width() - 64.0).clamp(520.0, 760.0));
-                ui.heading(text("Daily routine", "Daily-Routine"));
-                ui.label(text(
-                    "Drag actions to add or reorder them.",
-                    "Ziehe Aktionen zum Hinzufügen oder Sortieren.",
-                ));
-                ui.small(text(
-                    "Each step uses the settings from its action card.",
-                    "Jeder Schritt verwendet die Einstellungen seiner Aktionskachel.",
-                ));
+                ui.heading(tr!("app-daily-editor-daily-routine"));
+                ui.label(tr!("app-daily-editor-drag-actions-to-add-or-reorder"));
+                ui.small(tr!("app-daily-editor-each-step-uses-the-settings-from"));
                 ui.add_space(SpaceTokens::MD);
                 if self.busy {
-                    ui.small(text("Stop the current run to edit the routine.", "Beende den aktuellen Lauf, um die Routine zu bearbeiten."));
+                    ui.small(tr!("app-daily-editor-stop-the-current-run-to-edit"));
                 }
                 let list_height = (context.content_rect().height() - 320.0).clamp(110.0, 462.0);
                 let count = self.daily_routine.steps.len();
                 ui.columns(2, |columns| {
                     let available = &mut columns[0];
-                    available.strong(text("Available actions", "Verfügbare Aktionen"));
+                    available.strong(tr!("app-daily-editor-available-actions"));
                     available.add_space(SpaceTokens::SM);
                     let tabs = available.horizontal_wrapped(|ui| {
                         for category in DailyCategory::ALL {
@@ -65,10 +59,7 @@ impl PlayerApp {
                                     .filter(|action| !self.daily_routine.steps.contains(action))
                                     .peekable();
                                 if actions.peek().is_none() {
-                                    ui.label(text(
-                                        "All actions in this category are in your routine.",
-                                        "Alle Aktionen dieser Kategorie sind bereits in deiner Routine.",
-                                    ));
+                                    ui.label(tr!("app-daily-editor-all-actions-in-this-category-are"));
                                 }
                                 for action in actions {
                                     design_system::panel_frame().show(ui, |ui| {
@@ -76,7 +67,7 @@ impl PlayerApp {
                                             ui.dnd_drag_source(egui::Id::unique(("daily-source", action.index())), action, |ui| {
                                                 daily_drag_label(ui, action.label());
                                             });
-                                            if ui.small_button("+").on_hover_text(text("Add to end", "Ans Ende hinzufügen")).clicked() {
+                                            if ui.small_button("+").on_hover_text(tr!("app-daily-editor-add-to-end")).clicked() {
                                                 placement = Some((action, count));
                                             }
                                         });
@@ -86,7 +77,7 @@ impl PlayerApp {
                             });
                     });
                     columns[1].add_enabled_ui(!self.busy, |routine| {
-                        routine.strong(text("Run in this order", "In dieser Reihenfolge ausführen"));
+                        routine.strong(tr!("app-daily-editor-run-in-this-order"));
                         routine.add_space(SpaceTokens::SM);
                         egui::ScrollArea::vertical()
                             .id_salt("daily-routine-steps")
@@ -95,7 +86,7 @@ impl PlayerApp {
                             .animated(false)
                             .show_viewport(routine, |ui, viewport| {
                                 if count == 0 {
-                                    ui.label(text("Your routine is empty.", "Deine Routine ist leer."));
+                                    ui.label(tr!("app-daily-editor-your-routine-is-empty"));
                                 }
                                 for (index, action) in self.daily_routine.steps.iter().copied().enumerate() {
                                     let row = design_system::panel_frame().show(ui, |ui| {
@@ -105,43 +96,43 @@ impl PlayerApp {
                                         });
                                         if action == StageAction::DiamondHourglasses {
                                             ui.horizontal(|ui| {
-                                                ui.label(text("Daily purchases", "Käufe pro Tag"));
+                                                ui.label(tr!("app-daily-editor-daily-purchases"));
                                                 ui.add(egui::DragValue::new(&mut diamond_settings.purchases).range(1..=10));
                                             });
                                             ui.horizontal(|ui| {
-                                                ui.label(text("Daily diamond budget", "Diamantenbudget pro Tag"));
+                                                ui.label(tr!("app-daily-editor-daily-diamond-budget"));
                                                 ui.add(egui::DragValue::new(&mut diamond_settings.budget).range(0..=5000).speed(10));
                                             });
-                                            ui.small(text("Earlier purchases today count toward both limits. Run free hourglasses first.", "Heutige Käufe zählen zu beiden Limits. Kostenlose Sanduhren zuerst ausführen."));
+                                            ui.small(tr!("app-daily-editor-earlier-purchases-today-count-toward-both"));
                                         }
                                         if action == StageAction::Emporium {
                                             for (label, budget) in [
-                                                (text("Invite Letter · Diamond budget", "Invite Letter · Diamantenbudget"), &mut emporium_settings.diamonds),
-                                                (text("Pal-Coins · Affinity", "Pal-Coins · Affinität"), &mut emporium_settings.pal_coins),
-                                                (text("Dream Fragments · Essences", "Traumfragmente · Essenzen"), &mut emporium_settings.dream_fragments),
+                                                (tr!("app-daily-editor-invite-letter-diamond-budget"), &mut emporium_settings.diamonds),
+                                                (tr!("app-daily-editor-pal-coins-affinity"), &mut emporium_settings.pal_coins),
+                                                (tr!("app-daily-editor-dream-fragments-essences"), &mut emporium_settings.dream_fragments),
                                             ] {
                                                 ui.horizontal(|ui| {
                                                     ui.label(label);
                                                     ui.add(egui::DragValue::new(budget).range(0..=100_000));
                                                 });
                                             }
-                                            ui.checkbox(&mut emporium_settings.full_price_affinity, text("Include full-price affinity items", "Auch Affinitätsartikel zum Vollpreis"));
-                                            ui.small(text("Enter the maximum amount of each currency to spend per run. For example, a 210-diamond Invite Letter requires a budget of at least 210. Set a budget to 0 to skip that purchase.", "Gib pro Währung den Höchstbetrag pro Lauf ein. Ein Invite Letter für 210 Diamanten braucht zum Beispiel ein Budget von mindestens 210. Mit 0 überspringst du den jeweiligen Kauf."));
+                                            ui.checkbox(&mut emporium_settings.full_price_affinity, tr!("app-daily-editor-include-full-price-affinity-items"));
+                                            ui.small(tr!("app-daily-editor-enter-the-maximum-amount-of-each"));
                                         }
                                         if action == StageAction::EssenceSwap {
-                                            ui.small(text("Place after Emporium to exchange essences bought in this run.", "Nach Emporium einfügen, um in diesem Lauf gekaufte Essenzen zu tauschen."));
+                                            ui.small(tr!("app-daily-editor-place-after-emporium-to-exchange-essences"));
                                         }
                                         ui.horizontal_wrapped(|ui| {
-                                            if ui.add_enabled(index > 0, egui::Button::new(text("Up", "Hoch")).small()).clicked() {
+                                            if ui.add_enabled(index > 0, egui::Button::new(tr!("app-daily-editor-up")).small()).clicked() {
                                                 placement = Some((action, index - 1));
                                             }
-                                            if ui.add_enabled(index + 1 < count, egui::Button::new(text("Down", "Runter")).small()).clicked() {
+                                            if ui.add_enabled(index + 1 < count, egui::Button::new(tr!("app-daily-editor-down")).small()).clicked() {
                                                 placement = Some((action, index + 2));
                                             }
-                                            if ui.add_enabled(index + 1 < count, egui::Button::new(text("To end", "Ans Ende")).small()).clicked() {
+                                            if ui.add_enabled(index + 1 < count, egui::Button::new(tr!("app-daily-editor-to-end")).small()).clicked() {
                                                 placement = Some((action, count));
                                             }
-                                            if ui.small_button(text("Remove", "Entfernen")).clicked() { remove = Some(index); }
+                                            if ui.small_button(tr!("app-daily-editor-remove")).clicked() { remove = Some(index); }
                                         });
                                     }).response;
                                     if reveal_last && index + 1 == count {
@@ -170,7 +161,7 @@ impl PlayerApp {
                         let ui = &mut drop_area.content_ui;
                         ui.add_sized(
                             [ui.available_width(), 30.0],
-                            egui::Label::new(text("Drop here to place last", "Hier ans Ende ziehen"))
+                            egui::Label::new(tr!("app-daily-editor-drop-here-to-place-last"))
                                 .halign(egui::Align::Center),
                         );
                         let target = drop_area.allocate_space(routine);
@@ -187,13 +178,10 @@ impl PlayerApp {
                 ui.add_space(SpaceTokens::MD);
                 ui.separator();
                 if let Some(error) = &self.daily_settings_error {
-                    ui.colored_label(ColorTokens::CLOSE_HOVER, format_text!(
-                        "Daily settings could not be saved or loaded: {error}",
-                        "Daily-Einstellungen konnten nicht gespeichert oder geladen werden: {error}"
-                    ));
+                    ui.colored_label(ColorTokens::CLOSE_HOVER, tr!("app-daily-editor-daily-settings-could-not-be-saved", error = error));
                 }
-                ui.small(text("The routine is saved automatically.", "Die Routine wird automatisch gespeichert."));
-                close = ui.button(text("Close", "Schließen")).clicked();
+                ui.small(tr!("app-daily-editor-the-routine-is-saved-automatically"));
+                close = ui.button(tr!("app-action-settings-close")).clicked();
             });
         if let Some(index) = remove {
             self.daily_routine.steps.remove(index);
