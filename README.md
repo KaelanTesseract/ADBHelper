@@ -160,7 +160,7 @@ Other portrait 9:16 resolutions are normalized internally to the game's 1080 × 
 
 ## Build from source
 
-Use Windows with Rust's MSVC toolchain, the Visual Studio C++ Build Tools, and the Windows SDK. From the repository root:
+Use Windows with Rust's MSVC toolchain, the Visual Studio C++ Build Tools, and the Windows SDK. `rust-toolchain.toml` pins the Rust version; rustup installs it on the first build. From the repository root:
 
 ```powershell
 # Run the desktop app

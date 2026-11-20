@@ -11,3 +11,4 @@
 - Die Checkboxen für normale und Season-Stages bleiben nebeneinander. Bei gemeinsamer Auswahl läuft Season vor Normal; Stop beendet die ganze Sequenz.
 - Neue Oberflächentexte nur über `tr!("id")` bzw. `tr!("id", name = wert)`, mit Eintrag in `locales/en.ftl` und `locales/de.ftl`. Die Tests in `src/localization/tests.rs` prüfen gleiche Ids und Platzhalter.
 - Neue Abhängigkeiten nur mit Lizenz aus der Liste in `deny.toml`. Ausnahmen oder ignorierte Sicherheitsmeldungen nur nach Rückfrage, mit Begründung, und bei jedem Abhängigkeits-Update neu prüfen.
+- Die Rust-Version steht in `rust-toolchain.toml`. Nur bewusst anheben, danach alle Prüfungen aus `scripts/Build-Release.ps1` laufen lassen.

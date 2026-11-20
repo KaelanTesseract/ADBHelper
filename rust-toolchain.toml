@@ -1,0 +1,8 @@
+# The Rust version for local builds and the GitHub release build.
+# Raise it on purpose: update this file, run scripts/Build-Release.ps1 checks,
+# and note it in the patchnotes if behavior could change.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-pc-windows-msvc"]
+profile = "minimal"
