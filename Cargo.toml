@@ -22,6 +22,8 @@ sha2 = "0.10"
 # Texts in .ftl files; fluent-bundle and unic-langid are MIT OR Apache-2.0 (same versions as PlanoraCAD).
 fluent-bundle = "=0.16.0"
 unic-langid = "=0.9.6"
+# Verifies update signatures (minisign, Ed25519); MIT.
+minisign-verify = "=0.3.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_Security_Credentials", "Win32_System_SystemInformation", "Win32_System_Threading"] }
@@ -30,6 +32,8 @@ windows = { version = "0.62.2", features = ["Foundation", "Globalization", "Grap
 [dev-dependencies]
 # Parses the .ftl files in tests to compare ids and placeholders; MIT OR Apache-2.0.
 fluent-syntax = "=0.12.0"
+# Signs releases in examples/release-signing.rs and creates test keys; MIT.
+minisign = "=0.7.9"
 
 [build-dependencies]
 embed-resource = "3.0.12"

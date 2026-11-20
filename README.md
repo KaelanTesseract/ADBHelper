@@ -137,7 +137,7 @@ All interface texts live in [`locales/en.ftl`](locales/en.ftl) and [`locales/de.
 
 ## Updates
 
-ADBHelper checks for updates at startup and every **five minutes**, including while minimized. A **green update icon beside Settings** opens the new release's patch notes. Choose **Download and install** to download, verify, replace, and restart the app. Installed and standalone copies update the same way; an installed copy also shows the new version under **Windows Settings → Apps**.
+ADBHelper checks for updates at startup and every **five minutes**, including while minimized. A **green update icon beside Settings** opens the new release's patch notes. Choose **Download and install** to download, verify, replace, and restart the app. Installed and standalone copies update the same way; an installed copy also shows the new version under **Windows Settings → Apps**. Every release is signed with the maintainer's [minisign](https://jedisct1.github.io/minisign/) key, and the app installs an update only when its signature matches the public key in [`minisign.pub`](minisign.pub) and the offered version. To check a manual download: `minisign -Vm ADBHelper-Setup-x64.exe -p minisign.pub`.
 
 Updates need write access to the EXE's folder. No GitHub login is required.
 

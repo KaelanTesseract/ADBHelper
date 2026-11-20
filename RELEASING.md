@@ -7,7 +7,8 @@
 3. `./scripts/Build-Release.ps1` ausführen (braucht Inno Setup 6 für den Installer). Ohne Patchnotes, mit unformatiertem Code, Clippy-Warnungen, Funden von `cargo deny` oder fehlschlagenden Tests wird kein Release gebaut.
 4. Quellcode und Patchnotes committen und pushen. Den passenden Tag `v<VERSION>` erstellen und pushen.
 5. Der Windows-Workflow testet und baut den Installer `ADBHelper-Setup-x64.exe` und die einzelne EXE, veröffentlicht beide mit SHA-256-Datei und verwendet genau die neue Patchnotes-Datei als GitHub-Release-Text.
-6. Das veröffentlichte Release auf GitHub und die Update-Erkennung in der App prüfen. Keine bestehenden Release-Dateien nachträglich ersetzen; für Änderungen eine neue Versionsnummer veröffentlichen.
+6. Auf diesem PC signieren: `./scripts/Sign-Release.ps1 -Version v<VERSION>` (fragt das Passwort des Signierschlüssels ab). Das Skript lädt Installer und EXE vom Release, prüft die SHA-256-Werte, signiert beide mit minisign und lädt die `.minisig`-Dateien hoch. Ohne diese Signatur bietet die App das Release nicht als Update an. Der geheime Schlüssel liegt nur unter `%USERPROFILE%\.adbhelper-signing\minisign.key` (mit privater Sicherungskopie) und kommt nie ins Repo, in ein Issue oder in GitHub-Secrets.
+7. Das veröffentlichte Release auf GitHub und die Update-Erkennung in der App prüfen. Keine bestehenden Release-Dateien nachträglich ersetzen; für Änderungen eine neue Versionsnummer veröffentlichen.
 
 Repository: https://github.com/KaelanTesseract/ADBHelper
 

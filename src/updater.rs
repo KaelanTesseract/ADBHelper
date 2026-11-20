@@ -15,6 +15,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REPOSITORY: &str = "KaelanTesseract/ADBHelper";
 pub const REPOSITORY_URL: &str = "https://github.com/KaelanTesseract/ADBHelper";
 pub const ASSET_NAME: &str = "ADBHelper-Windows-x64.exe";
+/// Public half of the maintainer's minisign key. Updates are only offered and
+/// installed when the release carries a matching signature for this version.
+const PUBLIC_KEY: &str = include_str!("../minisign.pub");
+const MAX_SIGNATURE_SIZE: u64 = 4096;
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 pub enum CheckEvent {
@@ -53,6 +57,7 @@ pub struct Release {
     download: String,
     size: u64,
     sha256: String,
+    signature: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,6 +128,17 @@ fn parse_release(json: &str, current: &str) -> Result<Option<Release>, String> {
         .body
         .filter(|s| !s.trim().is_empty())
         .ok_or(tr!("updater-the-release-has-no-patch-notes"))?;
+    // The maintainer signs a release on their own PC after GitHub publishes it.
+    // Until the signature is uploaded, the release is not offered.
+    let signature_name = format!("{ASSET_NAME}{}", crate::release_signature::SUFFIX);
+    let Some(signature) = release.assets.iter().find(|a| a.name == signature_name) else {
+        return Ok(None);
+    };
+    if !signature.browser_download_url.starts_with(&prefix)
+        || !(1..=MAX_SIGNATURE_SIZE).contains(&signature.size)
+    {
+        return Err(tr!("updater-invalid-release-file").into());
+    }
     let artwork = release_artwork(&release.tag_name, &notes, &release.assets);
     Ok(Some(Release {
         version: version.to_string(),
@@ -132,6 +148,7 @@ fn parse_release(json: &str, current: &str) -> Result<Option<Release>, String> {
         download: asset.browser_download_url.clone(),
         size: asset.size,
         sha256: sha256.to_owned(),
+        signature: signature.browser_download_url.clone(),
     }))
 }
 
@@ -204,6 +221,47 @@ fn agent(timeout: Duration) -> ureq::Agent {
         .timeout_global(Some(timeout))
         .build()
         .into()
+}
+
+fn fetch_signature(url: &str) -> Result<String, String> {
+    let mut response = agent(Duration::from_secs(20))
+        .get(url)
+        .header("User-Agent", &format!("ADBHelper/{VERSION}"))
+        .call()
+        .map_err(|e| tr!("updater-download-failed-e", e = e))?;
+    response
+        .body_mut()
+        .with_config()
+        .limit(MAX_SIGNATURE_SIZE)
+        .read_to_string()
+        .map_err(|e| tr!("updater-download-failed-e", e = e))
+}
+
+/// Checks the downloaded EXE against the release signature and its version.
+fn verify_signature(
+    file: &Path,
+    signature: &str,
+    version: &str,
+    public_key: &str,
+) -> Result<(), String> {
+    let invalid = || tr!("updater-the-update-signature-is-not-valid").to_owned();
+    let key = minisign_verify::PublicKey::decode(public_key).map_err(|_| invalid())?;
+    let signature = minisign_verify::Signature::decode(signature).map_err(|_| invalid())?;
+    if signature.trusted_comment() != crate::release_signature::trusted_comment(ASSET_NAME, version)
+    {
+        return Err(invalid());
+    }
+    let mut verifier = key.verify_stream(&signature).map_err(|_| invalid())?;
+    let mut reader = fs::File::open(file).map_err(|e| e.to_string())?;
+    let mut buffer = [0_u8; 65536];
+    loop {
+        let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
+            break;
+        }
+        verifier.update(&buffer[..count]);
+    }
+    verifier.finalize().map_err(|_| invalid())
 }
 
 pub fn check(current: &str) -> Result<Option<Release>, String> {
@@ -368,6 +426,8 @@ pub fn download_and_handoff(release: &Release, mut progress: impl FnMut(u8)) -> 
     output.sync_all().map_err(|e| e.to_string())?;
     drop(output);
     verify_executable(&download, release.size, &release.sha256)?;
+    let signature = fetch_signature(&release.signature)?;
+    verify_signature(&download, &signature, &release.version, PUBLIC_KEY)?;
     let job = Job {
         target: target.clone(),
         staging: staging.clone(),
@@ -722,7 +782,7 @@ mod tests {
         }
     }
     fn release(version: &str) -> serde_json::Value {
-        serde_json::json!({"tag_name":version,"body":"## Änderungen\n- Update-Funktion verbessert.","assets":[{"name":ASSET_NAME,"browser_download_url":format!("{REPOSITORY_URL}/releases/download/{version}/{ASSET_NAME}"),"size":8192,"digest":format!("sha256:{}", "a".repeat(64))}]})
+        serde_json::json!({"tag_name":version,"body":"## Änderungen\n- Update-Funktion verbessert.","assets":[{"name":ASSET_NAME,"browser_download_url":format!("{REPOSITORY_URL}/releases/download/{version}/{ASSET_NAME}"),"size":8192,"digest":format!("sha256:{}", "a".repeat(64))},{"name":format!("{ASSET_NAME}.minisig"),"browser_download_url":format!("{REPOSITORY_URL}/releases/download/{version}/{ASSET_NAME}.minisig"),"size":320}]})
     }
     #[test]
     fn version_order_uses_semver_not_text_or_build_metadata() {
@@ -741,6 +801,61 @@ mod tests {
             .unwrap()
             .is_none());
     }
+    #[test]
+    fn unsigned_releases_are_not_offered_and_foreign_signature_urls_fail() {
+        let mut unsigned = release("v0.5.0");
+        unsigned["assets"].as_array_mut().unwrap().pop();
+        assert!(parse_release(&unsigned.to_string(), "0.4.0")
+            .unwrap()
+            .is_none());
+        let mut foreign = release("v0.5.0");
+        foreign["assets"][1]["browser_download_url"] =
+            serde_json::json!("https://example.com/ADBHelper-Windows-x64.exe.minisig");
+        assert!(parse_release(&foreign.to_string(), "0.4.0").is_err());
+        let mut huge = release("v0.5.0");
+        huge["assets"][1]["size"] = serde_json::json!(MAX_SIGNATURE_SIZE + 1);
+        assert!(parse_release(&huge.to_string(), "0.4.0").is_err());
+    }
+
+    fn signed(bytes: &[u8], comment: &str) -> (String, String) {
+        let pair = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let signature = minisign::sign(
+            Some(&pair.pk),
+            &pair.sk,
+            std::io::Cursor::new(bytes),
+            Some(comment),
+            None,
+        )
+        .unwrap();
+        (pair.pk.to_box().unwrap().to_string(), signature.to_string())
+    }
+
+    #[test]
+    fn signatures_must_match_the_file_the_version_and_the_key() {
+        let dir = TestDir::new();
+        let file = dir.file("ADBHelper-Windows-x64.exe");
+        fs::write(&file, b"genuine release bytes").unwrap();
+        let comment = crate::release_signature::trusted_comment(ASSET_NAME, "0.5.0");
+        let (key, signature) = signed(b"genuine release bytes", &comment);
+        assert_eq!(verify_signature(&file, &signature, "0.5.0", &key), Ok(()));
+        assert_eq!(verify_signature(&file, &signature, "v0.5.0", &key), Ok(()));
+        // Replayed older signature, tampered file, foreign key, broken text.
+        assert!(verify_signature(&file, &signature, "0.6.0", &key).is_err());
+        fs::write(&file, b"tampered release bytes").unwrap();
+        assert!(verify_signature(&file, &signature, "0.5.0", &key).is_err());
+        fs::write(&file, b"genuine release bytes").unwrap();
+        let (other_key, _) = signed(b"x", &comment);
+        assert!(verify_signature(&file, &signature, "0.5.0", &other_key).is_err());
+        assert!(verify_signature(&file, "not a signature", "0.5.0", &key).is_err());
+        let (_, other_file) = signed(b"other", &comment);
+        assert!(verify_signature(&file, &other_file, "0.5.0", &key).is_err());
+    }
+
+    #[test]
+    fn the_embedded_public_key_is_valid() {
+        assert!(minisign_verify::PublicKey::decode(PUBLIC_KEY).is_ok());
+    }
+
     #[test]
     fn release_requires_notes_hash_and_the_expected_repository_asset() {
         for changed in ["notes", "digest", "url", "name", "size"] {
@@ -800,7 +915,7 @@ mod tests {
         let mut unrelated = json.clone();
         unrelated["body"] = "![Tracking pixel](https://example.com/image.png)".into();
         assert!(parse(&unrelated).artwork.is_none());
-        json["assets"][1]["digest"] = serde_json::Value::Null;
+        json["assets"][2]["digest"] = serde_json::Value::Null;
         assert!(parse(&json).artwork.is_none());
     }
 

@@ -8,3 +8,4 @@
 - **Installer**: new users can install ADBHelper with **ADBHelper-Setup-x64.exe**: per user, no administrator rights, Start menu entry, uninstall through Windows Settings. The standalone EXE stays available, and existing copies keep updating as before.
 - **Fishing warning**: starting Fishing now shows a notice that the action is still work in progress.
 - **Third-party notices** are linked from **Settings** and installed next to the app.
+- **Signed updates**: updates are now installed only when the release carries a valid signature from the maintainer's key for exactly that version, in addition to the SHA-256 check. Releases are signed with minisign; the public key is `minisign.pub` in the repository.

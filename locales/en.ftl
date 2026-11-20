@@ -617,3 +617,7 @@ app-fishing-warning-cancel = Cancel
 ## app-settings-page
 
 app-settings-page-third-party-notices = Third-party notices and licenses
+
+## updater-signature
+
+updater-the-update-signature-is-not-valid = The update signature is not valid. The update was not installed. Download ADBHelper from the official GitHub releases page.

@@ -10,6 +10,7 @@ pub mod design_system;
 mod install_info;
 mod localization;
 mod logfile;
+mod release_signature;
 mod routine;
 mod settings;
 mod timing;

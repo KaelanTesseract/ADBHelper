@@ -116,7 +116,17 @@ fn every_id_used_in_the_code_exists() {
             continue;
         }
         let code = std::fs::read_to_string(&file).unwrap();
-        for part in code.split("tr!(\"").skip(1) {
+        let marker = "tr!(\"";
+        for (at, _) in code.match_indices(marker) {
+            // Skip other macros that end in "tr!(", such as include_str!(.
+            if code[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            {
+                continue;
+            }
+            let part = &code[at + marker.len()..];
             let id = &part[..part.find('"').unwrap()];
             used += 1;
             if !english.contains_key(id) {
