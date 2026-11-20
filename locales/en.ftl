@@ -606,3 +606,14 @@ updater-launch-failed-and-the-previous-version = Launch failed and the previous 
 ## main
 
 main-no-newer-release-is-available = No newer release is available.
+
+## app-fishing-warning
+
+app-fishing-warning-title = Fishing is work in progress
+app-fishing-warning-body = This action is still being developed. It can stop early, miss a catch, or leave the game on the map or in the minigame. Watch the emulator while it runs and press Stop if something looks wrong.
+app-fishing-warning-start = Start anyway
+app-fishing-warning-cancel = Cancel
+
+## app-settings-page
+
+app-settings-page-third-party-notices = Third-party notices and licenses

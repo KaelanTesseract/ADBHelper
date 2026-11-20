@@ -7,6 +7,7 @@ mod app;
 mod charts;
 mod credentials;
 pub mod design_system;
+mod install_info;
 mod localization;
 mod logfile;
 mod routine;
@@ -57,6 +58,7 @@ fn main() -> ExitCode {
         };
     }
     if command.is_none() || command.as_deref() == Some("--update-result") {
+        install_info::record_version(updater::VERSION);
         return match eframe::run_native(
             "ADBHelper · AFK Journey",
             eframe::NativeOptions {

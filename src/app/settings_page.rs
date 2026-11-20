@@ -64,6 +64,10 @@ impl PlayerApp {
                 tr!("app-settings-page-github-repository"),
                 updater::REPOSITORY_URL,
             );
+            ui.hyperlink_to(
+                tr!("app-settings-page-third-party-notices"),
+                format!("{}/blob/main/THIRD_PARTY.md", updater::REPOSITORY_URL),
+            );
             ui.small(tr!(
                 "app-settings-page-checks-automatically-at-startup-and-every"
             ));

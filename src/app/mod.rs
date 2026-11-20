@@ -4,6 +4,7 @@
 mod action_settings;
 mod daily_editor;
 mod dashboard;
+mod fishing_warning;
 mod run;
 mod settings_page;
 mod updates;
@@ -203,6 +204,8 @@ pub struct PlayerApp {
     update_notice: Option<String>,
     close_for_update: bool,
     update_dialog_open: bool,
+    fishing_warning_open: bool,
+    fishing_warning_accepted: bool,
     update_requests: Sender<()>,
 }
 
@@ -287,6 +290,8 @@ impl PlayerApp {
             update_notice: updater::startup_notice(),
             close_for_update: false,
             update_dialog_open: false,
+            fishing_warning_open: false,
+            fishing_warning_accepted: false,
             update_requests,
         };
         app.log(format!(
@@ -581,6 +586,7 @@ impl eframe::App for PlayerApp {
         } else {
             self.show_action_settings_dialog(ui.ctx());
         }
+        self.show_fishing_warning(ui.ctx());
     }
 }
 

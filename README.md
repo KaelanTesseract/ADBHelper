@@ -37,13 +37,13 @@ ADBHelper runs AFK Journey actions on an Android device or emulator through ADB.
 
 ### First run
 
-1. Download **[ADBHelper-Windows-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Windows-x64.exe)**.
+1. Download and run **[ADBHelper-Setup-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Setup-x64.exe)**. It installs ADBHelper for your Windows user under `%LOCALAPPDATA%\Programs\ADBHelper` without administrator rights and adds a Start menu entry. Prefer no installation? Download **[ADBHelper-Windows-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Windows-x64.exe)** and run it from any folder you can write to.
 2. Start your emulator or connect your Android device, then open AFK Journey.
 3. Launch ADBHelper. In **Settings**, find and select your authorized device. Accept the Android USB debugging prompt if shown.
 4. Open an action's **gear button** to configure it, then click **Start**.
 5. Use **Stop** to end the current action or the entire Daily routine.
 
-No Rust installation is needed to use the downloaded EXE.
+No Rust installation is needed. Uninstall through **Windows Settings → Apps**; your settings and Daily routine in `%APPDATA%\ADBHelper` stay for a later reinstall.
 
 ## Actions
 
@@ -137,7 +137,7 @@ All interface texts live in [`locales/en.ftl`](locales/en.ftl) and [`locales/de.
 
 ## Updates
 
-ADBHelper checks for updates at startup and every **five minutes**, including while minimized. A **green update icon beside Settings** opens the new release's patch notes. Choose **Download and install** to download, verify, replace, and restart the app.
+ADBHelper checks for updates at startup and every **five minutes**, including while minimized. A **green update icon beside Settings** opens the new release's patch notes. Choose **Download and install** to download, verify, replace, and restart the app. Installed and standalone copies update the same way; an installed copy also shows the new version under **Windows Settings → Apps**.
 
 Updates need write access to the EXE's folder. No GitHub login is required.
 

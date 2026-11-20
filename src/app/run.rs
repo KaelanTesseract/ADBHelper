@@ -30,6 +30,11 @@ impl PlayerApp {
         if self.busy {
             return;
         }
+        // Fishing is still work in progress: ask every time before it starts.
+        if action == StageAction::Fishing && !std::mem::take(&mut self.fishing_warning_accepted) {
+            self.fishing_warning_open = true;
+            return;
+        }
         self.action_error = None;
         self.recovery_notice = None;
         if action == StageAction::Daily {

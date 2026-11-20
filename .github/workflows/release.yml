@@ -13,6 +13,12 @@ jobs:
         run: rustup toolchain install
       - name: Install cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Install Inno Setup if the runner lacks it
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
       - name: Test and build with mandatory patchnotes
         shell: pwsh
         run: ./scripts/Build-Release.ps1 -Version $env:GITHUB_REF_NAME
@@ -21,7 +27,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $assets = @('dist/ADBHelper-Windows-x64.exe', 'dist/ADBHelper-Windows-x64.exe.sha256')
+          $assets = @('dist/ADBHelper-Setup-x64.exe', 'dist/ADBHelper-Setup-x64.exe.sha256', 'dist/ADBHelper-Windows-x64.exe', 'dist/ADBHelper-Windows-x64.exe.sha256')
           $image = "releases/media/ADBHelper-$env:GITHUB_REF_NAME.png"
           if (Test-Path -LiteralPath $image) { $assets += $image }
           gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "ADBHelper $env:GITHUB_REF_NAME" --notes-file "releases/$env:GITHUB_REF_NAME.md"

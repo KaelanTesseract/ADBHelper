@@ -606,3 +606,14 @@ updater-launch-failed-and-the-previous-version = Start fehlgeschlagen; alte Vers
 ## main
 
 main-no-newer-release-is-available = Kein neueres Release verfügbar.
+
+## app-fishing-warning
+
+app-fishing-warning-title = Angeln ist noch in Arbeit
+app-fishing-warning-body = Diese Aktion wird noch entwickelt. Sie kann vorzeitig anhalten, einen Fang verpassen oder das Spiel auf der Karte oder im Minispiel zurücklassen. Behalte den Emulator im Blick und drücke Stop, wenn etwas nicht stimmt.
+app-fishing-warning-start = Trotzdem starten
+app-fishing-warning-cancel = Abbrechen
+
+## app-settings-page
+
+app-settings-page-third-party-notices = Hinweise und Lizenzen Dritter
