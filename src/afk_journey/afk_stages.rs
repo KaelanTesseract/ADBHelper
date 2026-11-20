@@ -848,11 +848,9 @@ fn battle_with_current_team(
                 // Transport loss and game crashes also consume this attempt.
                 // Preserve its budget before the shared supervisor reopens the mode.
                 super::recovery::save_team_cursor(mode, cursor);
-                if error == ActionError::BattleResultTimeout {
-                    if !cursor.can_resume(settings) {
-                        log(tr!("afk-stages-no-battle-result-was-detected-after").into());
-                        return Ok(StageResult::FormationFailed);
-                    }
+                if error == ActionError::BattleResultTimeout && !cursor.can_resume(settings) {
+                    log(tr!("afk-stages-no-battle-result-was-detected-after").into());
+                    return Ok(StageResult::FormationFailed);
                 }
                 return Err(error);
             }
@@ -914,9 +912,8 @@ fn battle_with_current_team(
                     retry: None,
                     mode,
                 };
-                let outcome = handle_ambiguous_result(&mut driver).map_err(|error| {
+                let outcome = handle_ambiguous_result(&mut driver).inspect_err(|_| {
                     progress(ProgressEvent::BattleFinished(mode, BattleOutcome::Unclear));
-                    error
                 })?;
                 progress(ProgressEvent::BattleFinished(mode, outcome));
                 if matches!(outcome, BattleOutcome::Won) {

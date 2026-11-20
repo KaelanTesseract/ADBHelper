@@ -5,6 +5,10 @@ $packageVersion = ((Select-String -LiteralPath 'Cargo.toml' -Pattern '^version =
 if ($Version -and $Version.TrimStart('v') -ne $packageVersion) { throw 'Tag and Cargo version differ.' }
 $notes = Join-Path 'releases' "v$packageVersion.md"
 if (!(Test-Path -LiteralPath $notes) -or (Get-Content -LiteralPath $notes -Raw).Trim().Length -lt 40) { throw 'Write release patchnotes before publishing.' }
+cargo fmt --all -- --check
+if ($LASTEXITCODE -ne 0) { throw 'Code is not formatted. Run cargo fmt --all.' }
+cargo clippy --release --locked --all-targets -- -D warnings
+if ($LASTEXITCODE -ne 0) { throw 'Clippy found warnings.' }
 cargo test --release --locked
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 cargo build --release --locked

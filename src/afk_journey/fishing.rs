@@ -164,7 +164,7 @@ fn zero_attempts(label: &str) -> bool {
     let Some((first, _)) = compact.split_once('/') else {
         return false;
     };
-    first.chars().next_back() == Some('0')
+    first.ends_with('0')
         && !first
             .chars()
             .rev()

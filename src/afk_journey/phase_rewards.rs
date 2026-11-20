@@ -108,7 +108,7 @@ pub(super) fn green_control(color: &RgbImage, line: &ocr::TextLine) -> bool {
     total > 0 && green * 100 > total * 35
 }
 
-fn scope_tab<'a>(lines: &'a [ocr::TextLine], scope: RankingScope) -> Option<&'a ocr::TextLine> {
+fn scope_tab(lines: &[ocr::TextLine], scope: RankingScope) -> Option<&ocr::TextLine> {
     lines.iter().find(|l| {
         l.y > 1730.0
             && l.y < 1830.0
@@ -358,7 +358,7 @@ fn quick_claim(frame: &Frame) -> Option<(u32, u32)> {
         .map(ocr::TextLine::center)
 }
 
-fn claim_control(frame: &Frame) -> Result<Option<(Claim, (u32, u32))>, ActionError> {
+fn claim_control(frame: &Frame) -> Result<Option<(Claim, vision::Point)>, ActionError> {
     let quick = quick_claim(frame).map(|point| (Claim::Quick, point));
     match rows(frame) {
         Ok(rows) => Ok(rows

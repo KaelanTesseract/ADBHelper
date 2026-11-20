@@ -12,6 +12,11 @@ pub(in crate::afk_journey) use templates::*;
 pub(crate) use wait::ensure_not_cancelled;
 pub(in crate::afk_journey) use wait::*;
 
+/// A pixel position on the 1080 x 1920 base screen.
+pub(in crate::afk_journey) type Point = (u32, u32);
+/// Width and height of the device screenshot in pixels.
+pub(in crate::afk_journey) type ScreenSize = (u32, u32);
+
 pub(in crate::afk_journey) const MATCH_THRESHOLD: f32 = 0.78;
 #[derive(Clone, Copy)]
 pub(in crate::afk_journey) struct Rect {

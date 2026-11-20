@@ -44,7 +44,7 @@ fn main() {
         ),
     )
     .expect("write icon resource");
-    embed_resource::compile_for(&resource, &["adbhelper"], embed_resource::NONE)
+    embed_resource::compile_for(&resource, ["adbhelper"], embed_resource::NONE)
         .manifest_required()
         .expect("embed Windows application icon");
 }

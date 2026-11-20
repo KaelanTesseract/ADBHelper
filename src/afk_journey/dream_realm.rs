@@ -256,7 +256,7 @@ impl Frame {
                 .is_some())
     }
 
-    fn formation_control(&self) -> Result<Option<((u32, u32), bool)>, ActionError> {
+    fn formation_control(&self) -> Result<Option<(vision::Point, bool)>, ActionError> {
         if self
             .point("battle/records.png", region(205, 1695, 200, 190), 0.82)?
             .is_none()
@@ -753,9 +753,9 @@ mod tests {
         let reward = load("ranking");
         assert!(reward.reward_close(true).unwrap().is_some());
         let formation = load("formation_or_battle");
-        assert_eq!(formation.formation_control().unwrap().unwrap().1, false);
+        assert!(!formation.formation_control().unwrap().unwrap().1);
         let endless = load("endless_formation");
-        assert_eq!(endless.formation_control().unwrap().unwrap().1, true);
+        assert!(endless.formation_control().unwrap().unwrap().1);
         for name in ["result_summary", "endless_summary"] {
             let summary = load(name);
             assert!(summary.battle_summary().unwrap(), "{name}");

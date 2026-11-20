@@ -19,7 +19,7 @@ pub const CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 pub enum CheckEvent {
     Started,
-    Finished(Result<Option<Release>, String>),
+    Finished(Box<Result<Option<Release>, String>>),
 }
 
 pub fn watch_updates(requests: std::sync::mpsc::Receiver<()>, report: impl FnMut(CheckEvent)) {
@@ -34,7 +34,7 @@ fn watch_with(
 ) {
     loop {
         report(CheckEvent::Started);
-        report(CheckEvent::Finished(fetch()));
+        report(CheckEvent::Finished(Box::new(fetch())));
         match requests.recv_timeout(interval) {
             Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,

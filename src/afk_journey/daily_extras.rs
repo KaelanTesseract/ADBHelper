@@ -179,7 +179,7 @@ fn stable_paid_status(
     serial: &str,
     cancelled: &AtomicBool,
     accept: impl Fn(PaidStatus) -> bool,
-) -> Result<Option<(PaidStatus, (u32, u32))>, ActionError> {
+) -> Result<Option<(PaidStatus, vision::ScreenSize)>, ActionError> {
     let mut last = None;
     for _ in 0..10 {
         vision::ensure_not_cancelled(cancelled)?;

@@ -394,62 +394,6 @@ fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
     }
 }
 
-#[cfg(test)]
-mod process_tests {
-    use super::*;
-    #[test]
-    fn transport_failures_and_foreground_records_are_unambiguous() {
-        for value in [
-            "ADB command failed: ADB command failed: error: closed",
-            "error: device offline",
-            "error: device '127.0.0.1:7555' not found",
-            "ADB command failed: adb.exe: device '127.0.0.1:7555' not found",
-            "error: connection reset by peer",
-        ] {
-            assert!(is_transport_error(value), "{value}");
-        }
-        for value in [
-            "The battle closed without a result",
-            "AFK Journey is not installed",
-            "device unauthorized",
-            "permission denied",
-        ] {
-            assert!(!is_transport_error(value), "{value}");
-        }
-        let focus = "mResumedActivity: ActivityRecord{12 u0 app.lawnchair/.LawnchairLauncher t2}\ntopResumedActivity=ActivityRecord{34 u0 com.farlightgames.igame.gp/com.game.Main t7}";
-        assert_eq!(
-            foreground_package(focus).as_deref(),
-            Some("com.farlightgames.igame.gp")
-        );
-        assert_eq!(
-            foreground_package(
-                "topResumedActivity=ActivityRecord{12 u0 app.lawnchair/.LawnchairLauncher t2}"
-            )
-            .as_deref(),
-            Some("app.lawnchair")
-        );
-        assert_eq!(
-            foreground_package("background record com.farlightgames.igame.gp/com.game.Main"),
-            None
-        );
-        assert_eq!(component_package("No activity found"), None);
-    }
-    #[test]
-    fn missing_process_is_distinct_from_unsupported_or_failed_adb_commands() {
-        assert!(parse_game_process("30257\r\r\nADBHELPER_PID_EXIT:0\r\n").unwrap());
-        assert!(!parse_game_process("ADBHELPER_PID_EXIT:1\r\n").unwrap());
-        for response in [
-            "error: closed",
-            "device offline",
-            "ADBHELPER_PID_EXIT:127",
-            "ADBHELPER_PID_EXIT:0",
-            "0\nADBHELPER_PID_EXIT:0",
-        ] {
-            assert!(parse_game_process(response).is_err(), "{response}");
-        }
-    }
-}
-
 pub fn display_size(serial: &str) -> Result<(u32, u32), AdbError> {
     let output = shell(serial, &["wm", "size"])?;
     let stdout = String::from_utf8(output.stdout)
@@ -537,5 +481,61 @@ fn run(args: &[&str]) -> Result<Output, AdbError> {
         } else {
             message
         }))
+    }
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::*;
+    #[test]
+    fn transport_failures_and_foreground_records_are_unambiguous() {
+        for value in [
+            "ADB command failed: ADB command failed: error: closed",
+            "error: device offline",
+            "error: device '127.0.0.1:7555' not found",
+            "ADB command failed: adb.exe: device '127.0.0.1:7555' not found",
+            "error: connection reset by peer",
+        ] {
+            assert!(is_transport_error(value), "{value}");
+        }
+        for value in [
+            "The battle closed without a result",
+            "AFK Journey is not installed",
+            "device unauthorized",
+            "permission denied",
+        ] {
+            assert!(!is_transport_error(value), "{value}");
+        }
+        let focus = "mResumedActivity: ActivityRecord{12 u0 app.lawnchair/.LawnchairLauncher t2}\ntopResumedActivity=ActivityRecord{34 u0 com.farlightgames.igame.gp/com.game.Main t7}";
+        assert_eq!(
+            foreground_package(focus).as_deref(),
+            Some("com.farlightgames.igame.gp")
+        );
+        assert_eq!(
+            foreground_package(
+                "topResumedActivity=ActivityRecord{12 u0 app.lawnchair/.LawnchairLauncher t2}"
+            )
+            .as_deref(),
+            Some("app.lawnchair")
+        );
+        assert_eq!(
+            foreground_package("background record com.farlightgames.igame.gp/com.game.Main"),
+            None
+        );
+        assert_eq!(component_package("No activity found"), None);
+    }
+    #[test]
+    fn missing_process_is_distinct_from_unsupported_or_failed_adb_commands() {
+        assert!(parse_game_process("30257\r\r\nADBHELPER_PID_EXIT:0\r\n").unwrap());
+        assert!(!parse_game_process("ADBHELPER_PID_EXIT:1\r\n").unwrap());
+        for response in [
+            "error: closed",
+            "device offline",
+            "ADBHELPER_PID_EXIT:127",
+            "ADBHELPER_PID_EXIT:0",
+            "0\nADBHELPER_PID_EXIT:0",
+        ] {
+            assert!(parse_game_process(response).is_err(), "{response}");
+        }
     }
 }

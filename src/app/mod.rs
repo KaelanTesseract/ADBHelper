@@ -302,7 +302,7 @@ impl PlayerApp {
             updater::watch_updates(update_receiver, |event| {
                 let message = match event {
                     updater::CheckEvent::Started => Event::UpdateCheckStarted,
-                    updater::CheckEvent::Finished(result) => Event::UpdateChecked(result),
+                    updater::CheckEvent::Finished(result) => Event::UpdateChecked(*result),
                 };
                 let _ = update_sender.send(message);
                 update_context.request_repaint();

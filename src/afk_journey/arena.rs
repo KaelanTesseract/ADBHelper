@@ -493,7 +493,7 @@ fn result_prompt(lines: &[TextLine], outcome: BattleOutcome) -> Option<(u32, u32
 fn battle_result(
     screen: &GrayImage,
     seen_battle: bool,
-) -> Result<Option<(BattleOutcome, (u32, u32))>, ActionError> {
+) -> Result<Option<(BattleOutcome, vision::Point)>, ActionError> {
     let lines = ocr::recognize(screen)?;
     let outcome = result_outcome(&lines);
     if let Some(close) = result_prompt(&lines, outcome) {
@@ -770,7 +770,9 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
         .into())
     }
 
-    fn prepare_supreme_battle(&mut self) -> Result<Option<(Match, (u32, u32))>, ActionError> {
+    fn prepare_supreme_battle(
+        &mut self,
+    ) -> Result<Option<(Match, vision::ScreenSize)>, ActionError> {
         // Continue may resume any of the three formations. Advance only while
         // Next is actually present; an existing Battle screen needs no Next taps.
         let mut advances = 0;
@@ -1111,8 +1113,8 @@ mod tests {
         let mut ordinary = button.clone();
         ordinary.text = "Off Season".into();
         assert!(off_season_text(&[status.clone(), ordinary]));
-        assert!(!off_season_text(&[status.clone()]));
-        assert!(!off_season_text(&[button.clone()]));
+        assert!(!off_season_text(std::slice::from_ref(&status)));
+        assert!(!off_season_text(std::slice::from_ref(&button)));
         let mut active = button.clone();
         active.text = "Continue".into();
         assert!(!off_season_text(&[status.clone(), active]));
@@ -1798,7 +1800,7 @@ mod tests {
         assert!(matches!(outcome, BattleOutcome::Won));
         assert_eq!(result_prompt(&lines, outcome), Some(prompt.center()));
         assert_eq!(
-            result_prompt(&[prompt.clone()], BattleOutcome::Unclear),
+            result_prompt(std::slice::from_ref(&prompt), BattleOutcome::Unclear),
             None
         );
         assert_eq!(

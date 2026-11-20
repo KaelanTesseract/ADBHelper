@@ -30,7 +30,7 @@ pub(in crate::afk_journey) fn poll_for_match(
     roi: Rect,
     timeout: Duration,
     cancelled: &AtomicBool,
-) -> Result<Option<(String, Match, (u32, u32))>, ActionError> {
+) -> Result<Option<(String, Match, super::ScreenSize)>, ActionError> {
     let started = Instant::now();
     while started.elapsed() < timeout {
         ensure_not_cancelled(cancelled)?;
