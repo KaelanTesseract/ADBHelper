@@ -30,6 +30,7 @@ pub enum Action {
     EssenceSwap,
     HeroScan,
     GuildScan,
+    Fishing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -114,6 +115,7 @@ impl Action {
             Self::EssenceSwap => 23,
             Self::HeroScan => 24,
             Self::GuildScan => 25,
+            Self::Fishing => 26,
         }
     }
 
@@ -139,6 +141,7 @@ impl Action {
             Self::EssenceSwap => GameMode::EssenceSwap.label(),
             Self::HeroScan => GameMode::HeroScan.label(),
             Self::GuildScan => GameMode::GuildScan.label(),
+            Self::Fishing => GameMode::Fishing.label(),
             Self::Daily => "Daily",
             Self::AfkRewards => text("AFK rewards · 2 claims", "AFK-Belohnungen · 2× abholen"),
             Self::FreeHourglasses => text(

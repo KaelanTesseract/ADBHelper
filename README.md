@@ -107,6 +107,10 @@ Start either scanner from the dashboard with AFK Journey set to English. ADBHelp
 - **AFKJ Tracker Scan** reads hero ascension and exclusive weapon levels from the roster. Import the completed `afkj_tracker_backup.json` in [AFKJ Tracker](https://afkj-tracker.vercel.app/). Review any file marked `partial` before importing.
 - **Guild Manager Scan** exports the selected Dream Realm days, Supreme Arena, the active Season AFK phase, and guild activeness. The optional `guild_states` API URL from [AFKJ Guild Manager](https://afkj-guildmanager.vercel.app/) lets ADBHelper read the roster from Supabase for matching names and IDs. The URL is kept for the current session. Import the local JSON files in Guild Manager.
 
+## Fishing
+
+Start **Fishing** from the dashboard while in an unlocked region with fishing spots. ADBHelper reads the current region map, selects a spot and uses the game's walking command. The action then casts, hooks fish and controls the reel. It checks the map again when a spot runs out of attempts. You can also start from an open standard fishing screen. Fishing is in preview while catch reliability is being tested.
+
 ## Settings
 
 | Where | Options |

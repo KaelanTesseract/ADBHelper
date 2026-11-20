@@ -129,6 +129,7 @@ impl RunSettings {
             StageAction::EssenceSwap => Some(GameMode::EssenceSwap),
             StageAction::HeroScan => Some(GameMode::HeroScan),
             StageAction::GuildScan => Some(GameMode::GuildScan),
+            StageAction::Fishing => Some(GameMode::Fishing),
             StageAction::AfkRewards => Some(GameMode::AfkRewards),
             StageAction::FreeHourglasses => Some(GameMode::FreeHourglasses),
             StageAction::DiamondHourglasses => Some(GameMode::DiamondHourglasses),
@@ -298,6 +299,9 @@ fn run_step(
                     report,
                 ),
                 StageAction::Daily => Err("A Daily routine cannot contain itself.".into()),
+                StageAction::Fishing => {
+                    crate::afk_journey::fishing::run(serial, cancelled, &mut log, report)
+                }
                 StageAction::HeroScan | StageAction::GuildScan => unreachable!(),
             }
         },
@@ -1165,6 +1169,8 @@ impl PlayerApp {
                             self.show_battle_card(ui, StageAction::HeroScan, text("Export your hero roster for AFKJ Tracker", "Heldenkader für AFKJ Tracker exportieren"));
                             ui.add_space(SpaceTokens::MD);
                             self.show_battle_card(ui, StageAction::GuildScan, text("Export guild activity and rankings", "Gildenaktivität und Ranglisten exportieren"));
+                            ui.add_space(SpaceTokens::MD);
+                            self.show_battle_card(ui, StageAction::Fishing, text("Walk to fishing spots and fish", "Angelstellen anlaufen und angeln"));
                         });
                 },
             );
@@ -1239,6 +1245,7 @@ impl PlayerApp {
                                         GameMode::EssenceSwap => text("SWAPS", "TAUSCHE"),
                                         GameMode::HeroScan => text("HEROES SCANNED", "HELDEN ERFASST"),
                                         GameMode::GuildScan => text("ROWS EXPORTED", "ZEILEN EXPORTIERT"),
+                                        GameMode::Fishing => text("CAUGHT", "GEFANGEN"),
                                         _ => text("COLLECTED", "ABGEHOLT"),
                                     };
                                     progress_metric(ui, label, stats.collected);
@@ -1723,6 +1730,9 @@ impl PlayerApp {
                                         }
                                     });
                                     ui.label(text("Uses your three in-game teams. Selects Next twice, then Battle.", "Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf."));
+                                }
+                                StageAction::Fishing => {
+                                    ui.label(text("Uses available fishing spots on the current region map.", "Nutzt verfügbare Angelstellen auf der Karte der aktuellen Region."));
                                 }
                                 StageAction::HeroScan => {
                                     ui.label(text("Import the completed JSON backup in AFKJ Tracker.", "Importiere die vollständige JSON-Sicherung in AFKJ Tracker."));

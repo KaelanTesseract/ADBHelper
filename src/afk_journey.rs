@@ -16,6 +16,7 @@ pub mod daily;
 pub mod daily_extras;
 pub mod dream_realm;
 pub mod duras_trials;
+pub mod fishing;
 pub mod legend_trial;
 pub mod menu_rewards;
 mod ocr;

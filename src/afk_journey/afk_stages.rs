@@ -536,6 +536,56 @@ fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
         }
         "next.png" => &include_bytes!("../../assets/AFKJourney/next.png")[..],
         "retry.png" => &include_bytes!("../../assets/AFKJourney/retry.png")[..],
+        "fishing/book.png" => include_bytes!("../../assets/AFKJourney/fishing/book.png"),
+        "fishing/fishing_rod.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/fishing_rod.png")
+        }
+        "fishing/fishing_rod_big.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/fishing_rod_big.png")
+        }
+        "fishing/hook_fish.png" => include_bytes!("../../assets/AFKJourney/fishing/hook_fish.png"),
+        "fishing/hook_fish_big.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/hook_fish_big.png")
+        }
+        "fishing/hook.png" => include_bytes!("../../assets/AFKJourney/fishing/hook.png"),
+        "fishing/hook_held.png" => include_bytes!("../../assets/AFKJourney/fishing/hook_held.png"),
+        "fishing/fishing_level.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/fishing_level.png")
+        }
+        "fishing/fishing_level_big.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/fishing_level_big.png")
+        }
+        "fishing/fishing_level_info_button.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/fishing_level_info_button.png")
+        }
+        "fishing/silver_medal.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/silver_medal.png")
+        }
+        "fishing/silver_medal2.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/silver_medal2.png")
+        }
+        "fishing/gold_medal.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/gold_medal.png")
+        }
+        "fishing/gold_medal2.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/gold_medal2.png")
+        }
+        "fishing/map_marker.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/map_marker.png")
+        }
+        "fishing/map_walk.png" => include_bytes!("../../assets/AFKJourney/fishing/map_walk.png"),
+        "fishing/map_counter.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/map_counter.png")
+        }
+        "fishing/map_marker_small.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/map_marker_small.png")
+        }
+        "fishing/map_marker_edge_small.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/map_marker_edge_small.png")
+        }
+        "fishing/map_marker_edge.png" => {
+            include_bytes!("../../assets/AFKJourney/fishing/map_marker_edge.png")
+        }
         _ => {
             return Err(format_text!(
                 "Template is not embedded in this build: {relative_path}",
@@ -1909,7 +1959,8 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
             | GameMode::SinglePull
             | GameMode::EssenceSwap
             | GameMode::HeroScan
-            | GameMode::GuildScan => {
+            | GameMode::GuildScan
+            | GameMode::Fishing => {
                 return Err(text("This is not an AFK Stages mode", "Kein AFK-Stages-Modus").into())
             }
         }));

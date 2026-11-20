@@ -235,6 +235,11 @@ pub fn screenshot(serial: &str) -> Result<Vec<u8>, AdbError> {
     Ok(output.stdout)
 }
 
+pub fn raw_screenshot(serial: &str) -> Result<Vec<u8>, AdbError> {
+    crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
+    Ok(run(&["-s", serial, "exec-out", "screencap"])?.stdout)
+}
+
 pub fn afk_journey_running(serial: &str) -> Result<bool, AdbError> {
     // Older emulator ADB clients report a remote nonzero exit as "error: closed".
     // A fixed Android shell command returns the pidof status as explicit data,
@@ -471,6 +476,23 @@ pub fn tap_game_point(
     let scaled_x = x.saturating_mul(actual_size.0) / crate::afk_journey::BASE_RESOLUTION.0;
     let scaled_y = y.saturating_mul(actual_size.1) / crate::afk_journey::BASE_RESOLUTION.1;
     tap(serial, scaled_x, scaled_y)
+}
+
+pub fn hold_game_point(
+    serial: &str,
+    point: (u32, u32),
+    actual_size: (u32, u32),
+    duration_ms: u32,
+) -> Result<(), AdbError> {
+    let (width, height) = crate::afk_journey::BASE_RESOLUTION;
+    let x = point.0.saturating_mul(actual_size.0) / width;
+    let y = point.1.saturating_mul(actual_size.1) / height;
+    let seconds = duration_ms / 1000;
+    let millis = duration_ms % 1000;
+    let command = format!(
+        "input motionevent DOWN {x} {y} && sleep {seconds}.{millis:03}; input motionevent UP {x} {y}"
+    );
+    shell(serial, &[&command]).map(|_| ())
 }
 
 pub fn swipe_game_points(

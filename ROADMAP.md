@@ -64,7 +64,8 @@ Verfügbare Events zuerst umsetzen. Titan Reaver und Synergy & CC benötigen die
 ## 6. Minispiele und Quests
 
 - [ ] Matching Cards
-- [ ] Fishing
+- [x] Fishing als Dashboard-Aktion. Findet Angelstellen auf der Karte der aktuellen Region, nutzt den automatischen Laufweg und sucht nach ausgeschöpften Versuchen erneut auf der Karte. Kartenerkennung, Ankunft und Start des Standard-Minispiels wurden im Emulator geprüft.
+- [ ] Fishing: Fangbestätigung im durchgehenden Emulatorlauf prüfen.
 - [ ] Auto-Progress Quests nach Matching Cards
 
 ## 7. Scanner

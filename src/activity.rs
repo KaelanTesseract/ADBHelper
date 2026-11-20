@@ -30,6 +30,7 @@ pub enum GameMode {
     EssenceSwap,
     HeroScan,
     GuildScan,
+    Fishing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -119,6 +120,7 @@ impl GameMode {
             Self::EssenceSwap => text("Essence Swap", "Essenzen tauschen"),
             Self::HeroScan => "AFKJ Tracker Scan",
             Self::GuildScan => "Guild Manager Scan",
+            Self::Fishing => text("Fishing", "Angeln"),
             Self::SeasonRankingRewards(RankingScope::District) => {
                 text("Season rewards · District", "Season-Belohnungen · District")
             }
@@ -160,6 +162,7 @@ impl GameMode {
                 | Self::EssenceSwap
                 | Self::HeroScan
                 | Self::GuildScan
+                | Self::Fishing
         )
     }
 
