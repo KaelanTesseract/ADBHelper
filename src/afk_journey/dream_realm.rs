@@ -1,5 +1,6 @@
 //! Dream Realm challenges and the previous day's ranking reward.
 use super::{afk_stages as common, ocr, BATTLE_RESULT_TIMEOUT, BATTLE_TIMEOUT_SECONDS};
+use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, BattleOutcome, GameMode},
     adb,
@@ -13,12 +14,12 @@ use std::{
 
 const MODE: GameMode = GameMode::DreamRealm;
 // The optional Guild Duel banner pushes the first row of cards down.
-const BATTLE_MODES_ENTRY: common::Rect = region(340, 525, 410, 700);
-const FOOTER: common::Rect = region(195, 1680, 885, 212);
-const CLOSE: common::Rect = region(300, 1700, 450, 180);
-const RANKINGS: common::Rect = region(915, 125, 165, 140);
-const RANKING_GIFT: common::Rect = region(1000, 109, 80, 72);
-const RANKING_BACK: common::Rect = region(0, 1740, 220, 180);
+const BATTLE_MODES_ENTRY: vision::Rect = region(340, 525, 410, 700);
+const FOOTER: vision::Rect = region(195, 1680, 885, 212);
+const CLOSE: vision::Rect = region(300, 1700, 450, 180);
+const RANKINGS: vision::Rect = region(915, 125, 165, 140);
+const RANKING_GIFT: vision::Rect = region(1000, 109, 80, 72);
+const RANKING_BACK: vision::Rect = region(0, 1740, 220, 180);
 fn short_wait() -> Duration {
     crate::timing::secs(20)
 }
@@ -26,8 +27,8 @@ pub const MAX_BATTLES: u32 = 30;
 const DEFAULT_BATTLES: u32 = 2;
 const BATTLE_LIMIT_FILE: &str = "dream-realm-battle-limit.txt";
 
-const fn region(x: u32, y: u32, width: u32, height: u32) -> common::Rect {
-    common::Rect {
+const fn region(x: u32, y: u32, width: u32, height: u32) -> vision::Rect {
+    vision::Rect {
         x,
         y,
         width,
@@ -94,8 +95,8 @@ struct Frame {
 
 impl Frame {
     fn read(serial: &str, cancelled: &AtomicBool) -> Result<Self, String> {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
         let lines = ocr::recognize(&screen)?;
         Ok(Self {
             screen,
@@ -107,13 +108,13 @@ impl Frame {
     fn point(
         &self,
         path: &str,
-        roi: common::Rect,
+        roi: vision::Rect,
         confidence: f32,
     ) -> Result<Option<(u32, u32)>, String> {
-        Ok(common::find_template(&self.screen, path, roi, confidence)?.map(common::Match::center))
+        Ok(vision::find_template(&self.screen, path, roi, confidence)?.map(vision::Match::center))
     }
 
-    fn label(&self, roi: common::Rect, matches: impl Fn(&str) -> bool) -> Option<(u32, u32)> {
+    fn label(&self, roi: vision::Rect, matches: impl Fn(&str) -> bool) -> Option<(u32, u32)> {
         self.lines.iter().find_map(|line| {
             let (x, y) = line.center();
             (x >= roi.x
@@ -126,7 +127,7 @@ impl Frame {
     }
 
     fn tap(&self, serial: &str, point: (u32, u32), cancelled: &AtomicBool) -> Result<(), String> {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         adb::tap_game_point(serial, point.0, point.1, self.size).map_err(|e| e.to_string())
     }
 
@@ -198,7 +199,7 @@ impl Frame {
         if let Some(point) = self.label(CLOSE, |s| s == "taptoclose") {
             return Ok(Some(point));
         }
-        Ok(common::get_match(
+        Ok(vision::get_match(
             &self.screen,
             &["tap_to_close.png", "afk_stages/tap_to_close.png"],
             CLOSE,
@@ -354,13 +355,13 @@ fn purchase_chance(
     home.tap(serial, home.battle_button()?, cancelled)?;
     let start = Instant::now();
     while start.elapsed() < short_wait() {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         let Some(offer) = frame.gold_offer()? else {
             continue;
         };
         if offer.remaining == 0 {
-            common::ensure_not_cancelled(cancelled)?;
+            vision::ensure_not_cancelled(cancelled)?;
             adb::press_back(serial).map_err(|e| e.to_string())?;
             log(text(
                 "No extra Dream Realm chances remain.",
@@ -378,7 +379,7 @@ fn purchase_chance(
         frame.tap(serial, confirm, cancelled)?;
         let purchased = Instant::now();
         while purchased.elapsed() < short_wait() {
-            common::settle_cancellable(cancelled)?;
+            vision::settle_cancellable(cancelled)?;
             let next = Frame::read(serial, cancelled)?;
             if (next.home()?.is_some() && next.remaining()?.is_some_and(|n| n > 0))
                 || next.formation_control()?.is_some()
@@ -416,7 +417,7 @@ fn wait_home(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
         if frame.home()?.is_some() {
             return Ok(frame);
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "The Dream Realm overview could not be verified.",
@@ -438,7 +439,7 @@ pub(super) fn open_rankings_for_scan(
     home.tap(serial, entry, cancelled)?;
     let start = Instant::now();
     while start.elapsed() < short_wait() {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         if frame.rankings() {
             return Ok(());
@@ -467,15 +468,15 @@ fn navigate(
         return return_from_rankings(serial, frame, cancelled);
     }
     common::navigate_to_battle_modes(serial, cancelled, log)?;
-    let (_, entry, size) = common::wait_for_match(
+    let (_, entry, size) = vision::wait_for_match(
         serial,
         &["dream_realm/label.png"],
         BATTLE_MODES_ENTRY,
         short_wait(),
         cancelled,
     )?;
-    common::ensure_not_cancelled(cancelled)?;
-    common::tap_match(serial, entry, size)?;
+    vision::ensure_not_cancelled(cancelled)?;
+    vision::tap_match(serial, entry, size)?;
     wait_home(serial, cancelled)
 }
 
@@ -494,11 +495,11 @@ fn return_from_rankings(
             if let Some(back) = frame.rankings_back()? {
                 frame.tap(serial, back, cancelled)?;
             } else {
-                common::ensure_not_cancelled(cancelled)?;
+                vision::ensure_not_cancelled(cancelled)?;
                 adb::press_back(serial).map_err(|e| e.to_string())?;
             }
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         frame = Frame::read(serial, cancelled)?;
     }
     Err(text(
@@ -521,7 +522,7 @@ fn claim_yesterday(
     let start = Instant::now();
     let mut reward_seen = false;
     while start.elapsed() < short_wait() {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         if let Some(close) = frame.reward_close(true)? {
             frame.tap(serial, close, cancelled)?;
@@ -547,7 +548,7 @@ fn claim_yesterday(
 fn formation(serial: &str, cancelled: &AtomicBool) -> Result<(Frame, (u32, u32), bool), String> {
     let start = Instant::now();
     while start.elapsed() < short_wait() {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         if let Some((button, skipped)) = frame.formation_control()? {
             return Ok((frame, button, skipped));
@@ -570,7 +571,7 @@ fn finish_battle(
     let mut scored = false;
     let mut skip_sent = false;
     while start.elapsed() < crate::timing::secs(BATTLE_TIMEOUT_SECONDS) {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         if frame.battle_summary()? {
             if !scored {
@@ -599,7 +600,7 @@ fn finish_battle(
                 .label(region(0, 355, 460, 155), |s| s.contains("totaldamage"))
                 .is_some()
         {
-            if let Some((_, skip)) = common::get_match(
+            if let Some((_, skip)) = vision::get_match(
                 &frame.screen,
                 &["battle/skip_orange.png", "battle/skip.png"],
                 FOOTER,
@@ -621,7 +622,7 @@ pub fn run(
     log: &mut impl FnMut(String),
     progress: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     let limit = settings.max_battles.clamp(1, MAX_BATTLES);
     if cursor.launched >= limit {
         return Ok(cursor.completed);
@@ -639,7 +640,7 @@ pub fn run(
         home = claim_yesterday(serial, &home, cursor, cancelled, progress)?;
     }
     while cursor.launched < limit {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         if settings.daily && home.ranked()? {
             log(text(
                 "Today's Dream Realm ranking is already recorded.",
@@ -677,7 +678,7 @@ pub fn run(
             ready.tap(serial, ready.battle_button()?, cancelled)?;
             formation(serial, cancelled)?
         };
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         // Reserve the attempt before sending input: ADB can report an error
         // after the game has already received the tap.
         cursor.launched += 1;
@@ -707,11 +708,11 @@ mod tests {
     #[test]
     fn dream_realm_entry_matches_with_and_without_guild_duel_banner() {
         let path = "dream_realm/label.png";
-        let label = common::load_template(path).unwrap();
+        let label = vision::load_template(path).unwrap();
         for y in [657, 1002] {
             let mut screen = GrayImage::new(1080, 1920);
             image::imageops::replace(&mut screen, &label, 404, y);
-            let (x, cy) = common::find_template(&screen, path, BATTLE_MODES_ENTRY, 0.78)
+            let (x, cy) = vision::find_template(&screen, path, BATTLE_MODES_ENTRY, 0.78)
                 .unwrap()
                 .expect("Dream Realm card in Battle Modes")
                 .center();
@@ -772,7 +773,7 @@ mod tests {
         );
         let load = |name: &str| {
             let bytes = std::fs::read(root.join(format!("{name}.png"))).unwrap();
-            let (screen, size) = common::normalize_screenshot(&bytes).unwrap();
+            let (screen, size) = vision::normalize_screenshot(&bytes).unwrap();
             let lines = ocr::recognize(&screen).unwrap();
             println!("{name}: {lines:?}");
             Frame {

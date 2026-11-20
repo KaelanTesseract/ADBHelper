@@ -1,8 +1,10 @@
 //! Port of AdbAutoPlayer's SeasonLegendTrial: four faction towers, current
 //! floor selection, shared team attempts, and mode-specific victory navigation.
-use super::afk_stages::{self as common, BattleSettings, Match, Rect, StageResult};
+use super::afk_stages::{self as common, BattleSettings, StageResult};
 use crate::activity::{ActivityEvent, GameMode, LegendTower};
 use crate::adb;
+use crate::afk_journey::vision;
+use crate::afk_journey::vision::{Match, Rect};
 use crate::localization::{format_text, text};
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
@@ -73,9 +75,9 @@ fn run_towers(
     }
     let mut cleared = 0u32;
     for tower in towers {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         let report = execute(tower)?;
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         match report.end {
             TowerEnd::Closed
             | TowerEnd::Completed
@@ -100,7 +102,7 @@ fn selection_region() -> Rect {
 fn tower_closed(screen: &GrayImage, tower: LegendTower) -> Result<bool, String> {
     // As in the original, the faction icon in the left strip marks today's
     // unavailable tower; the large central banner is the selectable entry.
-    Ok(common::find_template(
+    Ok(vision::find_template(
         screen,
         &format!("legend_trials/faction_icon_{}.png", tower.slug()),
         Rect {
@@ -119,22 +121,22 @@ fn navigate_to_select(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
 ) -> Result<(), String> {
-    let (screen, _) = common::screenshot(serial)?;
-    if common::get_match(&screen, SELECT_MARKERS, selection_region(), 0.78)?.is_some() {
+    let (screen, _) = vision::screenshot(serial)?;
+    if vision::get_match(&screen, SELECT_MARKERS, selection_region(), 0.78)?.is_some() {
         return Ok(());
     }
     for _ in 0..3 {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         common::navigate_to_battle_modes(serial, cancelled, log)?;
         // Original uses at most four short, slow upward swipes to avoid flings.
         let mut entry = None;
         for swipe in 0..=4 {
-            common::ensure_not_cancelled(cancelled)?;
-            let (screen, size) = common::screenshot(serial)?;
-            if let Some(found) = common::find_template(
+            vision::ensure_not_cancelled(cancelled)?;
+            let (screen, size) = vision::screenshot(serial)?;
+            if let Some(found) = vision::find_template(
                 &screen,
                 "battle_modes/legend_trial.png",
-                common::full_screen(),
+                vision::full_screen(),
                 0.75,
             )? {
                 entry = Some((found, size));
@@ -143,13 +145,13 @@ fn navigate_to_select(
             if swipe < 4 {
                 adb::swipe_game_points(serial, (540, 1200), (540, 700), size, 1500)
                     .map_err(|e| e.to_string())?;
-                common::settle_cancellable(cancelled)?;
+                vision::settle_cancellable(cancelled)?;
             }
         }
         let Some((entry, size)) = entry else { continue };
-        common::tap_match(serial, entry, size)?;
-        common::settle_cancellable(cancelled)?;
-        if common::poll_for_match(
+        vision::tap_match(serial, entry, size)?;
+        vision::settle_cancellable(cancelled)?;
+        if vision::poll_for_match(
             serial,
             SELECT_MARKERS,
             selection_region(),
@@ -177,30 +179,30 @@ enum FloorAction {
 fn floor_action(screen: &GrayImage) -> Result<Option<(FloorAction, Match)>, String> {
     // Overlays and limits win over buttons visible behind them.
     for (paths, action, roi) in [
-        (END_MARKERS, FloorAction::End, common::full_screen()),
+        (END_MARKERS, FloorAction::End, vision::full_screen()),
         (
             &["tap_to_close.png", "afk_stages/tap_to_close.png"][..],
             FloorAction::Milestone,
-            common::lower_screen(),
+            vision::lower_screen(),
         ),
         (
             &["next.png", "battle/next.png"][..],
             FloorAction::Next,
-            common::lower_screen(),
+            vision::lower_screen(),
         ),
         (
             &["battle/victory_rewards.png"][..],
             FloorAction::Reward,
-            common::lower_screen(),
+            vision::lower_screen(),
         ),
         (CHALLENGES, FloorAction::Challenge, selection_region()),
         (
             &["battle/records.png", "battle/battle.png"][..],
             FloorAction::Ready,
-            common::lower_screen(),
+            vision::lower_screen(),
         ),
     ] {
-        if let Some((_, found)) = common::get_match(screen, paths, roi, 0.8)? {
+        if let Some((_, found)) = vision::get_match(screen, paths, roi, 0.8)? {
             return Ok(Some((action, found)));
         }
     }
@@ -249,8 +251,8 @@ impl FloorDriver for AdbFloorDriver<'_> {
     fn observe(&mut self) -> Result<FloorAction, String> {
         let started = std::time::Instant::now();
         while started.elapsed() < crate::timing::secs(20) {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = vision::screenshot(self.serial)?;
             if let Some((action, found)) = floor_action(&screen)? {
                 self.found = Some(found);
                 self.size = size;
@@ -266,11 +268,11 @@ impl FloorDriver for AdbFloorDriver<'_> {
     }
 
     fn activate(&mut self, action: FloorAction) -> Result<(), String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         if action == FloorAction::Reward {
             adb::tap_game_point(self.serial, 550, 1800, self.size).map_err(|e| e.to_string())?;
         } else {
-            common::tap_match(
+            vision::tap_match(
                 self.serial,
                 self.found.take().ok_or(text(
                     "Legend Trial button not found",
@@ -279,11 +281,11 @@ impl FloorDriver for AdbFloorDriver<'_> {
                 self.size,
             )?;
         }
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
 
     fn select_floor(&mut self) -> Result<bool, String> {
-        common::wait_for_match(
+        vision::wait_for_match(
             self.serial,
             &[&format!(
                 "legend_trials/tower_icon_{}.png",
@@ -299,7 +301,7 @@ impl FloorDriver for AdbFloorDriver<'_> {
             self.cancelled,
         )?;
         let paths: Vec<_> = END_MARKERS.iter().chain(CHALLENGES).copied().collect();
-        let Some((path, found, size)) = common::poll_for_match(
+        let Some((path, found, size)) = vision::poll_for_match(
             self.serial,
             &paths,
             selection_region(),
@@ -312,12 +314,12 @@ impl FloorDriver for AdbFloorDriver<'_> {
         if END_MARKERS.contains(&path.as_str()) {
             return Ok(false);
         }
-        common::tap_match(self.serial, found, size)?;
-        common::settle_cancellable(self.cancelled)?;
-        common::wait_for_match(
+        vision::tap_match(self.serial, found, size)?;
+        vision::settle_cancellable(self.cancelled)?;
+        vision::wait_for_match(
             self.serial,
             &["battle/records.png", "battle/battle.png"],
-            common::lower_screen(),
+            vision::lower_screen(),
             crate::timing::secs(20),
             self.cancelled,
         )?;
@@ -333,7 +335,7 @@ pub fn run(
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ActivityEvent),
 ) -> Result<u32, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     if selection.selected().is_empty() {
         return Err(text(
             "Select at least one Legend Trial tower.",
@@ -343,14 +345,14 @@ pub fn run(
     }
     adb::launch_afk_journey(serial).map_err(|e| e.to_string())?;
     for _ in 0..3 {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     run_towers(selection, cancelled, |tower| {
         let mode = GameMode::SeasonLegendTrial(tower);
         progress(ActivityEvent::ModeOpening(mode));
         navigate_to_select(serial, cancelled, &mut log)?;
-        common::settle_cancellable(cancelled)?;
-        let (screen, _) = common::screenshot(serial)?;
+        vision::settle_cancellable(cancelled)?;
+        let (screen, _) = vision::screenshot(serial)?;
         if tower_closed(&screen, tower)? {
             log(format_text!(
                 "{} is closed today and will be skipped.",
@@ -363,7 +365,7 @@ pub fn run(
             });
         }
         let banner = format!("legend_trials/banner_{}.png", tower.slug());
-        let Some((_, found, size)) = common::poll_for_match(
+        let Some((_, found, size)) = vision::poll_for_match(
             serial,
             &[&banner],
             selection_region(),
@@ -381,8 +383,8 @@ pub fn run(
                 end: TowerEnd::Unavailable,
             });
         };
-        common::tap_match(serial, found, size)?;
-        common::settle_cancellable(cancelled)?;
+        vision::tap_match(serial, found, size)?;
+        vision::settle_cancellable(cancelled)?;
         let mut driver = AdbFloorDriver {
             serial,
             cancelled,
@@ -404,7 +406,7 @@ pub fn run(
         progress(ActivityEvent::ModeEntered(mode));
         let mut cleared = 0u32;
         loop {
-            common::ensure_not_cancelled(cancelled)?;
+            vision::ensure_not_cancelled(cancelled)?;
             match common::play_one_stage(
                 serial,
                 &mut log,
@@ -478,7 +480,7 @@ mod tests {
     fn screen_with(paths: &[(&str, i64, i64)]) -> GrayImage {
         let mut screen = GrayImage::new(1080, 1920);
         for &(path, x, y) in paths {
-            image::imageops::replace(&mut screen, &common::load_template(path).unwrap(), x, y);
+            image::imageops::replace(&mut screen, &vision::load_template(path).unwrap(), x, y);
         }
         screen
     }
@@ -750,14 +752,14 @@ mod tests {
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
         let cancelled = AtomicBool::new(false);
         navigate_to_select(&serial, &cancelled, &mut |message| println!("{message}")).unwrap();
-        let (screen, _) = common::screenshot(&serial).unwrap();
+        let (screen, _) = vision::screenshot(&serial).unwrap();
         let tower = LegendTower::ALL
             .into_iter()
             .find(|&tower| !tower_closed(&screen, tower).unwrap())
             .expect("no open tower today");
         let mode = GameMode::SeasonLegendTrial(tower);
         let banner = format!("legend_trials/banner_{}.png", tower.slug());
-        let (_, found, size) = common::wait_for_match(
+        let (_, found, size) = vision::wait_for_match(
             &serial,
             &[&banner],
             selection_region(),
@@ -765,8 +767,8 @@ mod tests {
             &cancelled,
         )
         .unwrap();
-        common::tap_match(&serial, found, size).unwrap();
-        common::settle_cancellable(&cancelled).unwrap();
+        vision::tap_match(&serial, found, size).unwrap();
+        vision::settle_cancellable(&cancelled).unwrap();
         let mut driver = AdbFloorDriver {
             serial: &serial,
             cancelled: &cancelled,
@@ -833,7 +835,7 @@ mod tests {
                     calls += 1;
                     let package = adb::launch_afk_journey(&serial).map_err(|e| e.to_string())?;
                     navigate_to_select(&serial, &cancelled, &mut |line| println!("{line}"))?;
-                    let (screen, _) = common::screenshot(&serial)?;
+                    let (screen, _) = vision::screenshot(&serial)?;
                     let tower = match selected {
                         Some(tower) => tower,
                         None => LegendTower::ALL
@@ -855,17 +857,17 @@ mod tests {
                     }
                     report(ActivityEvent::ModeOpening(mode));
                     let path = format!("legend_trials/banner_{}.png", tower.slug());
-                    let (_, banner, size) = common::wait_for_match(
+                    let (_, banner, size) = vision::wait_for_match(
                         &serial,
                         &[&path],
                         selection_region(),
                         Duration::from_secs(20),
                         &cancelled,
                     )?;
-                    common::tap_match(&serial, banner, size)?;
-                    common::settle_cancellable(&cancelled)?;
+                    vision::tap_match(&serial, banner, size)?;
+                    vision::settle_cancellable(&cancelled)?;
                     let icon = format!("legend_trials/tower_icon_{}.png", tower.slug());
-                    common::wait_for_match(
+                    vision::wait_for_match(
                         &serial,
                         &[&icon],
                         Rect {
@@ -887,7 +889,7 @@ mod tests {
                                 .map_err(|e| e.to_string())?;
                         }
                         for _ in 0..2 {
-                            common::settle_cancellable(&cancelled)?;
+                            vision::settle_cancellable(&cancelled)?;
                         }
                         let observed = adb::game_state(&serial).map_err(|e| e.to_string())?;
                         println!("Induced recovery state: {observed:?}");
@@ -921,9 +923,9 @@ mod tests {
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
         let cancelled = AtomicBool::new(false);
         navigate_to_select(&serial, &cancelled, &mut |message| println!("{message}")).unwrap();
-        let (screen, _) = common::screenshot(&serial).unwrap();
+        let (screen, _) = vision::screenshot(&serial).unwrap();
         assert!(
-            common::get_match(&screen, SELECT_MARKERS, selection_region(), 0.78)
+            vision::get_match(&screen, SELECT_MARKERS, selection_region(), 0.78)
                 .unwrap()
                 .is_some()
         );

@@ -1,4 +1,5 @@
-use super::{client, common, crop, text, ActivityEvent, Driver, GameMode, GuildSettings, Screen};
+use super::{client, crop, text, ActivityEvent, Driver, GameMode, GuildSettings, Screen};
+use crate::afk_journey::vision;
 use crate::afk_journey::{arena, dream_realm, phase_rewards};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -314,10 +315,10 @@ fn swipe(
     start: (u32, u32),
     end: (u32, u32),
 ) -> Result<(), String> {
-    common::ensure_not_cancelled(driver.cancelled)?;
+    vision::ensure_not_cancelled(driver.cancelled)?;
     crate::adb::swipe_game_points(driver.serial, start, end, screen.size, 650)
         .map_err(|error| error.to_string())?;
-    common::settle_cancellable(driver.cancelled)
+    vision::settle_cancellable(driver.cancelled)
 }
 
 fn guild_identity(screen: &Screen) -> Option<&str> {
@@ -368,7 +369,7 @@ fn activity_export(
     let mut previous = Vec::new();
     let mut unchanged = 0;
     for _ in 0..60 {
-        common::ensure_not_cancelled(driver.cancelled)?;
+        vision::ensure_not_cancelled(driver.cancelled)?;
         if !member_header(&screen) {
             screen = driver.wait_for(member_header)?.ok_or_else(member_error)?;
         }
@@ -705,7 +706,7 @@ fn scan_ranks(
     let mut previous = Vec::new();
     let mut unchanged = 0;
     for _ in 0..150 {
-        common::ensure_not_cancelled(driver.cancelled)?;
+        vision::ensure_not_cancelled(driver.cancelled)?;
         if !kind.verifies(&screen) {
             return Err(rank_error());
         }

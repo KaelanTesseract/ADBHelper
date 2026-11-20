@@ -1,5 +1,6 @@
-use super::{client, common, crop, text, ActivityEvent, Driver, GameMode, Screen};
+use super::{client, crop, text, ActivityEvent, Driver, GameMode, Screen};
 use crate::afk_journey::progression::{hall, key};
+use crate::afk_journey::vision;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -148,7 +149,7 @@ pub(super) fn scan(
         let (mut profile, mut nameplate) = hall::wait_for_affinity_profile(driver, None)?;
         let first = nameplate.clone();
         for position in 0..heroes.len() + 30 {
-            common::ensure_not_cancelled(driver.cancelled)?;
+            vision::ensure_not_cancelled(driver.cancelled)?;
             let name = hall::hero_name(&profile).unwrap_or_default();
             if matches!(name.as_str(), "chippy" | "hammie")
                 || profile

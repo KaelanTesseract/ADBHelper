@@ -168,7 +168,7 @@ pub(super) fn repeated_counter(text: &str) -> Option<u32> {
 
 pub(super) fn repeated_numeric_patch(
     gray: &image::GrayImage,
-    roi: super::afk_stages::Rect,
+    roi: super::vision::Rect,
 ) -> Result<Vec<TextLine>, String> {
     // Windows OCR omits some isolated one-digit counters. Repeat the same
     // captured glyph three times as a single word; accept only three identical

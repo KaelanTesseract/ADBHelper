@@ -1,4 +1,5 @@
 use super::{afk_stages as common, ocr, phase_rewards};
+use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
     adb,
@@ -9,7 +10,7 @@ use std::sync::atomic::AtomicBool;
 
 type Point = (u32, u32);
 
-const MENU_BUTTON: common::Rect = common::Rect {
+const MENU_BUTTON: vision::Rect = vision::Rect {
     x: 885,
     y: 1760,
     width: 195,
@@ -56,7 +57,7 @@ fn normalized(value: &str) -> String {
 
 impl Frame {
     fn decode(bytes: &[u8]) -> Result<Self, String> {
-        let (gray, size) = common::normalize_screenshot(bytes)?;
+        let (gray, size) = vision::normalize_screenshot(bytes)?;
         let color = image::load_from_memory(bytes)
             .map_err(|error| error.to_string())?
             .resize_exact(
@@ -99,7 +100,7 @@ impl Frame {
     }
 
     fn main_menu_button(&self) -> Result<Option<Point>, String> {
-        Ok(common::find_template(
+        Ok(vision::find_template(
             &self.gray,
             "navigation/hamburger_menu.png",
             MENU_BUTTON,
@@ -194,10 +195,10 @@ impl Frame {
     }
 
     fn pass_reward_tab(&self) -> Result<Option<Point>, String> {
-        let badge = common::find_template(
+        let badge = vision::find_template(
             &self.gray,
             "dailies/hamburger/rewards_available.png",
-            common::Rect {
+            vision::Rect {
                 x: 220,
                 y: 1718,
                 width: 860,
@@ -263,37 +264,37 @@ struct Session<'a> {
 
 impl Session<'_> {
     fn read(&self) -> Result<Frame, String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         let frame =
             Frame::decode(&adb::screenshot(self.serial).map_err(|error| error.to_string())?)?;
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         Ok(frame)
     }
 
     fn tap(&self, frame: &Frame, (x, y): Point) -> Result<(), String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         adb::tap_game_point(self.serial, x, y, frame.size).map_err(|error| error.to_string())?;
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
 
     fn back(&self) -> Result<(), String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         adb::press_back(self.serial).map_err(|error| error.to_string())?;
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
 
     fn open_main_menu(&self, log: &mut impl FnMut(String)) -> Result<(), String> {
         let size = common::navigate_to_current_overview(self.serial, self.cancelled, log)?;
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         adb::tap_game_point(self.serial, 990, 1840, size).map_err(|error| error.to_string())?;
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
 
     fn leave_reward_page(&self, frame: &Frame) -> Result<(), String> {
-        let back = common::find_template(
+        let back = vision::find_template(
             &frame.gray,
             "back.png",
-            common::Rect {
+            vision::Rect {
                 x: 0,
                 y: 1710,
                 width: 210,
@@ -308,10 +309,10 @@ impl Session<'_> {
     }
 
     fn reset_pass_tabs(&self, frame: &Frame) -> Result<Frame, String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         adb::swipe_game_points(self.serial, (270, 1805), (1010, 1805), frame.size, 400)
             .map_err(|error| error.to_string())?;
-        common::settle_cancellable(self.cancelled)?;
+        vision::settle_cancellable(self.cancelled)?;
         self.wait_for(|frame| frame.page() == Some(Page::Pass))?
             .ok_or_else(|| {
                 text(
@@ -328,7 +329,7 @@ impl Session<'_> {
             if accept(&frame) {
                 return Ok(Some(frame));
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Ok(None)
     }
@@ -390,7 +391,7 @@ impl Session<'_> {
                     return self.wait_for(|frame| frame.page() == Some(Page::Menu));
                 }
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Ok(None)
     }
@@ -430,7 +431,7 @@ impl Session<'_> {
                 return Ok(frame);
             }
             missing = gone;
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Err(text(
             "The game did not confirm the reward claim.",
@@ -586,10 +587,10 @@ pub(super) fn emporium_already_purchased(
             if frame.page() != Some(Page::Daily) {
                 return Ok(false);
             }
-            common::ensure_not_cancelled(cancelled)?;
+            vision::ensure_not_cancelled(cancelled)?;
             adb::swipe_game_points(serial, from, to, frame.size, 380)
                 .map_err(|error| error.to_string())?;
-            common::settle_cancellable(cancelled)?;
+            vision::settle_cancellable(cancelled)?;
             frame = session.read()?;
         }
     }

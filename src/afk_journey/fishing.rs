@@ -1,5 +1,6 @@
 //! World-map navigation and the standard AFK Journey fishing minigame.
 use super::{afk_stages as common, ocr, BASE_RESOLUTION};
+use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
     adb,
@@ -13,7 +14,7 @@ use std::{
 };
 
 type Point = (u32, u32);
-type Rect = common::Rect;
+type Rect = vision::Rect;
 
 const HOOK: Rect = Rect {
     x: 390,
@@ -64,7 +65,7 @@ fn raw_image(bytes: &[u8]) -> Option<RgbaImage> {
 
 impl Frame {
     fn find(&self, paths: &[&str], region: Rect, confidence: f32) -> Result<Option<Point>, String> {
-        Ok(common::get_match(&self.gray, paths, region, confidence)?
+        Ok(vision::get_match(&self.gray, paths, region, confidence)?
             .map(|(_, found)| found.center()))
     }
 
@@ -99,7 +100,7 @@ struct Driver<'a> {
 
 impl Driver<'_> {
     fn read(&self) -> Result<Frame, String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         let raw = adb::raw_screenshot(self.serial).map_err(|e| e.to_string())?;
         let pixels = match raw_image(&raw) {
             Some(image) => image,
@@ -137,12 +138,12 @@ impl Driver<'_> {
     }
 
     fn tap(&self, size: Point, point: Point) -> Result<(), String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         adb::tap_game_point(self.serial, point.0, point.1, size).map_err(|e| e.to_string())
     }
 
     fn settle(&self) -> Result<(), String> {
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
 }
 
@@ -210,7 +211,7 @@ fn next_marker(frame: &Frame, rejected: &[Point]) -> Result<Option<Point>, Strin
         }
         &masked
     };
-    if let Some((_, full)) = common::get_match(
+    if let Some((_, full)) = vision::get_match(
         gray,
         &["fishing/map_marker.png", "fishing/map_marker_small.png"],
         MAP_MARKERS,
@@ -219,7 +220,7 @@ fn next_marker(frame: &Frame, rejected: &[Point]) -> Result<Option<Point>, Strin
         return Ok(Some(full.center()));
     }
     // The player's location arrow can cover the left half of an active spot.
-    Ok(common::get_match(
+    Ok(vision::get_match(
         gray,
         &[
             "fishing/map_marker_edge.png",

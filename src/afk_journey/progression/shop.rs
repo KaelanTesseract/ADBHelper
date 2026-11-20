@@ -1,4 +1,5 @@
-use super::{common, key, text, Driver, Point, Progress, Screen};
+use super::{key, text, Driver, Point, Progress, Screen};
+use crate::afk_journey::vision;
 use crate::{
     activity::ActivityEvent,
     afk_journey::{
@@ -51,14 +52,14 @@ impl Store {
     fn wallet(self, screen: &Screen, offer: bool) -> Result<Option<u32>, String> {
         let region = if self == Self::Guild && !offer {
             // Keep the wallet's comma and digits clear of the surrounding banner.
-            common::Rect {
+            vision::Rect {
                 x: 565,
                 y: 21,
                 width: 160,
                 height: 34,
             }
         } else {
-            common::Rect {
+            vision::Rect {
                 x: 862,
                 y: 13,
                 width: 155,
@@ -398,7 +399,7 @@ fn commit_purchase(
                 continue;
             }
         }
-        common::settle_cancellable(driver.cancelled)?;
+        vision::settle_cancellable(driver.cancelled)?;
     }
     Err(text(
         "The purchase charge could not be verified.",
@@ -547,7 +548,7 @@ fn recruit_button(screen: &Screen) -> Result<Option<Point>, String> {
 }
 
 fn letter_balance(screen: &Screen) -> Result<Option<u32>, String> {
-    let badge = common::Rect {
+    let badge = vision::Rect {
         x: 368,
         y: 19,
         width: 120,
@@ -739,7 +740,7 @@ pub(super) fn recruit(
                 continue;
             }
         }
-        common::settle_cancellable(driver.cancelled)?;
+        vision::settle_cancellable(driver.cancelled)?;
     }
     Err(text(
         "The Invite Letter consumption could not be confirmed.",

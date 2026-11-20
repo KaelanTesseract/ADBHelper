@@ -4,6 +4,7 @@ pub mod scanner;
 mod shop;
 
 use super::{afk_stages as common, ocr, phase_rewards};
+use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
     adb,
@@ -42,7 +43,7 @@ fn key(value: &str) -> String {
 
 impl Screen {
     fn decode(bytes: &[u8]) -> Result<Self, String> {
-        let (gray, size) = common::normalize_screenshot(bytes)?;
+        let (gray, size) = vision::normalize_screenshot(bytes)?;
         let color = image::load_from_memory(bytes)
             .map_err(|error| error.to_string())?
             .resize_exact(
@@ -84,10 +85,10 @@ impl Screen {
         y: Range<u32>,
         confidence: f32,
     ) -> Result<Option<Point>, String> {
-        common::find_template(
+        vision::find_template(
             &self.gray,
             path,
-            common::Rect {
+            vision::Rect {
                 x: x.start,
                 y: y.start,
                 width: x.end - x.start,
@@ -123,10 +124,10 @@ struct Driver<'a> {
 
 impl Driver<'_> {
     fn read(&self) -> Result<Screen, String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         let bytes = adb::screenshot(self.serial).map_err(|error| error.to_string())?;
         let screen = Screen::decode(&bytes)?;
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         Ok(screen)
     }
 
@@ -136,15 +137,15 @@ impl Driver<'_> {
             if ready(&screen) {
                 return Ok(Some(screen));
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Ok(None)
     }
 
     fn tap_at(&self, size: Point, (x, y): Point) -> Result<(), String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         adb::tap_game_point(self.serial, x, y, size).map_err(|error| error.to_string())?;
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
 
     fn tap(&self, screen: &Screen, point: Point) -> Result<(), String> {
@@ -152,9 +153,9 @@ impl Driver<'_> {
     }
 
     fn back(&self) -> Result<(), String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         adb::press_back(self.serial).map_err(|error| error.to_string())?;
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
 
     fn overview_tab(&self, x: u32, log: &mut impl FnMut(String)) -> Result<(), String> {

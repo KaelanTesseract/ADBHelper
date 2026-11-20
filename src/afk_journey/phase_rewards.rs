@@ -1,5 +1,6 @@
 //! Season Phase Rankings: free District / Server / Guild first-clear rewards.
 use super::{afk_stages as common, daily, ocr};
+use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode, RankingScope},
     adb,
@@ -73,7 +74,7 @@ fn digits(value: &str) -> Option<u32> {
 }
 
 fn decode(bytes: &[u8]) -> Result<Frame, String> {
-    let (gray, size) = common::normalize_screenshot(bytes)?;
+    let (gray, size) = vision::normalize_screenshot(bytes)?;
     let color = image::load_from_memory(bytes)
         .map_err(|e| e.to_string())?
         .resize_exact(1080, 1920, image::imageops::FilterType::Triangle)
@@ -88,9 +89,9 @@ fn decode(bytes: &[u8]) -> Result<Frame, String> {
 }
 
 fn read(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     let frame = decode(&adb::screenshot(serial).map_err(|e| e.to_string())?)?;
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     Ok(frame)
 }
 
@@ -416,9 +417,9 @@ fn tap(
     frame: &Frame,
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     adb::tap_game_point(serial, point.0, point.1, frame.size).map_err(|e| e.to_string())?;
-    common::settle_cancellable(cancelled)
+    vision::settle_cancellable(cancelled)
 }
 
 fn wait_ranking(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
@@ -427,7 +428,7 @@ fn wait_ranking(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
         if ranking(&frame) {
             return Ok(frame);
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "Season Phase Rankings could not be verified.",
@@ -458,10 +459,10 @@ fn open_ranking(
         )
         .into());
     }
-    let entry = common::find_template(
+    let entry = vision::find_template(
         &frame.gray,
         "afk_stages/ranking_button.png",
-        common::Rect {
+        vision::Rect {
             x: 850,
             y: 0,
             width: 230,
@@ -473,9 +474,9 @@ fn open_ranking(
         "Season Rankings entry not found.",
         "Einstieg zu Season Rankings nicht gefunden.",
     ))?;
-    common::ensure_not_cancelled(cancelled)?;
-    common::tap_match(serial, entry, frame.size)?;
-    common::settle_cancellable(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
+    vision::tap_match(serial, entry, frame.size)?;
+    vision::settle_cancellable(cancelled)?;
     wait_ranking(serial, cancelled)
 }
 
@@ -499,7 +500,7 @@ fn discover_phases(serial: &str, cancelled: &AtomicBool) -> Result<Vec<u32>, Str
         }
         // AdbAutoPlayer uses the right arrow to reveal older phases.
         tap(serial, (1023, 746), &frame, cancelled)?;
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "The ranking phase list did not stabilize.",
@@ -528,7 +529,7 @@ fn open_scope(
         }
         // The left arrow returns toward newer phases.
         tap(serial, (88, 746), &frame, cancelled)?;
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         frame = wait_ranking(serial, cancelled)?;
     }
     let phase_tab = phase_tab.ok_or_else(|| {
@@ -555,7 +556,7 @@ fn open_scope(
             Some(ScopeEntry::Unavailable) if unavailable => return Ok(None),
             _ => unavailable = entry == Some(ScopeEntry::Unavailable),
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         frame = read(serial, cancelled)?;
     }
     if !opened {
@@ -579,14 +580,14 @@ fn open_scope(
             tap(serial, tab.center(), &next, cancelled)?;
             break;
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     for _ in 0..18 {
         let next = read(serial, cancelled)?;
         if first_clear(&next) == Some((phase, scope)) {
             return Ok(Some(next));
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "The ranking reward tab could not be verified.",
@@ -621,7 +622,7 @@ fn finish_claim(
                     return Ok(());
                 }
                 badge_absent = absent;
-                common::settle_cancellable(cancelled)?;
+                vision::settle_cancellable(cancelled)?;
                 continue;
             };
             let candidates = rows(&frame)?;
@@ -654,7 +655,7 @@ fn finish_claim(
                     None
                 };
                 if let Some((start, end)) = direction {
-                    common::ensure_not_cancelled(cancelled)?;
+                    vision::ensure_not_cancelled(cancelled)?;
                     adb::swipe_game_points(serial, start, end, frame.size, 650)
                         .map_err(|e| e.to_string())?;
                 }
@@ -662,7 +663,7 @@ fn finish_claim(
         } else {
             badge_absent = false;
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "The ranking reward was not confirmed as claimed. No further claim was attempted.",
@@ -695,7 +696,7 @@ fn collect_scope(
             if quiet >= 2 {
                 return Ok(());
             }
-            common::settle_cancellable(cancelled)?;
+            vision::settle_cancellable(cancelled)?;
             continue;
         }
         quiet = 0;
@@ -707,14 +708,14 @@ fn collect_scope(
                 )
                 .into());
             }
-            common::ensure_not_cancelled(cancelled)?;
+            vision::ensure_not_cancelled(cancelled)?;
             adb::swipe_game_points(serial, (540, 1510), (540, 930), frame.size, 650)
                 .map_err(|e| e.to_string())?;
             scrolls += 1;
-            common::settle_cancellable(cancelled)?;
+            vision::settle_cancellable(cancelled)?;
             continue;
         };
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         let fresh = read(serial, cancelled)?;
         if first_clear(&fresh) != Some((phase, scope)) {
             return Err("Ranking reward selection changed.".into());
@@ -750,7 +751,7 @@ pub fn run(
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     if let Some(pending) = cursor.pending.clone() {
         let mode = GameMode::SeasonRankingRewards(pending.scope);
         report(ActivityEvent::ModeOpening(mode));

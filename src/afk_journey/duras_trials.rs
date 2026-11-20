@@ -1,7 +1,9 @@
-use super::afk_stages::{self as common, BattleSettings, Rect, StageResult};
+use super::afk_stages::{self as common, BattleSettings, StageResult};
 use super::ocr::{repeated_counter, repeated_numeric_patch};
 use crate::activity::{ActivityEvent, GameMode};
 use crate::adb;
+use crate::afk_journey::vision;
+use crate::afk_journey::vision::Rect;
 use crate::localization::{format_text, text};
 use std::sync::atomic::AtomicBool;
 
@@ -28,9 +30,9 @@ fn navigate(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
 ) -> Result<(), String> {
-    common::ensure_not_cancelled(cancelled)?;
-    let (mut screen, _) = common::screenshot(serial)?;
-    if common::get_match(
+    vision::ensure_not_cancelled(cancelled)?;
+    let (mut screen, _) = vision::screenshot(serial)?;
+    if vision::get_match(
         &screen,
         &[
             "navigation/confirm.png",
@@ -39,16 +41,16 @@ fn navigate(
             "duras_trials/first_clear_bottom_half.png",
             "duras_trials/end_sunrise.png",
         ],
-        common::full_screen(),
+        vision::full_screen(),
         0.8,
     )?
     .is_some()
     {
         adb::press_back(serial).map_err(|e| e.to_string())?;
-        common::settle_cancellable(cancelled)?;
-        screen = common::screenshot(serial)?.0;
+        vision::settle_cancellable(cancelled)?;
+        screen = vision::screenshot(serial)?.0;
     }
-    if common::find_template(
+    if vision::find_template(
         &screen,
         "duras_trials/sweep.png",
         Rect {
@@ -60,7 +62,7 @@ fn navigate(
         0.9,
     )?
     .is_some()
-        && common::find_template(
+        && vision::find_template(
             &screen,
             "duras_trials/socketed_charms_overview.png",
             overview_region(),
@@ -70,10 +72,10 @@ fn navigate(
     {
         // Dismiss a previously opened quantity dialog without confirming it.
         adb::press_back(serial).map_err(|e| e.to_string())?;
-        common::settle_cancellable(cancelled)?;
-        screen = common::screenshot(serial)?.0;
+        vision::settle_cancellable(cancelled)?;
+        screen = vision::screenshot(serial)?.0;
     }
-    if common::find_template(
+    if vision::find_template(
         &screen,
         "duras_trials/socketed_charms_overview.png",
         overview_region(),
@@ -86,18 +88,18 @@ fn navigate(
     for _ in 0..3 {
         common::navigate_to_battle_modes(serial, cancelled, log)?;
         for swipe in 0..=4 {
-            common::ensure_not_cancelled(cancelled)?;
-            let (screen, size) = common::screenshot(serial)?;
-            if let Some(entry) = common::find_template(
+            vision::ensure_not_cancelled(cancelled)?;
+            let (screen, size) = vision::screenshot(serial)?;
+            if let Some(entry) = vision::find_template(
                 &screen,
                 "battle_modes/duras_trials.png",
-                common::full_screen(),
+                vision::full_screen(),
                 0.75,
             )? {
-                if let Some(coming_soon) = common::find_template(
+                if let Some(coming_soon) = vision::find_template(
                     &screen,
                     "battle_modes/coming_soon.png",
-                    common::full_screen(),
+                    vision::full_screen(),
                     0.78,
                 )? {
                     if coming_soon.center().1 < entry.center().1 {
@@ -108,20 +110,20 @@ fn navigate(
                         .into());
                     }
                 }
-                common::tap_match(serial, entry, size)?;
+                vision::tap_match(serial, entry, size)?;
                 for _ in 0..3 {
-                    common::settle_cancellable(cancelled)?;
-                    let (screen, current_size) = common::screenshot(serial)?;
-                    if let Some((_, close)) = common::get_match(
+                    vision::settle_cancellable(cancelled)?;
+                    let (screen, current_size) = vision::screenshot(serial)?;
+                    if let Some((_, close)) = vision::get_match(
                         &screen,
                         &["guide/close.png", "guide/next.png", "tap_to_close.png"],
-                        common::full_screen(),
+                        vision::full_screen(),
                         0.8,
                     )? {
-                        common::tap_match(serial, close, current_size)?;
+                        vision::tap_match(serial, close, current_size)?;
                     }
                 }
-                if common::poll_for_match(
+                if vision::poll_for_match(
                     serial,
                     &["duras_trials/socketed_charms_overview.png"],
                     overview_region(),
@@ -137,7 +139,7 @@ fn navigate(
             if swipe < 4 {
                 adb::swipe_game_points(serial, (540, 1200), (540, 700), size, 1500)
                     .map_err(|e| e.to_string())?;
-                common::settle_cancellable(cancelled)?;
+                vision::settle_cancellable(cancelled)?;
             }
         }
     }
@@ -269,15 +271,15 @@ struct Frame {
 }
 
 fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     let bytes = adb::screenshot(serial).map_err(|e| e.to_string())?;
     let frame = decode_frame(&bytes)?;
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     Ok(frame)
 }
 
 fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
-    let (gray, size) = common::normalize_screenshot(bytes)?;
+    let (gray, size) = vision::normalize_screenshot(bytes)?;
     let color = image::load_from_memory(bytes)
         .map_err(|e| e.to_string())?
         .resize_exact(1080, 1920, image::imageops::FilterType::Triangle)
@@ -294,14 +296,14 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
     if daily_remaining.is_none() {
         daily_remaining = isolated_daily_counter(&gray)?;
     }
-    let blocked = common::get_match(
+    let blocked = vision::get_match(
         &gray,
         &["navigation/confirm.png", "cancel.png", "next.png"],
-        common::lower_screen(),
+        vision::lower_screen(),
         0.85,
     )?
     .is_some()
-        || common::find_template(
+        || vision::find_template(
             &gray,
             "duras_trials/no_next.png",
             result_next_region(),
@@ -315,7 +317,7 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
                 && ["rewards", "obtained", "sweep", "belohnungen", "erhalten"]
                     .contains(&text.as_str())
         });
-    let sweep_button = common::find_template(
+    let sweep_button = vision::find_template(
         &gray,
         "duras_trials/sweep.png",
         Rect {
@@ -329,7 +331,7 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
     let snapshot = Snapshot {
         blocked,
         daily_remaining,
-        overview: common::find_template(
+        overview: vision::find_template(
             &gray,
             "duras_trials/socketed_charms_overview.png",
             overview_region(),
@@ -338,7 +340,7 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
         .is_some(),
         sweep: sweep_button.is_some(),
         sweep_enabled: sweep_button.is_some_and(|found| enabled_sweep_color(&color, found.rect())),
-        battle: common::find_template(
+        battle: vision::find_template(
             &gray,
             "duras_trials/battle.png",
             Rect {
@@ -413,34 +415,34 @@ fn confirm_sweep(first: &Snapshot, second: &Snapshot) -> Result<SweepPermit, Str
 
 pub(super) fn ensure_formation(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
     for _ in 0..6 {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
-        if common::get_match(
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
+        if vision::get_match(
             &screen,
             &["battle/records.png", "battle/copy.png"],
-            common::lower_screen(),
+            vision::lower_screen(),
             0.8,
         )?
         .is_some()
         {
             return Ok(());
         }
-        if let Some(battle) = common::find_template(
+        if let Some(battle) = vision::find_template(
             &screen,
             "duras_trials/battle.png",
-            common::lower_screen(),
+            vision::lower_screen(),
             0.8,
         )? {
-            common::tap_match(serial, battle, size)?;
-            common::settle_cancellable(cancelled)?;
+            vision::tap_match(serial, battle, size)?;
+            vision::settle_cancellable(cancelled)?;
             continue;
         }
-        if common::find_template(&screen, "battle/battle.png", common::lower_screen(), 0.8)?
+        if vision::find_template(&screen, "battle/battle.png", vision::lower_screen(), 0.8)?
             .is_some()
         {
             return Ok(());
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "Could not reopen the Dura formation screen. Sweeps stopped.",
@@ -451,9 +453,9 @@ pub(super) fn ensure_formation(serial: &str, cancelled: &AtomicBool) -> Result<(
 
 fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
     for _ in 0..12 {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
-        if common::find_template(
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
+        if vision::find_template(
             &screen,
             "duras_trials/no_next.png",
             result_next_region(),
@@ -462,21 +464,21 @@ fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
         .is_some()
         {
             adb::press_back(serial).map_err(|e| e.to_string())?;
-        } else if let Some((_, next)) = common::get_match(
+        } else if let Some((_, next)) = vision::get_match(
             &screen,
             &["next.png", "battle/next.png"],
             result_next_region(),
             0.78,
         )? {
-            common::tap_match(serial, next, size)?;
-        } else if common::get_match(
+            vision::tap_match(serial, next, size)?;
+        } else if vision::get_match(
             &screen,
             &["duras_trials/battle.png", "duras_trials/sweep.png"],
-            common::lower_screen(),
+            vision::lower_screen(),
             0.8,
         )?
         .is_some()
-            && common::find_template(
+            && vision::find_template(
                 &screen,
                 "duras_trials/socketed_charms_overview.png",
                 overview_region(),
@@ -485,34 +487,34 @@ fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
             .is_some()
         {
             return Ok(());
-        } else if common::find_template(&screen, "battle/records.png", common::lower_screen(), 0.8)?
+        } else if vision::find_template(&screen, "battle/records.png", vision::lower_screen(), 0.8)?
             .is_some()
         {
             // Next opens the following formation directly. Return to the
             // carousel to check whether the game offers Battle or Sweep.
             adb::press_back(serial).map_err(|e| e.to_string())?;
-        } else if common::get_match(
+        } else if vision::get_match(
             &screen,
             &[
                 "duras_trials/first_clear_bottom_half.png",
                 "duras_trials/end_sunrise.png",
             ],
-            common::lower_screen(),
+            vision::lower_screen(),
             0.85,
         )?
         .is_some()
         {
             // The result can offer a paid Retry. Return to the overview.
             adb::press_back(serial).map_err(|e| e.to_string())?;
-        } else if let Some((_, close)) = common::get_match(
+        } else if let Some((_, close)) = vision::get_match(
             &screen,
             &["tap_to_close.png", "afk_stages/tap_to_close.png"],
-            common::lower_screen(),
+            vision::lower_screen(),
             0.8,
         )? {
-            common::tap_match(serial, close, size)?;
+            vision::tap_match(serial, close, size)?;
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "Could not verify that the Dura battle ended. Sweeps stopped.",
@@ -609,7 +611,7 @@ fn validate_sweep_dialog(
 fn sweep_quantity_one(gray: &image::GrayImage) -> Result<bool, String> {
     // With one daily token left, the same quantity 1 is at the RIGHT end of
     // the slider. Inspect the complete track, without moving it.
-    Ok(common::find_template(
+    Ok(vision::find_template(
         gray,
         "duras_trials/sweep_quantity_one.png",
         Rect {
@@ -662,8 +664,8 @@ fn sweep_quantity(frame: &Frame) -> Result<Option<u32>, String> {
     ))
 }
 
-fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<common::Match>, String> {
-    common::find_template(
+fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<vision::Match>, String> {
+    vision::find_template(
         gray,
         "duras_trials/sweep_plus.png",
         Rect {
@@ -676,7 +678,7 @@ fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<common::Match>, Str
     )
 }
 
-fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match)>, String> {
+fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, vision::Match)>, String> {
     if !frame
         .lines
         .iter()
@@ -692,7 +694,7 @@ fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match
     {
         return Ok(None);
     }
-    let Some(button) = common::find_template(
+    let Some(button) = vision::find_template(
         &frame.gray,
         "duras_trials/sweep.png",
         Rect {
@@ -707,7 +709,7 @@ fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, common::Match
         return Ok(None);
     };
     let quantity = sweep_quantity(frame)?;
-    let daily_token = common::find_template(
+    let daily_token = vision::find_template(
         &frame.gray,
         "duras_trials/sweep_daily_token.png",
         Rect {
@@ -860,11 +862,11 @@ fn wait_for_sweep_result(
         let frame = read_frame(serial, cancelled)?;
         match sweep_completion(&frame.lines) {
             Some(SweepCompletion::TapClose(x, y)) => {
-                common::ensure_not_cancelled(cancelled)?;
+                vision::ensure_not_cancelled(cancelled)?;
                 adb::tap_game_point(serial, x, y, frame.size).map_err(|e| e.to_string())?;
             }
             Some(SweepCompletion::Back) => {
-                common::ensure_not_cancelled(cancelled)?;
+                vision::ensure_not_cancelled(cancelled)?;
                 adb::press_back(serial).map_err(|e| e.to_string())?;
             }
             None => {
@@ -882,7 +884,7 @@ fn wait_for_sweep_result(
                 }
             }
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "Could not verify the sweep cost. Sweeps stopped.",
@@ -896,7 +898,7 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
         Ok(read_frame(self.serial, self.cancelled)?.snapshot)
     }
     fn settle(&mut self) -> Result<(), String> {
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
     fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, String> {
         // Check the visible Sweep offer again before opening its dialog.
@@ -909,7 +911,7 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
             )
             .into());
         }
-        let sweep = common::find_template(
+        let sweep = vision::find_template(
             &frame.gray,
             "duras_trials/sweep.png",
             Rect {
@@ -921,9 +923,9 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
             0.9,
         )?
         .ok_or(text("Sweep button not found", "Sweep-Schaltfläche fehlt"))?;
-        common::ensure_not_cancelled(self.cancelled)?;
-        common::tap_match(self.serial, sweep, frame.size)?;
-        common::settle_cancellable(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
+        vision::tap_match(self.serial, sweep, frame.size)?;
+        vision::settle_cancellable(self.cancelled)?;
         for _ in 0..12 {
             let mut after = read_frame(self.serial, self.cancelled)?;
             if let Some(remaining) = after.snapshot.daily_remaining {
@@ -942,9 +944,9 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
                         "Could not verify the Sweep plus button.",
                         "Die Plus-Schaltfläche für Sweeps wurde nicht eindeutig erkannt.",
                     ))?;
-                    common::ensure_not_cancelled(self.cancelled)?;
-                    common::tap_match(self.serial, plus, after.size)?;
-                    common::settle_cancellable(self.cancelled)?;
+                    vision::ensure_not_cancelled(self.cancelled)?;
+                    vision::tap_match(self.serial, plus, after.size)?;
+                    vision::settle_cancellable(self.cancelled)?;
                     after = read_frame(self.serial, self.cancelled)?;
                     let (dialog, _) = read_sweep_dialog(&after)?.ok_or(text(
                         "The Sweep dialog changed while setting the quantity.",
@@ -952,16 +954,16 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
                     ))?;
                     validate_sweep_dialog(&dialog, permit, selected)?;
                 }
-                common::settle_cancellable(self.cancelled)?;
+                vision::settle_cancellable(self.cancelled)?;
                 let fresh = read_frame(self.serial, self.cancelled)?;
                 let (dialog, button) = read_sweep_dialog(&fresh)?.ok_or(text(
                     "The sweep dialog changed before confirmation.",
                     "Sweep-Dialog verändert; kein Verbrauch.",
                 ))?;
                 validate_sweep_dialog(&dialog, permit, quantity)?;
-                common::ensure_not_cancelled(self.cancelled)?;
-                common::tap_match(self.serial, button, fresh.size)?;
-                common::settle_cancellable(self.cancelled)?;
+                vision::ensure_not_cancelled(self.cancelled)?;
+                vision::tap_match(self.serial, button, fresh.size)?;
+                vision::settle_cancellable(self.cancelled)?;
                 return wait_for_sweep_result(self.serial, permit, self.cancelled);
             }
             // A new confirmation dialog is never blindly accepted. Its quantity
@@ -977,7 +979,7 @@ impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
                 )
                 .into());
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Err(text(
             "The Sweep dialog could not be verified.",
@@ -1018,12 +1020,12 @@ fn run_with_budget(
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ActivityEvent),
 ) -> Result<u32, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     let mode = GameMode::DurasTrials;
     progress(ActivityEvent::ModeOpening(mode));
     adb::launch_afk_journey(serial).map_err(|e| e.to_string())?;
     for _ in 0..3 {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     navigate(serial, cancelled, &mut log)?;
     progress(ActivityEvent::ModeEntered(mode));

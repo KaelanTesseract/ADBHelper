@@ -1,8 +1,10 @@
 //! Port of AdbAutoPlayer's UnionCampaignMixin. Sweep is deliberately absent:
 //! only the current floor's Battle and post-victory Continue are activated.
-use super::afk_stages::{self as common, BattleSettings, Match, Rect, StageResult};
+use super::afk_stages::{self as common, BattleSettings, StageResult};
 use crate::activity::{ActivityEvent, GameMode};
 use crate::adb;
+use crate::afk_journey::vision;
+use crate::afk_journey::vision::{Match, Rect};
 use crate::localization::text;
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
@@ -36,7 +38,7 @@ fn pre_battle_state(screen: &GrayImage) -> Result<Option<(PreBattle, Match)>, St
     if let Some(found) = floor_battle_button(screen)? {
         return Ok(Some((PreBattle::FloorBattle, found)));
     }
-    if let Some(found) = common::find_template(screen, "battle/records.png", records_region(), 0.8)?
+    if let Some(found) = vision::find_template(screen, "battle/records.png", records_region(), 0.8)?
     {
         return Ok(Some((PreBattle::Formation, found)));
     }
@@ -50,20 +52,20 @@ fn pre_battle_state(screen: &GrayImage) -> Result<Option<(PreBattle, Match)>, St
                 "quests/skip.png",
             ][..],
             PreBattle::Overlay,
-            common::full_screen(),
+            vision::full_screen(),
         ),
         (
             &["battle/records.png"][..],
             PreBattle::Formation,
-            common::lower_screen(),
+            vision::lower_screen(),
         ),
         (
             &["union_campaign/battle.png"][..],
             PreBattle::FloorBattle,
-            common::full_screen(),
+            vision::full_screen(),
         ),
     ] {
-        if let Some((_, found)) = common::get_match(screen, paths, roi, 0.8)? {
+        if let Some((_, found)) = vision::get_match(screen, paths, roi, 0.8)? {
             return Ok(Some((state, found)));
         }
     }
@@ -78,7 +80,7 @@ fn records_region() -> Rect {
 }
 
 pub(super) fn floor_battle_button(screen: &GrayImage) -> Result<Option<Match>, String> {
-    let button = common::find_template(
+    let button = vision::find_template(
         screen,
         "union_campaign/battle.png",
         Rect {
@@ -89,7 +91,7 @@ pub(super) fn floor_battle_button(screen: &GrayImage) -> Result<Option<Match>, S
         0.8,
     )?;
     if button.is_some()
-        && common::find_template(
+        && vision::find_template(
             screen,
             "union_campaign/current_label.png",
             floor_label_region(),
@@ -107,9 +109,9 @@ pub(super) fn navigate(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
 ) -> Result<(), String> {
-    common::ensure_not_cancelled(cancelled)?;
-    let (screen, _) = common::screenshot(serial)?;
-    if common::find_template(
+    vision::ensure_not_cancelled(cancelled)?;
+    let (screen, _) = vision::screenshot(serial)?;
+    if vision::find_template(
         &screen,
         "union_campaign/current_label.png",
         floor_label_region(),
@@ -120,20 +122,20 @@ pub(super) fn navigate(
         return Ok(());
     }
     for _ in 0..3 {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         let size = common::navigate_to_current_overview(serial, cancelled, log)?;
         adb::tap_game_point(serial, 460, 1830, size).map_err(|e| e.to_string())?;
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         let mut menu = None;
         for _ in 0..2 {
-            menu = common::poll_for_match(
+            menu = vision::poll_for_match(
                 serial,
                 &[
                     "battle_modes/union_campaign.png",
                     "battle_modes/guild_mode_tab.png",
                     "popup/quick_purchase.png",
                 ],
-                common::full_screen(),
+                vision::full_screen(),
                 crate::timing::secs(20),
                 cancelled,
             )?;
@@ -142,7 +144,7 @@ pub(super) fn navigate(
                 .is_some_and(|(path, _, _)| path == "popup/quick_purchase.png")
             {
                 adb::press_back(serial).map_err(|e| e.to_string())?;
-                common::settle_cancellable(cancelled)?;
+                vision::settle_cancellable(cancelled)?;
             } else {
                 break;
             }
@@ -153,32 +155,32 @@ pub(super) fn navigate(
         // When Guild Mode is already active its tab pill has a different image.
         // Detect the Union card first, exactly as in the original navigation.
         if path == "battle_modes/guild_mode_tab.png" {
-            let (screen, _) = common::screenshot(serial)?;
-            if common::find_template(
+            let (screen, _) = vision::screenshot(serial)?;
+            if vision::find_template(
                 &screen,
                 "battle_modes/union_campaign.png",
-                common::full_screen(),
+                vision::full_screen(),
                 0.75,
             )?
             .is_none()
             {
-                common::tap_match(serial, tab, size)?;
-                common::settle_cancellable(cancelled)?;
+                vision::tap_match(serial, tab, size)?;
+                vision::settle_cancellable(cancelled)?;
             }
         }
         for swipe in 0..=4 {
-            common::ensure_not_cancelled(cancelled)?;
-            let (screen, size) = common::screenshot(serial)?;
-            if let Some(entry) = common::find_template(
+            vision::ensure_not_cancelled(cancelled)?;
+            let (screen, size) = vision::screenshot(serial)?;
+            if let Some(entry) = vision::find_template(
                 &screen,
                 "battle_modes/union_campaign.png",
-                common::full_screen(),
+                vision::full_screen(),
                 0.75,
             )? {
-                if let Some(coming_soon) = common::find_template(
+                if let Some(coming_soon) = vision::find_template(
                     &screen,
                     "battle_modes/coming_soon.png",
-                    common::full_screen(),
+                    vision::full_screen(),
                     0.78,
                 )? {
                     if coming_soon.center().1 < entry.center().1 {
@@ -190,20 +192,20 @@ pub(super) fn navigate(
                     }
                 }
                 for _ in 0..3 {
-                    let (screen, size) = common::screenshot(serial)?;
-                    let Some(entry) = common::find_template(
+                    let (screen, size) = vision::screenshot(serial)?;
+                    let Some(entry) = vision::find_template(
                         &screen,
                         "battle_modes/union_campaign.png",
-                        common::full_screen(),
+                        vision::full_screen(),
                         0.75,
                     )?
                     else {
                         break;
                     };
-                    common::tap_match(serial, entry, size)?;
-                    common::settle_cancellable(cancelled)?;
+                    vision::tap_match(serial, entry, size)?;
+                    vision::settle_cancellable(cancelled)?;
                 }
-                if common::poll_for_match(
+                if vision::poll_for_match(
                     serial,
                     &["union_campaign/current_label.png"],
                     floor_label_region(),
@@ -219,7 +221,7 @@ pub(super) fn navigate(
             if swipe < 4 {
                 adb::swipe_game_points(serial, (540, 1200), (540, 700), size, 1500)
                     .map_err(|e| e.to_string())?;
-                common::settle_cancellable(cancelled)?;
+                vision::settle_cancellable(cancelled)?;
             }
         }
     }
@@ -229,13 +231,13 @@ pub(super) fn navigate(
 pub(super) fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
     let started = Instant::now();
     while started.elapsed() < crate::timing::secs(45) {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
         match pre_battle_state(&screen)? {
             Some((PreBattle::Formation, _)) => return Ok(()),
             Some((PreBattle::FloorBattle | PreBattle::Overlay, found)) => {
-                common::tap_match(serial, found, size)?;
-                common::settle_cancellable(cancelled)?;
+                vision::tap_match(serial, found, size)?;
+                vision::settle_cancellable(cancelled)?;
             }
             None => std::thread::sleep(crate::timing::millis(400)),
         }
@@ -260,11 +262,11 @@ fn post_battle_state(screen: &GrayImage) -> Result<Option<(PostBattle, Match)>, 
         ("arena/continue.png", PostBattle::Continue, bottom_bar()),
         ("battle/records.png", PostBattle::Ready, records_region()),
     ] {
-        if let Some(found) = common::find_template(screen, path, region, 0.78)? {
+        if let Some(found) = vision::find_template(screen, path, region, 0.78)? {
             return Ok(Some((state, found)));
         }
     }
-    if common::find_template(
+    if vision::find_template(
         screen,
         "union_campaign/current_label.png",
         floor_label_region(),
@@ -272,10 +274,10 @@ fn post_battle_state(screen: &GrayImage) -> Result<Option<(PostBattle, Match)>, 
     )?
     .is_some()
     {
-        return Ok(common::find_template(
+        return Ok(vision::find_template(
             screen,
             "union_campaign/battle.png",
-            common::full_screen(),
+            vision::full_screen(),
             0.8,
         )?
         .map(|found| (PostBattle::FloorBattle, found)));
@@ -314,8 +316,8 @@ impl PostBattleDriver for AdbPostBattle<'_> {
     fn observe(&mut self, mut waiting_for_transition: bool) -> Result<PostBattle, String> {
         let started = Instant::now();
         while started.elapsed() < crate::timing::secs(20) {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = vision::screenshot(self.serial)?;
             let observation = post_battle_state(&screen)?;
             if !matches!(observation, Some((PostBattle::Continue, _))) {
                 waiting_for_transition = false;
@@ -331,15 +333,15 @@ impl PostBattleDriver for AdbPostBattle<'_> {
             }
             std::thread::sleep(crate::timing::millis(250));
         }
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         // Original's last-floor screen is unknown: only a genuine timeout ends
         // progression. Device failures and Stop remain errors, never completion.
         Ok(PostBattle::NoFurtherFloor)
     }
 
     fn tap_continue(&mut self) -> Result<(), String> {
-        common::ensure_not_cancelled(self.cancelled)?;
-        common::tap_match(
+        vision::ensure_not_cancelled(self.cancelled)?;
+        vision::tap_match(
             self.serial,
             self.found.take().ok_or(text(
                 "Continue button not detected",
@@ -357,12 +359,12 @@ pub fn run(
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ActivityEvent),
 ) -> Result<u32, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     let mode = GameMode::UnionCampaign;
     progress(ActivityEvent::ModeOpening(mode));
     adb::launch_afk_journey(serial).map_err(|e| e.to_string())?;
     for _ in 0..3 {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     navigate(serial, cancelled, &mut log)?;
     let size = adb::display_size(serial).map_err(|e| e.to_string())?;
@@ -370,7 +372,7 @@ pub fn run(
     let mut cleared = 0u32;
     let mut formation_ready = false;
     loop {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         if !formation_ready {
             prepare_floor(serial, cancelled)?;
         }
@@ -443,7 +445,7 @@ mod tests {
     fn screen(paths: &[(&str, i64, i64)]) -> GrayImage {
         let mut image = GrayImage::new(1080, 1920);
         for &(path, x, y) in paths {
-            image::imageops::replace(&mut image, &common::load_template(path).unwrap(), x, y);
+            image::imageops::replace(&mut image, &vision::load_template(path).unwrap(), x, y);
         }
         image
     }
@@ -569,10 +571,10 @@ mod tests {
                     .unwrap()
                     .unwrap_or_else(|| panic!(
                         "Template not recognized: {path}; best {:?}",
-                        common::find_template(
+                        vision::find_template(
                             &screen(&[(path, 300, 1450)]),
                             path,
-                            common::full_screen(),
+                            vision::full_screen(),
                             0.0
                         )
                         .unwrap()
@@ -633,7 +635,7 @@ mod tests {
     #[ignore = "requires a cropped Union Campaign floor screenshot"]
     fn captured_floor_battle_button() {
         let path = std::env::var_os("ADBHELPER_TEST_UNION_FLOOR").expect("set screenshot path");
-        let (screen, _) = common::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        let (screen, _) = vision::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
         let found = floor_battle_button(&screen)
             .unwrap()
             .expect("verified floor Battle button");

@@ -1,4 +1,5 @@
-use super::{common, key, ocr, text, Driver, Point, Progress, Screen};
+use super::{key, ocr, text, Driver, Point, Progress, Screen};
+use crate::afk_journey::vision;
 use crate::afk_journey::{daily_extras::amount_with_thresholds, BASE_RESOLUTION};
 use image::{GrayImage, Luma};
 
@@ -206,7 +207,7 @@ fn interact_for_affinity(
     let model = driver.wait_for(model_view)?.ok_or_else(interaction_error)?;
     // Reserve the second click before sending input so recovery cannot repeat
     // it if the game disconnects before we see the result.
-    common::ensure_not_cancelled(driver.cancelled)?;
+    vision::ensure_not_cancelled(driver.cancelled)?;
     attempted.push(hero.clone());
     driver.tap(&model, center)?;
     let current = driver
@@ -372,7 +373,7 @@ fn resonance_level(screen: &Screen) -> Result<Option<u32>, String> {
     }
     amount_with_thresholds(
         &screen.gray,
-        common::Rect {
+        vision::Rect {
             x: 690,
             y: 619,
             width: 69,
@@ -410,7 +411,7 @@ fn ready_level_control(driver: &Driver<'_>) -> Result<Option<(Screen, Point, u32
         } else {
             absent = 0;
         }
-        common::settle_cancellable(driver.cancelled)?;
+        vision::settle_cancellable(driver.cancelled)?;
     }
     Err(text(
         "The current Resonance Level could not be verified.",
@@ -446,7 +447,7 @@ pub(super) fn level_up(
                 }
                 unchanged = Some(after);
             }
-            common::settle_cancellable(driver.cancelled)?;
+            vision::settle_cancellable(driver.cancelled)?;
         }
         if progress.state.pending {
             return Err(text(
@@ -562,7 +563,7 @@ pub(super) fn equipment(
         } else if equipment_overview(&screen) {
             break;
         }
-        common::settle_cancellable(driver.cancelled)?;
+        vision::settle_cancellable(driver.cancelled)?;
         screen = driver.read()?;
     }
     if !equipment_overview(&screen) {

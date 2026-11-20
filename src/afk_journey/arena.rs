@@ -1,9 +1,11 @@
 //! Daily PvP workflows ported from AdbAutoPlayer's arena and supreme_arena mixins.
 //! These use the player's existing formations, never PvE team-copy/retry logic.
-use super::afk_stages::{self as common, Match, Rect};
+use super::afk_stages::{self as common};
 use super::ocr::{self, TextLine};
 use crate::activity::{ActivityEvent, BattleOutcome, GameMode};
 use crate::adb;
+use crate::afk_journey::vision;
+use crate::afk_journey::vision::{Match, Rect};
 use crate::localization::{format_text, text};
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
@@ -138,16 +140,16 @@ fn popup() -> Rect {
     }
 }
 fn find(screen: &GrayImage, path: &str, roi: Rect) -> Result<Option<Match>, String> {
-    common::find_template(screen, path, roi, 0.85)
+    vision::find_template(screen, path, roi, 0.85)
 }
 fn purchase_popup(screen: &GrayImage) -> Result<bool, String> {
     Ok(find(screen, "supreme_arena/no_attempts_popup.png", popup())?.is_some())
 }
 fn confirmation(screen: &GrayImage) -> Result<bool, String> {
-    Ok(common::get_match(
+    Ok(vision::get_match(
         screen,
         &["navigation/confirm.png", "confirm_text.png", "cancel.png"],
-        common::lower_screen(),
+        vision::lower_screen(),
         0.85,
     )?
     .is_some())
@@ -167,7 +169,7 @@ fn home_control(screen: &GrayImage, kind: Kind) -> Result<Option<(String, Match)
     if find(screen, label, header)?.is_none() {
         return Ok(None);
     }
-    common::get_match(
+    vision::get_match(
         screen,
         &[kind.challenge(), "arena/continue.png"],
         footer(),
@@ -208,7 +210,7 @@ fn supreme_off_season(screen: &GrayImage) -> Result<bool, String> {
 }
 
 fn skip_off_season(serial: &str, kind: Kind, log: &mut impl FnMut(String)) -> Result<bool, String> {
-    if kind == Kind::Supreme && supreme_off_season(&common::screenshot(serial)?.0)? {
+    if kind == Kind::Supreme && supreme_off_season(&vision::screenshot(serial)?.0)? {
         log(text(
             "Supreme Arena is in Off Season. Skipping this step.",
             "Supreme Arena ist in der Offseason. Dieser Schritt wird übersprungen.",
@@ -251,10 +253,10 @@ pub(super) fn navigate(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
 ) -> Result<(), String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     common::navigate_to_battle_modes(serial, cancelled, log)?;
     for swipe in 0..=4 {
-        let (screen, size) = common::screenshot(serial)?;
+        let (screen, size) = vision::screenshot(serial)?;
         // The regular Arena is the upper-right mode card. Restrict its short
         // "Arena" label so it cannot select the Supreme Arena card below it.
         let region = if kind == Kind::Arena {
@@ -265,18 +267,18 @@ pub(super) fn navigate(
                 height: 1100,
             }
         } else {
-            common::full_screen()
+            vision::full_screen()
         };
         if let Some(entry) = find(&screen, kind.entry(), region)? {
-            common::ensure_not_cancelled(cancelled)?;
-            common::tap_match(serial, entry, size)?;
-            common::settle_cancellable(cancelled)?;
+            vision::ensure_not_cancelled(cancelled)?;
+            vision::tap_match(serial, entry, size)?;
+            vision::settle_cancellable(cancelled)?;
             return wait_home(serial, kind, cancelled).map(|_| ());
         }
         if swipe < 4 && kind == Kind::Supreme {
             adb::swipe_game_points(serial, (540, 1200), (540, 700), size, 1500)
                 .map_err(|e| e.to_string())?;
-            common::settle_cancellable(cancelled)?;
+            vision::settle_cancellable(cancelled)?;
         } else {
             break;
         }
@@ -300,15 +302,15 @@ fn dismiss_notice(
         adb::press_back(serial).map_err(|e| e.to_string())?;
         return Ok(true);
     }
-    if let Some(close) = find(screen, "tap_to_close.png", common::lower_screen())? {
-        common::tap_match(serial, close, size)?;
+    if let Some(close) = find(screen, "tap_to_close.png", vision::lower_screen())? {
+        vision::tap_match(serial, close, size)?;
         return Ok(true);
     }
     if kind == Kind::Arena
-        && common::get_match(
+        && vision::get_match(
             screen,
             &["arena/weekly_rewards.png", "arena/weekly_notice.png"],
-            common::full_screen(),
+            vision::full_screen(),
             0.85,
         )?
         .is_some()
@@ -343,8 +345,8 @@ fn wait_home(
     cancelled: &AtomicBool,
 ) -> Result<(GrayImage, (u32, u32)), String> {
     for _ in 0..12 {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
         if purchase_popup(&screen)? || confirmation(&screen)? {
             adb::press_back(serial).map_err(|e| e.to_string())?;
             return Err(text(
@@ -359,7 +361,7 @@ fn wait_home(
             return Ok((screen, size));
         }
         dismiss_notice(serial, kind, &screen, size)?;
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(super::recovery::restart_required(
         serial,
@@ -390,7 +392,7 @@ fn zero_cost(lines: &[TextLine]) -> bool {
 }
 
 fn verified_free_offer(screen: &GrayImage) -> Result<bool, String> {
-    let Some(price) = common::find_template(screen, "arena/buy_free.png", popup(), 0.95)? else {
+    let Some(price) = vision::find_template(screen, "arena/buy_free.png", popup(), 0.95)? else {
         return Ok(false);
     };
     let lines = ocr::recognize(screen)?;
@@ -413,7 +415,7 @@ fn verified_free_offer(screen: &GrayImage) -> Result<bool, String> {
         return Ok(false);
     }
     let rect = price.rect();
-    Ok(common::find_template(
+    Ok(vision::find_template(
         screen,
         "arena/free_price_zero.png",
         Rect {
@@ -501,7 +503,7 @@ fn battle_result(
         return Ok(Some((outcome, close)));
     }
     if seen_battle || !matches!(outcome, BattleOutcome::Unclear) {
-        let button = common::get_match(screen, &["arena/done.png", "next.png"], footer(), 0.85)?;
+        let button = vision::get_match(screen, &["arena/done.png", "next.png"], footer(), 0.85)?;
         return Ok(button.map(|(_, found)| (outcome, found.center())));
     }
     Ok(None)
@@ -607,7 +609,7 @@ fn supreme_selection_view(screen: &GrayImage) -> Result<SupremeSelectionView, St
         return Ok(SupremeSelectionView::Opponents);
     }
     if supreme_formation_header(&lines)
-        && common::get_match(screen, &["next.png", "arena/battle.png"], footer(), 0.85)?.is_some()
+        && vision::get_match(screen, &["next.png", "arena/battle.png"], footer(), 0.85)?.is_some()
     {
         return Ok(SupremeSelectionView::Formation);
     }
@@ -651,7 +653,7 @@ fn attempts_from(
 ) -> Result<u32, String> {
     let mut wins = 0;
     while !cursor.initial_done && cursor.initial < settings.attempts() {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         // Reserve before opponent selection as well: a crash at any challenge
         // transition must never reset the attempt budget and request an extra.
         cursor.initial += 1;
@@ -661,7 +663,7 @@ fn attempts_from(
             driver.checkpoint(*cursor);
             break;
         }
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         match driver.battle() {
             Ok(BattleOutcome::Won) => wins += 1,
             Err(error)
@@ -679,7 +681,7 @@ fn attempts_from(
     cursor.initial_done = true;
     driver.checkpoint(*cursor);
     while cursor.pending_extra || cursor.claims < settings.free_claims() {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         if !cursor.pending_extra {
             cursor.claims += 1;
             cursor.pending_extra = true;
@@ -690,7 +692,7 @@ fn attempts_from(
                 break;
             }
         }
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         cursor.pending_extra = false;
         cursor.extra += 1;
         driver.checkpoint(*cursor);
@@ -699,7 +701,7 @@ fn attempts_from(
             driver.checkpoint(*cursor);
             continue;
         }
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         match driver.battle() {
             Ok(BattleOutcome::Won) => wins += 1,
             Err(error)
@@ -727,8 +729,8 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
     fn choose_supreme(&mut self) -> Result<Choice, String> {
         let mut sent = [false; 3];
         for _ in 0..24 {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = vision::screenshot(self.serial)?;
             if purchase_popup(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
                 return Ok(Choice::Exhausted);
@@ -742,12 +744,12 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                 .into());
             }
             let view = supreme_selection_view(&screen)?;
-            common::ensure_not_cancelled(self.cancelled)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
             match view {
                 SupremeSelectionView::Formation => return Ok(Choice::Ready),
                 SupremeSelectionView::Exhausted => return Ok(Choice::Exhausted),
                 SupremeSelectionView::Overview(button) if !sent[0] => {
-                    common::tap_match(self.serial, button, size)?;
+                    vision::tap_match(self.serial, button, size)?;
                     sent[0] = true;
                 }
                 SupremeSelectionView::Opponents if !sent[1] => {
@@ -756,7 +758,7 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                     sent[1] = true;
                 }
                 SupremeSelectionView::Details(button) if !sent[2] => {
-                    common::tap_match(self.serial, button, size)?;
+                    vision::tap_match(self.serial, button, size)?;
                     sent[2] = true;
                 }
                 SupremeSelectionView::Unknown => {
@@ -766,7 +768,7 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             }
             // Wait for the verified destination of each tap, including the
             // formation loading screen. A repeated frame must not repeat input.
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Err(super::recovery::restart_required(
             self.serial,
@@ -783,8 +785,8 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
         // Next is actually present; an existing Battle screen needs no Next taps.
         let mut advances = 0;
         for _ in 0..24 {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = vision::screenshot(self.serial)?;
             if supreme_off_season(&screen)? {
                 return Ok(None);
             }
@@ -798,19 +800,19 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             }
             if supreme_formation_header(&ocr::recognize(&screen)?) {
                 if let Some((path, button)) =
-                    common::get_match(&screen, &["arena/battle.png", "next.png"], footer(), 0.85)?
+                    vision::get_match(&screen, &["arena/battle.png", "next.png"], footer(), 0.85)?
                 {
                     if path == "arena/battle.png" {
                         return Ok(Some((button, size)));
                     }
                     if advances < 2 {
-                        common::ensure_not_cancelled(self.cancelled)?;
-                        common::tap_match(self.serial, button, size)?;
+                        vision::ensure_not_cancelled(self.cancelled)?;
+                        vision::tap_match(self.serial, button, size)?;
                         advances += 1;
                     }
                 }
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Err(super::recovery::restart_required(
             self.serial,
@@ -824,8 +826,8 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
 
     fn wait_control(&self, path: &str, roi: Rect) -> Result<(Match, (u32, u32)), String> {
         for _ in 0..14 {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = vision::screenshot(self.serial)?;
             if purchase_popup(&screen)? || confirmation(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
                 return Err(text(
@@ -837,7 +839,7 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
             if let Some(control) = find(&screen, path, roi)? {
                 return Ok((control, size));
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Err(super::recovery::restart_required(
             self.serial,
@@ -855,9 +857,9 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
         size: (u32, u32),
     ) -> Result<BattleOutcome, String> {
         let finish = (|| {
-            common::ensure_not_cancelled(self.cancelled)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
             adb::tap_game_point(self.serial, close.0, close.1, size).map_err(|e| e.to_string())?;
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
             self.finish_result(&mut outcome)
         })();
         (self.progress)(ActivityEvent::BattleFinished(
@@ -869,8 +871,8 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
 
     fn finish_result(&self, outcome: &mut BattleOutcome) -> Result<(), String> {
         for _ in 0..8 {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = vision::screenshot(self.serial)?;
             if purchase_popup(&screen)? || confirmation(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
                 return Err(text(
@@ -890,12 +892,12 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                 if matches!(*outcome, BattleOutcome::Unclear) {
                     *outcome = observed;
                 }
-                common::ensure_not_cancelled(self.cancelled)?;
+                vision::ensure_not_cancelled(self.cancelled)?;
                 adb::tap_game_point(self.serial, x, y, size).map_err(|e| e.to_string())?;
             } else {
                 dismiss_notice(self.serial, self.settings.kind(), &screen, size)?;
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Err(super::recovery::restart_required(
             self.serial,
@@ -913,7 +915,7 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
         super::recovery::save_arena_cursor(self.serial, cursor);
     }
     fn choose(&mut self) -> Result<Choice, String> {
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         let kind = self.settings.kind();
         if kind == Kind::Supreme {
             return self.choose_supreme();
@@ -926,12 +928,12 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
         if path == kind.challenge() && challenge_attempts(&screen)? == Some(0) {
             return Ok(Choice::Exhausted);
         }
-        common::ensure_not_cancelled(self.cancelled)?;
-        common::tap_match(self.serial, challenge, size)?;
-        common::settle_cancellable(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
+        vision::tap_match(self.serial, challenge, size)?;
+        vision::settle_cancellable(self.cancelled)?;
         for _ in 0..12 {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = vision::screenshot(self.serial)?;
             if purchase_popup(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
                 return Ok(Choice::Exhausted);
@@ -955,13 +957,13 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
                         height: 1920,
                     },
                 )? {
-                    common::tap_match(self.serial, opponent, size)?;
-                    common::settle_cancellable(self.cancelled)?;
+                    vision::tap_match(self.serial, opponent, size)?;
+                    vision::settle_cancellable(self.cancelled)?;
                     return Ok(Choice::Ready);
                 }
             }
             dismiss_notice(self.serial, kind, &screen, size)?;
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         Err(super::recovery::restart_required(
             self.serial,
@@ -983,16 +985,16 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
         } else {
             self.wait_control("arena/battle.png", footer())?
         };
-        common::ensure_not_cancelled(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
         let mode = kind.mode();
         (self.progress)(ActivityEvent::BattleStarted(mode));
-        common::tap_match(self.serial, battle, size)?;
-        common::settle_cancellable(self.cancelled)?;
+        vision::tap_match(self.serial, battle, size)?;
+        vision::settle_cancellable(self.cancelled)?;
         let started = Instant::now();
         let mut seen_battle = false;
         while started.elapsed() < Duration::from_secs(super::BATTLE_TIMEOUT_SECONDS) {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, size) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, size) = vision::screenshot(self.serial)?;
             if kind == Kind::Supreme && supreme_off_season(&screen)? {
                 (self.progress)(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
                 return Ok(BattleOutcome::Unclear);
@@ -1020,13 +1022,13 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
                 .into());
             }
             if !seen_battle {
-                if let Some(skip) = find(&screen, "arena/skip.png", common::full_screen())? {
-                    common::ensure_not_cancelled(self.cancelled)?;
-                    common::tap_match(self.serial, skip, size)?;
+                if let Some(skip) = find(&screen, "arena/skip.png", vision::full_screen())? {
+                    vision::ensure_not_cancelled(self.cancelled)?;
+                    vision::tap_match(self.serial, skip, size)?;
                     seen_battle = true;
                 }
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
         (self.progress)(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
         Err(super::BATTLE_RESULT_TIMEOUT.into())
@@ -1050,39 +1052,39 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
         else {
             return Ok(false);
         };
-        common::ensure_not_cancelled(self.cancelled)?;
-        common::tap_match(self.serial, buy, size)?;
-        common::settle_cancellable(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
+        vision::tap_match(self.serial, buy, size)?;
+        vision::settle_cancellable(self.cancelled)?;
         // Verify both the original exact zero-diamond template and the price
         // text twice. Unknown/nonzero offers are declined with Back, never a tap.
         for _ in 0..2 {
-            common::ensure_not_cancelled(self.cancelled)?;
-            let (screen, _) = common::screenshot(self.serial)?;
+            vision::ensure_not_cancelled(self.cancelled)?;
+            let (screen, _) = vision::screenshot(self.serial)?;
             if !verified_free_offer(&screen)? {
                 adb::press_back(self.serial).map_err(|e| e.to_string())?;
-                common::settle_cancellable(self.cancelled)?;
+                vision::settle_cancellable(self.cancelled)?;
                 return Ok(false);
             }
-            common::settle_cancellable(self.cancelled)?;
+            vision::settle_cancellable(self.cancelled)?;
         }
-        let (screen, size) = common::screenshot(self.serial)?;
+        let (screen, size) = vision::screenshot(self.serial)?;
         if !verified_free_offer(&screen)? {
             adb::press_back(self.serial).map_err(|e| e.to_string())?;
             return Ok(false);
         }
-        let Some((_, confirm)) = common::get_match(
+        let Some((_, confirm)) = vision::get_match(
             &screen,
             &["navigation/confirm.png", "confirm_text.png"],
-            common::lower_screen(),
+            vision::lower_screen(),
             0.85,
         )?
         else {
             adb::press_back(self.serial).map_err(|e| e.to_string())?;
             return Ok(false);
         };
-        common::ensure_not_cancelled(self.cancelled)?;
-        common::tap_match(self.serial, confirm, size)?;
-        common::settle_cancellable(self.cancelled)?;
+        vision::ensure_not_cancelled(self.cancelled)?;
+        vision::tap_match(self.serial, confirm, size)?;
+        vision::settle_cancellable(self.cancelled)?;
         wait_home(self.serial, Kind::Arena, self.cancelled)?;
         Ok(true)
     }
@@ -1095,14 +1097,14 @@ pub fn run(
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ActivityEvent),
 ) -> Result<u32, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     // Fail before any ticket can be used if local OCR support is unavailable.
     ocr::recognize(&GrayImage::new(128, 64))?;
     let kind = settings.kind();
     progress(ActivityEvent::ModeOpening(kind.mode()));
     adb::launch_afk_journey(serial).map_err(|e| e.to_string())?;
     for _ in 0..3 {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     if skip_off_season(serial, kind, &mut log)? {
         return Ok(0);
@@ -1173,7 +1175,7 @@ mod tests {
     #[ignore = "reads a supplied Supreme Arena Off Season capture; no device input"]
     fn captured_supreme_off_season() {
         let path = std::env::var_os("ADBHELPER_TEST_OFF_SEASON").expect("capture path");
-        let (screen, _) = common::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        let (screen, _) = vision::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
         assert!(supreme_off_season(&screen).unwrap());
         assert!(matches!(
             supreme_selection_view(&screen).unwrap(),
@@ -1188,7 +1190,7 @@ mod tests {
         use crate::routine::{Action, Routine};
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set serial");
         let cancelled = AtomicBool::new(false);
-        assert!(supreme_off_season(&common::screenshot(&serial).unwrap().0).unwrap());
+        assert!(supreme_off_season(&vision::screenshot(&serial).unwrap().0).unwrap());
         let routine = Routine {
             steps: vec![Action::SupremeArena, Action::AfkRewards],
             ..Routine::default()
@@ -1256,7 +1258,7 @@ mod tests {
             "formation-loaded.png",
         ] {
             let (screen, _) =
-                common::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap()).unwrap();
+                vision::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap()).unwrap();
             println!(
                 "{name}: home={:?}, purchase={}, confirmation={}",
                 home_control(&screen, Kind::Supreme).unwrap(),
@@ -1271,7 +1273,7 @@ mod tests {
             ] {
                 println!(
                     "{path}: {:?}",
-                    common::find_template(&screen, path, common::full_screen(), 0.0).unwrap()
+                    vision::find_template(&screen, path, vision::full_screen(), 0.0).unwrap()
                 );
             }
             let view = supreme_selection_view(&screen).unwrap();
@@ -1321,7 +1323,7 @@ mod tests {
     #[test]
     fn stop_prevents_supreme_selection_and_formation_input() {
         let cancelled = AtomicBool::new(true);
-        let expected = common::ensure_not_cancelled(&cancelled).unwrap_err();
+        let expected = vision::ensure_not_cancelled(&cancelled).unwrap_err();
         let mut driver = AdbDriver {
             serial: "not-a-device",
             settings: Settings::Supreme(SupremeSettings::default()),
@@ -1342,8 +1344,8 @@ mod tests {
             if start != "overview" {
                 let (screen, size) = wait_home(&serial, Kind::Supreme, &cancelled).unwrap();
                 let (_, button) = home_control(&screen, Kind::Supreme).unwrap().unwrap();
-                common::tap_match(&serial, button, size).unwrap();
-                common::wait_for_match(
+                vision::tap_match(&serial, button, size).unwrap();
+                vision::wait_for_match(
                     &serial,
                     &["supreme_arena/select_opponent.png"],
                     Rect {
@@ -1357,10 +1359,10 @@ mod tests {
                 )
                 .unwrap();
                 if start == "details" {
-                    let (_, size) = common::screenshot(&serial).unwrap();
+                    let (_, size) = vision::screenshot(&serial).unwrap();
                     let (x, y) = OpponentPosition::Left.point();
                     adb::tap_game_point(&serial, x, y, size).unwrap();
-                    common::wait_for_match(
+                    vision::wait_for_match(
                         &serial,
                         &["supreme_arena/challenge_detail.png"],
                         footer(),
@@ -1432,7 +1434,7 @@ mod tests {
     #[ignore = "requires a captured Supreme Arena ranking-rewards image"]
     fn captured_supreme_ranking_rewards() {
         let path = std::env::var_os("ADBHELPER_TEST_SUPREME_RANKING").expect("capture path");
-        let (screen, _) = common::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        let (screen, _) = vision::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
         let lines = ocr::recognize(&screen).unwrap();
         println!("Ranking rewards OCR: {lines:?}");
         assert!(ranking_rewards(&lines));
@@ -1449,13 +1451,13 @@ mod tests {
         let rewards = find(
             &home,
             "supreme_arena/daily_rewards.png",
-            common::lower_screen(),
+            vision::lower_screen(),
         )
         .unwrap()
         .expect("Daily Rewards entry on Supreme Arena home");
-        common::tap_match(&serial, rewards, size).unwrap();
-        common::settle_cancellable(&cancelled).unwrap();
-        let (table, _) = common::screenshot(&serial).unwrap();
+        vision::tap_match(&serial, rewards, size).unwrap();
+        vision::settle_cancellable(&cancelled).unwrap();
+        let (table, _) = vision::screenshot(&serial).unwrap();
         std::fs::write(
             ".update-test/supreme-recovery/live-ranking.png",
             adb::screenshot(&serial).unwrap(),
@@ -1632,7 +1634,7 @@ mod tests {
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
         let cancelled = AtomicBool::new(false);
         navigate(&serial, Kind::Arena, &cancelled, &mut |m| println!("{m}")).unwrap();
-        let (screen, size) = common::screenshot(&serial).unwrap();
+        let (screen, size) = vision::screenshot(&serial).unwrap();
         let buy = find(
             &screen,
             "arena/buy.png",
@@ -1645,16 +1647,16 @@ mod tests {
         )
         .unwrap()
         .expect("extra attempt plus");
-        common::tap_match(&serial, buy, size).unwrap();
-        common::settle_cancellable(&cancelled).unwrap();
+        vision::tap_match(&serial, buy, size).unwrap();
+        vision::settle_cancellable(&cancelled).unwrap();
         let bytes = adb::screenshot(&serial).unwrap();
-        let screen = common::normalize_screenshot(&bytes).unwrap().0;
+        let screen = vision::normalize_screenshot(&bytes).unwrap().0;
         let lines = ocr::recognize(&screen);
-        let template = common::find_template(&screen, "arena/buy_free.png", popup(), 0.95);
+        let template = vision::find_template(&screen, "arena/buy_free.png", popup(), 0.95);
         let verified = verified_free_offer(&screen);
         // Close the offer before asserting or printing any diagnostic result.
         adb::press_back(&serial).unwrap();
-        common::settle_cancellable(&cancelled).unwrap();
+        vision::settle_cancellable(&cancelled).unwrap();
         std::fs::write(".update-test/arena-offer-read-only.png", bytes).unwrap();
         let lines = lines.unwrap();
         for line in &lines {
@@ -1863,7 +1865,7 @@ mod tests {
     fn connected_emulator_arena_existing_victory() {
         let path =
             std::env::var_os("ADBHELPER_TEST_ARENA_RESULT_IMAGE").expect("set a result capture");
-        let (captured, _) = common::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
+        let (captured, _) = vision::normalize_screenshot(&std::fs::read(path).unwrap()).unwrap();
         assert!(matches!(
             battle_result(&captured, false).unwrap(),
             Some((BattleOutcome::Won, _))
@@ -1871,7 +1873,7 @@ mod tests {
 
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("set ADBHELPER_TEST_SERIAL");
         let cancelled = AtomicBool::new(false);
-        let (screen, size) = common::screenshot(&serial).unwrap();
+        let (screen, size) = vision::screenshot(&serial).unwrap();
         let (outcome, close) = battle_result(&screen, false)
             .unwrap()
             .expect("open Arena result");
@@ -1928,9 +1930,9 @@ mod tests {
                     adb::shell(&serial, &["am", "force-stop", &package])
                         .map_err(|e| e.to_string())?;
                     for _ in 0..2 {
-                        common::settle_cancellable(&cancelled)?;
+                        vision::settle_cancellable(&cancelled)?;
                     }
-                    common::screenshot(&serial)?;
+                    vision::screenshot(&serial)?;
                     panic!("crash was not detected");
                 }
                 Ok(0)

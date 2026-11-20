@@ -1,9 +1,10 @@
 //! Per-worker recovery for game crashes and missing battle results.
 use super::{
-    afk_stages::{self as common, StageSelection, TeamCursor},
+    afk_stages::{StageSelection, TeamCursor},
     arena::Cursor,
     legend_trial::TowerSelection,
 };
+use crate::afk_journey::vision;
 use crate::localization::{format_text, text};
 use crate::{
     activity::{ActivityEvent, BattleOutcome, GameMode, LegendTower},
@@ -194,7 +195,7 @@ fn state() -> (bool, Checkpoint) {
     })
 }
 fn restart(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     // A restart means the game got stuck; give the next attempt more time.
     crate::timing::note_timeout();
     SESSION.with(|slot| {
@@ -211,7 +212,7 @@ fn restart(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
     // Give the newly launched game time to finish its loading/login animation.
     // No coordinates are sent during this wait. Stop remains responsive.
     for _ in 0..15 {
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     if adb::game_state(serial).map_err(|e| e.to_string())? != adb::GameState::Running {
         return Err(game_crashed().into());
@@ -239,7 +240,7 @@ impl RecoveryDriver for AdbRecovery<'_> {
         adb::reconnect(self.serial).map_err(|e| e.to_string())
     }
     fn settle(&mut self) -> Result<(), String> {
-        common::settle_cancellable(self.cancelled)
+        vision::settle_cancellable(self.cancelled)
     }
     fn restart(&mut self) -> Result<(), String> {
         restart(self.serial, self.cancelled)
@@ -253,7 +254,7 @@ fn connected_state(
 ) -> Result<adb::GameState, String> {
     let mut last_error = String::new();
     for attempt in 0..MAX_CONNECTION_PROBES {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         match driver.probe() {
             Ok(state) => return Ok(state),
             Err(error) if adb::is_transport_error(&error) => {
@@ -309,7 +310,7 @@ fn supervised_with_driver(
     let mut restart_count = 0;
     let mut transport_recoveries = 0;
     loop {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         let (_, checkpoint) = state();
         let result = execute(checkpoint, &mut |event| {
             match event {
@@ -355,7 +356,7 @@ fn supervised_with_driver(
             }
             report(event);
         });
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         let transport_failed = matches!(&result, Err(error) if adb::is_transport_error(error));
         let should_probe = transport_failed
             || SESSION.with(|slot| {
@@ -414,7 +415,7 @@ fn supervised_with_driver(
             report(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
         }
         loop {
-            common::ensure_not_cancelled(cancelled)?;
+            vision::ensure_not_cancelled(cancelled)?;
             if restart_count == MAX_RESTARTS {
                 return Err(text("Automatic recovery failed after three game restarts.", "Die automatische Wiederherstellung ist nach drei Spielneustarts fehlgeschlagen.").into());
             }
@@ -495,7 +496,7 @@ mod tests {
             self.pauses += 1;
             if let Some(stop) = &self.stop_on_pause {
                 stop.store(true, std::sync::atomic::Ordering::Relaxed);
-                common::ensure_not_cancelled(stop)?;
+                vision::ensure_not_cancelled(stop)?;
             }
             Ok(())
         }

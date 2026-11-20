@@ -1,5 +1,6 @@
 //! Optional paid Instant AFK and the original stage-reward collection path.
 use super::{afk_stages as common, daily, ocr};
+use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode, HourglassStop},
     adb,
@@ -35,13 +36,13 @@ pub(super) fn exact_amount(value: &str) -> Option<u32> {
     value.replace(',', "").parse().ok()
 }
 
-pub(super) fn amount(screen: &GrayImage, rect: common::Rect) -> Result<Option<u32>, String> {
+pub(super) fn amount(screen: &GrayImage, rect: vision::Rect) -> Result<Option<u32>, String> {
     amount_with_thresholds(screen, rect, &[180, 200], 3)
 }
 
 pub(super) fn amount_with_thresholds(
     screen: &GrayImage,
-    rect: common::Rect,
+    rect: vision::Rect,
     thresholds: &[u8],
     scale: u32,
 ) -> Result<Option<u32>, String> {
@@ -101,7 +102,7 @@ fn paid_status(screen: &GrayImage) -> Result<Option<PaidStatus>, String> {
     if daily::hourglass_control(screen, "daily/paid_hourglass.png")?.is_some() {
         return Ok(amount(
             screen,
-            common::Rect {
+            vision::Rect {
                 x: 930,
                 y: 1458,
                 width: 80,
@@ -123,10 +124,10 @@ fn paid_status(screen: &GrayImage) -> Result<Option<PaidStatus>, String> {
 }
 
 fn wallet(screen: &GrayImage) -> Result<Option<u32>, String> {
-    if common::find_template(
+    if vision::find_template(
         screen,
         "daily/wallet_diamond.png",
-        common::Rect {
+        vision::Rect {
             x: 700,
             y: 0,
             width: 110,
@@ -142,7 +143,7 @@ fn wallet(screen: &GrayImage) -> Result<Option<u32>, String> {
     // digits into one OCR glyph. Read just the printed balance.
     amount(
         screen,
-        common::Rect {
+        vision::Rect {
             x: 793,
             y: 22,
             width: 132,
@@ -157,12 +158,12 @@ fn read_wallet(
     log: &mut impl FnMut(String),
 ) -> Result<Option<u32>, String> {
     let size = common::navigate_to_current_overview(serial, cancelled, log)?;
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     adb::tap_game_point(serial, 330, 1830, size).map_err(|e| e.to_string())?;
     let mut last = None;
     for _ in 0..10 {
-        common::settle_cancellable(cancelled)?;
-        let (screen, _) = common::screenshot(serial)?;
+        vision::settle_cancellable(cancelled)?;
+        let (screen, _) = vision::screenshot(serial)?;
         let current = wallet(&screen)?;
         if current.is_some() && current == last {
             return Ok(current);
@@ -179,14 +180,14 @@ fn stable_paid_status(
 ) -> Result<Option<(PaidStatus, (u32, u32))>, String> {
     let mut last = None;
     for _ in 0..10 {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
         let current = paid_status(&screen)?.filter(|status| accept(*status));
         if let Some(status) = current.filter(|_| current == last) {
             return Ok(Some((status, size)));
         }
         last = current;
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Ok(None)
 }
@@ -334,7 +335,7 @@ fn run_paid(
                 balance: offer.balance,
             });
         }
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         // Record the pending purchase before input. On recovery, confirm the
         // game's next price or exhausted state before attempting another.
         cursor.pending = Some(Receipt::Purchase { price });
@@ -418,18 +419,18 @@ fn finish_stage_claim(
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<(), String> {
     for _ in 0..10 {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
         if let StageView::Loot(point) = stage_view(&ocr::recognize(&screen)?) {
-            common::ensure_not_cancelled(cancelled)?;
+            vision::ensure_not_cancelled(cancelled)?;
             adb::tap_game_point(serial, point.0, point.1, size).map_err(|e| e.to_string())?;
             cursor.pending = None;
             cursor.confirmed += 1;
             report(ActivityEvent::Collected(GameMode::StageRewards, 1));
-            common::settle_cancellable(cancelled)?;
+            vision::settle_cancellable(cancelled)?;
             return Ok(());
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "The stage reward could not be confirmed. No further claim was attempted.",
@@ -446,7 +447,7 @@ fn run_stage_rewards(
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, String> {
     if cursor.pending.is_some() {
-        let (screen, _) = common::screenshot(serial)?;
+        let (screen, _) = vision::screenshot(serial)?;
         if matches!(stage_view(&ocr::recognize(&screen)?), StageView::Loot(_)) {
             finish_stage_claim(serial, cursor, cancelled, report)?;
         } else {
@@ -459,8 +460,8 @@ fn run_stage_rewards(
     common::navigate_to_afk_stages(serial, cancelled, log)?;
     report(ActivityEvent::ModeEntered(GameMode::StageRewards));
     for _ in 0..50 {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
         if !daily::page(&screen)? {
             return Err(text(
                 "The AFK stage reward page could not be verified.",
@@ -471,14 +472,14 @@ fn run_stage_rewards(
         let target = stage_target(&ocr::recognize(&screen)?).unwrap_or((770, 500));
         // The original opens/claims here. Only probe once on a verified AFK
         // page, then inspect the response instead of repeating blind taps.
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         adb::tap_game_point(serial, target.0, target.1, size).map_err(|e| e.to_string())?;
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         let mut settled_page = 0;
         let mut claim_started = false;
         for _ in 0..8 {
-            common::ensure_not_cancelled(cancelled)?;
-            let (screen, size) = common::screenshot(serial)?;
+            vision::ensure_not_cancelled(cancelled)?;
+            let (screen, size) = vision::screenshot(serial)?;
             match stage_view(&ocr::recognize(&screen)?) {
                 StageView::Loot(_) => {
                     cursor.pending = Some(Receipt::StageReward);
@@ -487,7 +488,7 @@ fn run_stage_rewards(
                 }
                 StageView::Claim(point) => {
                     cursor.pending = Some(Receipt::StageReward);
-                    common::ensure_not_cancelled(cancelled)?;
+                    vision::ensure_not_cancelled(cancelled)?;
                     adb::tap_game_point(serial, point.0, point.1, size)
                         .map_err(|e| e.to_string())?;
                     claim_started = true;
@@ -513,7 +514,7 @@ fn run_stage_rewards(
                     }
                 }
             }
-            common::settle_cancellable(cancelled)?;
+            vision::settle_cancellable(cancelled)?;
         }
         if !claim_started {
             return Err(text(
@@ -710,7 +711,7 @@ mod tests {
             std::env::var_os("ADBHELPER_TEST_DAILY_CAPTURES").expect("capture folder"),
         );
         let load = |name| {
-            common::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap())
+            vision::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap())
                 .unwrap()
                 .0
         };
@@ -740,7 +741,7 @@ mod tests {
             std::env::var_os("ADBHELPER_TEST_DAILY_EXTRAS").expect("capture folder"),
         );
         let load = |name| {
-            common::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap())
+            vision::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap())
                 .unwrap()
                 .0
         };
@@ -755,10 +756,10 @@ mod tests {
         let house = load("mystical-house.png");
         println!(
             "wallet icon: {:?}",
-            common::find_template(
+            vision::find_template(
                 &house,
                 "daily/wallet_diamond.png",
-                common::Rect {
+                vision::Rect {
                     x: 700,
                     y: 0,
                     width: 110,
@@ -772,7 +773,7 @@ mod tests {
             "wallet OCR: {:?}",
             daily::crop_lines(
                 &house,
-                common::Rect {
+                vision::Rect {
                     x: 794,
                     y: 10,
                     width: 154,
@@ -797,7 +798,7 @@ mod tests {
         );
         let load = |name: &str| {
             let bytes = std::fs::read(folder.join(name)).unwrap();
-            common::normalize_screenshot(&bytes).unwrap().0
+            vision::normalize_screenshot(&bytes).unwrap().0
         };
         assert_eq!(wallet(&load("skip_fix_initial.png")).unwrap(), Some(156690));
         let after = paid_status(&load("skip_fix_afk_stable.png"))

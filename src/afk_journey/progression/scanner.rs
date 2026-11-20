@@ -2,8 +2,9 @@
 mod guild;
 mod hero;
 
-use super::{common, text, Driver, Screen};
+use super::{text, Driver, Screen};
 use crate::activity::{ActivityEvent, GameMode};
+use crate::afk_journey::vision;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -93,7 +94,7 @@ pub fn run(
     report: &mut dyn FnMut(ActivityEvent),
     exported: &mut impl FnMut(PathBuf),
 ) -> Result<u32, String> {
-    common::ensure_not_cancelled(cancelled)?;
+    vision::ensure_not_cancelled(cancelled)?;
     report(ActivityEvent::ModeOpening(mode));
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -146,7 +147,7 @@ fn crop(
 ) -> Result<Vec<super::ocr::TextLine>, String> {
     let mut lines = crate::afk_journey::daily::crop_lines(
         &screen.gray,
-        common::Rect {
+        vision::Rect {
             x,
             y,
             width,

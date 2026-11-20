@@ -1,4 +1,5 @@
 use super::{afk_stages as common, ocr};
+use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
     adb,
@@ -42,16 +43,16 @@ enum Pending {
 fn find(
     screen: &GrayImage,
     path: &str,
-    region: common::Rect,
-) -> Result<Option<common::Match>, String> {
-    common::find_template(screen, path, region, 0.9)
+    region: vision::Rect,
+) -> Result<Option<vision::Match>, String> {
+    vision::find_template(screen, path, region, 0.9)
 }
 
 pub(super) fn page(screen: &GrayImage) -> Result<bool, String> {
     Ok(find(
         screen,
         "navigation/resonating_hall_label.png",
-        common::Rect {
+        vision::Rect {
             x: 324,
             y: 1728,
             width: 432,
@@ -60,20 +61,20 @@ pub(super) fn page(screen: &GrayImage) -> Result<bool, String> {
     )?
     .is_some()
         && claim_control(screen)?.is_none()
-        && common::get_match(
+        && vision::get_match(
             screen,
             &["navigation/confirm.png", "confirm_text.png", "cancel.png"],
-            common::lower_screen(),
+            vision::lower_screen(),
             0.9,
         )?
         .is_none())
 }
 
-pub(super) fn claim_control(screen: &GrayImage) -> Result<Option<common::Match>, String> {
+pub(super) fn claim_control(screen: &GrayImage) -> Result<Option<vision::Match>, String> {
     if find(
         screen,
         "daily/afk_time.png",
-        common::Rect {
+        vision::Rect {
             x: 740,
             y: 560,
             width: 300,
@@ -87,7 +88,7 @@ pub(super) fn claim_control(screen: &GrayImage) -> Result<Option<common::Match>,
     find(
         screen,
         "daily/claim.png",
-        common::Rect {
+        vision::Rect {
             x: 200,
             y: 980,
             width: 680,
@@ -98,7 +99,7 @@ pub(super) fn claim_control(screen: &GrayImage) -> Result<Option<common::Match>,
 
 pub(super) fn crop_lines(
     screen: &GrayImage,
-    rect: common::Rect,
+    rect: vision::Rect,
 ) -> Result<Vec<ocr::TextLine>, String> {
     let crop =
         image::imageops::crop_imm(screen, rect.x, rect.y, rect.width, rect.height).to_image();
@@ -116,16 +117,16 @@ pub(super) fn crop_lines(
 pub(super) fn hourglass_control(
     screen: &GrayImage,
     path: &str,
-) -> Result<Option<common::Match>, String> {
+) -> Result<Option<vision::Match>, String> {
     let region = if path == "daily/hourglass_zero.png" {
-        common::Rect {
+        vision::Rect {
             x: 920,
             y: 1448,
             width: 82,
             height: 65,
         }
     } else {
-        common::Rect {
+        vision::Rect {
             x: 850,
             y: 1310,
             width: 200,
@@ -135,7 +136,7 @@ pub(super) fn hourglass_control(
     find(screen, path, region)
 }
 
-fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, common::Match)>, String> {
+fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, vision::Match)>, String> {
     if !page(screen)? {
         return Ok(None);
     }
@@ -154,7 +155,7 @@ fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, common::Match)>, Strin
 pub(super) fn free_hourglass_count(screen: &GrayImage) -> Result<Option<u32>, String> {
     let lines = ocr::repeated_numeric_patch(
         screen,
-        common::Rect {
+        vision::Rect {
             x: 963,
             y: 1464,
             width: 20,
@@ -172,10 +173,10 @@ pub(super) fn free_hourglass_count(screen: &GrayImage) -> Result<Option<u32>, St
 }
 
 fn timer_reset(screen: &GrayImage) -> Result<bool, String> {
-    Ok(common::find_template(
+    Ok(vision::find_template(
         screen,
         "daily/timer_reset.png",
-        common::Rect {
+        vision::Rect {
             x: 460,
             y: 1475,
             width: 190,
@@ -189,14 +190,14 @@ fn timer_reset(screen: &GrayImage) -> Result<bool, String> {
 fn wait_hourglasses(
     serial: &str,
     cancelled: &AtomicBool,
-) -> Result<(u32, common::Match, (u32, u32)), String> {
+) -> Result<(u32, vision::Match, (u32, u32)), String> {
     for _ in 0..8 {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, size) = common::screenshot(serial)?;
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, size) = vision::screenshot(serial)?;
         if let Some((count, button)) = hourglasses(&screen)? {
             return Ok((count, button, size));
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "The free hourglass count could not be verified.",
@@ -230,8 +231,8 @@ fn free_confirmation(lines: &[ocr::TextLine], expected: u32) -> bool {
 
 fn verify_pending(serial: &str, pending: &Pending, cancelled: &AtomicBool) -> Result<(), String> {
     for _ in 0..12 {
-        common::ensure_not_cancelled(cancelled)?;
-        let (screen, _) = common::screenshot(serial)?;
+        vision::ensure_not_cancelled(cancelled)?;
+        let (screen, _) = vision::screenshot(serial)?;
         let confirmed = match pending {
             Pending::AfkRewards => page(&screen)? && timer_reset(&screen)?,
             Pending::FreeHourglasses(before) => hourglasses(&screen)?
@@ -240,7 +241,7 @@ fn verify_pending(serial: &str, pending: &Pending, cancelled: &AtomicBool) -> Re
         if confirmed {
             return Ok(());
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
     }
     Err(text(
         "The collection could not be confirmed. Check the AFK screen before restarting the Daily routine.",
@@ -269,7 +270,7 @@ pub fn run(
                 true
             }
             Pending::AfkRewards => {
-                let (screen, _) = common::screenshot(serial)?;
+                let (screen, _) = vision::screenshot(serial)?;
                 if !page(&screen)? {
                     return Err(text(
                         "The AFK page changed during recovery.",
@@ -292,13 +293,13 @@ pub fn run(
         }
     }
     while cursor.confirmed < collection.limit() {
-        common::ensure_not_cancelled(cancelled)?;
+        vision::ensure_not_cancelled(cancelled)?;
         match collection {
             Collection::AfkRewards => {
                 for _ in 0..14 {
-                    common::settle_cancellable(cancelled)?;
+                    vision::settle_cancellable(cancelled)?;
                 }
-                let (screen, size) = common::screenshot(serial)?;
+                let (screen, size) = vision::screenshot(serial)?;
                 if !page(&screen)? {
                     return Err(text(
                         "The AFK rewards page was not verified.",
@@ -307,10 +308,10 @@ pub fn run(
                     .into());
                 }
                 adb::tap_game_point(serial, 520, 1400, size).map_err(|e| e.to_string())?;
-                let (_, claim, size) = common::wait_for_match(
+                let (_, claim, size) = vision::wait_for_match(
                     serial,
                     &["daily/claim.png"],
-                    common::Rect {
+                    vision::Rect {
                         x: 200,
                         y: 980,
                         width: 680,
@@ -319,7 +320,7 @@ pub fn run(
                     crate::timing::secs(10),
                     cancelled,
                 )?;
-                let (screen, _) = common::screenshot(serial)?;
+                let (screen, _) = vision::screenshot(serial)?;
                 if claim_control(&screen)?.is_none() {
                     return Err(text(
                         "The AFK claim dialog changed.",
@@ -328,8 +329,8 @@ pub fn run(
                     .into());
                 }
                 cursor.pending = Some(Pending::AfkRewards);
-                common::ensure_not_cancelled(cancelled)?;
-                common::tap_match(serial, claim, size)?;
+                vision::ensure_not_cancelled(cancelled)?;
+                vision::tap_match(serial, claim, size)?;
             }
             Collection::FreeHourglasses => {
                 let (before, button, size) = wait_hourglasses(serial, cancelled)?;
@@ -342,12 +343,12 @@ pub fn run(
                     break;
                 }
                 cursor.pending = Some(Pending::FreeHourglasses(before));
-                common::ensure_not_cancelled(cancelled)?;
-                common::tap_match(serial, button, size)?;
-                common::settle_cancellable(cancelled)?;
-                let (screen, size) = common::screenshot(serial)?;
+                vision::ensure_not_cancelled(cancelled)?;
+                vision::tap_match(serial, button, size)?;
+                vision::settle_cancellable(cancelled)?;
+                let (screen, size) = vision::screenshot(serial)?;
                 if !page(&screen)? {
-                    let rect = common::Rect {
+                    let rect = vision::Rect {
                         x: 60,
                         y: 480,
                         width: 960,
@@ -362,8 +363,8 @@ pub fn run(
                         )
                         .into());
                     }
-                    common::settle_cancellable(cancelled)?;
-                    let (screen, _) = common::screenshot(serial)?;
+                    vision::settle_cancellable(cancelled)?;
+                    let (screen, _) = vision::screenshot(serial)?;
                     if !free_confirmation(&crop_lines(&screen, rect)?, before) {
                         return Err(text(
                             "The free Instant AFK offer changed.",
@@ -371,22 +372,22 @@ pub fn run(
                         )
                         .into());
                     }
-                    let (_, confirm) = common::get_match(
+                    let (_, confirm) = vision::get_match(
                         &screen,
                         &["navigation/confirm.png", "confirm_text.png"],
-                        common::lower_screen(),
+                        vision::lower_screen(),
                         0.9,
                     )?
                     .ok_or(text(
                         "Free Instant AFK confirmation not found.",
                         "Die kostenlose Instant-AFK-Bestätigung wurde nicht erkannt.",
                     ))?;
-                    common::ensure_not_cancelled(cancelled)?;
-                    common::tap_match(serial, confirm, size)?;
+                    vision::ensure_not_cancelled(cancelled)?;
+                    vision::tap_match(serial, confirm, size)?;
                 }
             }
         }
-        common::settle_cancellable(cancelled)?;
+        vision::settle_cancellable(cancelled)?;
         verify_pending(
             serial,
             cursor.pending.as_ref().expect("collection reserved"),
@@ -431,7 +432,7 @@ mod tests {
             std::env::var_os("ADBHELPER_TEST_DAILY_CAPTURES").expect("capture folder"),
         );
         let load = |name| {
-            common::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap())
+            vision::normalize_screenshot(&std::fs::read(folder.join(name)).unwrap())
                 .unwrap()
                 .0
         };

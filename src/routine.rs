@@ -221,7 +221,7 @@ impl Routine {
         self.validate()?;
         let mut total = 0u32;
         for (index, step) in self.steps.iter().copied().enumerate() {
-            crate::afk_journey::afk_stages::ensure_not_cancelled(cancelled)?;
+            crate::afk_journey::vision::ensure_not_cancelled(cancelled)?;
             total = total.saturating_add(execute(index, step)?);
         }
         Ok(total)

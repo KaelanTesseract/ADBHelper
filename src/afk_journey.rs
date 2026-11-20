@@ -24,6 +24,7 @@ pub mod phase_rewards;
 pub mod progression;
 pub mod recovery;
 pub mod union_campaign;
+pub(crate) mod vision;
 
 pub fn is_supported_package(package: &str) -> bool {
     PACKAGE_NAMES.contains(&package)
