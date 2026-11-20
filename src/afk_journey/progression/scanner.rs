@@ -20,6 +20,55 @@ pub struct GuildSettings {
     pub activeness: bool,
     pub afk_stages: bool,
     pub guild_members_url: String,
+    /// Supabase `apikey`; kept in the Windows Credential Manager, never in files.
+    pub guild_api_key: String,
+}
+
+const GUILD_CREDENTIAL: &str = "ADBHelper/GuildManager";
+
+impl GuildSettings {
+    /// Restores the Guild Manager URL and key saved by an earlier scan.
+    pub fn load_saved_access(&mut self) {
+        if let Some(saved) = crate::credentials::load(GUILD_CREDENTIAL) {
+            self.guild_members_url = saved.user;
+            self.guild_api_key = saved.secret;
+        }
+    }
+
+    /// Moves an `apikey` pasted as part of the URL into the separate key field.
+    pub fn take_pasted_key(&mut self) -> bool {
+        let (url, key) = guild::split_access(&self.guild_members_url);
+        match key {
+            Some(key) => {
+                self.guild_members_url = url;
+                self.guild_api_key = key;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Saves URL and key in the credential store, or removes them when both are empty.
+    pub fn save_access(&self) -> Result<(), String> {
+        let url = self.guild_members_url.trim();
+        let key = self.guild_api_key.trim();
+        if url.is_empty() && key.is_empty() {
+            return crate::credentials::delete(GUILD_CREDENTIAL);
+        }
+        crate::credentials::save(
+            GUILD_CREDENTIAL,
+            &crate::credentials::Credential {
+                user: url.to_owned(),
+                secret: key.to_owned(),
+            },
+        )
+    }
+
+    pub fn forget_access(&mut self) -> Result<(), String> {
+        self.guild_members_url.clear();
+        self.guild_api_key.clear();
+        crate::credentials::delete(GUILD_CREDENTIAL)
+    }
 }
 
 impl Default for GuildSettings {
@@ -30,6 +79,7 @@ impl Default for GuildSettings {
             activeness: true,
             afk_stages: false,
             guild_members_url: String::new(),
+            guild_api_key: String::new(),
         }
     }
 }

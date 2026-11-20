@@ -57,16 +57,43 @@ fn invalid_endpoint() -> String {
     .into()
 }
 
-fn remote_members(input: &str) -> Result<Vec<Member>, String> {
-    let uri = members_url(input)?;
-    let api_key = uri
-        .query()
-        .and_then(|query| {
-            query
-                .split('&')
-                .find_map(|pair| pair.strip_prefix("apikey="))
+/// Splits a pasted Guild Manager URL into the URL without `apikey` and that key.
+///
+/// The key belongs in the `apikey` header only; a query parameter would also end
+/// up in server and proxy logs.
+pub(crate) fn split_access(input: &str) -> (String, Option<String>) {
+    let input = input.trim();
+    let Some((base, query)) = input.split_once('?') else {
+        return (input.to_owned(), None);
+    };
+    let mut key = None;
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| match pair.strip_prefix("apikey=") {
+            Some(value) => {
+                if key.is_none() && !value.is_empty() {
+                    key = Some(value.to_owned());
+                }
+                false
+            }
+            None => !pair.is_empty(),
         })
-        .map(str::to_owned);
+        .collect();
+    let url = if kept.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base}?{}", kept.join("&"))
+    };
+    (url, key)
+}
+
+fn remote_members(input: &str, api_key: &str) -> Result<Vec<Member>, String> {
+    let (url, pasted_key) = split_access(input);
+    let uri = members_url(&url)?;
+    let api_key = Some(api_key.trim())
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+        .or(pasted_key);
     let agent = client();
     let mut request = agent.get(uri).header("Cache-Control", "no-cache");
     if let Some(api_key) = api_key {
@@ -823,7 +850,7 @@ pub(super) fn scan(
     let remote = if settings.guild_members_url.trim().is_empty() {
         Vec::new()
     } else {
-        remote_members(&settings.guild_members_url)?
+        remote_members(&settings.guild_members_url, &settings.guild_api_key)?
     };
     let ActivityScan {
         rows: activeness,
@@ -953,6 +980,41 @@ mod tests {
         ] {
             assert!(members_url(url).is_err(), "{url}");
         }
+    }
+
+    #[test]
+    fn pasted_api_key_moves_from_the_query_to_the_header_value() {
+        assert_eq!(
+            split_access(
+                " https://p.supabase.co/rest/v1/guild_states?select=state&apikey=secret&id=eq.7 "
+            ),
+            (
+                "https://p.supabase.co/rest/v1/guild_states?select=state&id=eq.7".into(),
+                Some("secret".into())
+            )
+        );
+        assert_eq!(
+            split_access("https://p.supabase.co/rest/v1/guild_states?apikey=secret"),
+            (
+                "https://p.supabase.co/rest/v1/guild_states".into(),
+                Some("secret".into())
+            )
+        );
+        assert_eq!(
+            split_access("https://p.supabase.co/rest/v1/guild_states?select=state&apikey="),
+            (
+                "https://p.supabase.co/rest/v1/guild_states?select=state".into(),
+                None
+            )
+        );
+        assert_eq!(
+            split_access("https://p.supabase.co/rest/v1/guild_states"),
+            ("https://p.supabase.co/rest/v1/guild_states".into(), None)
+        );
+        assert!(members_url(
+            &split_access("https://p.supabase.co/rest/v1/guild_states?apikey=x").0
+        )
+        .is_ok());
     }
 
     #[test]

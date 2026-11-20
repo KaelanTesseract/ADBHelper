@@ -320,6 +320,8 @@ pub struct PlayerApp {
     devices: Vec<Device>,
     selected_serial: Option<String>,
     logs: VecDeque<String>,
+    log_file: crate::logfile::LogFile,
+    log_folder_error: Option<String>,
     busy: bool,
     page: Page,
     language_save_error: Option<String>,
@@ -336,6 +338,7 @@ pub struct PlayerApp {
     dream_battle_limit: u32,
     dream_battle_limit_error: Option<String>,
     guild_scan: scanner::GuildSettings,
+    guild_access_error: Option<String>,
     scan_exports: Vec<(StageAction, std::path::PathBuf)>,
     active_action: Option<StageAction>,
     battle_options: [ActionBattleOptions; 6],
@@ -391,6 +394,8 @@ impl PlayerApp {
             devices: Vec::new(),
             selected_serial: None,
             logs: VecDeque::new(),
+            log_file: crate::logfile::LogFile::open_default(),
+            log_folder_error: None,
             busy: false,
             page: Page::Automations,
             language_save_error: None,
@@ -408,7 +413,12 @@ impl PlayerApp {
             dream_spend_gold: false,
             dream_battle_limit,
             dream_battle_limit_error,
-            guild_scan: scanner::GuildSettings::default(),
+            guild_scan: {
+                let mut settings = scanner::GuildSettings::default();
+                settings.load_saved_access();
+                settings
+            },
+            guild_access_error: None,
             scan_exports: Vec::new(),
             active_action: None,
             battle_options: [ActionBattleOptions::default(); 6],
@@ -432,6 +442,11 @@ impl PlayerApp {
             update_dialog_open: false,
             update_requests,
         };
+        app.log(format!(
+            "ADBHelper {} · {}",
+            updater::VERSION,
+            std::env::consts::OS
+        ));
         app.log(text("AFK Journey · App started. Connect an Android device with ADB debugging enabled.", "AFK Journey · App gestartet. Verbinde ein Android-Gerät mit aktiviertem ADB-Debugging."));
         app.refresh_devices();
         let update_sender = app.sender.clone();
@@ -451,10 +466,12 @@ impl PlayerApp {
     }
 
     fn log(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.log_file.write(&message);
         if self.logs.len() >= 300 {
             self.logs.pop_front();
         }
-        self.logs.push_back(message.into());
+        self.logs.push_back(message);
     }
 
     fn check_updates(&mut self) {
@@ -1747,7 +1764,24 @@ impl PlayerApp {
                                     ui.checkbox(&mut self.guild_scan.supreme_arena, "Supreme Arena");
                                     ui.checkbox(&mut self.guild_scan.afk_stages, text("Current Season AFK phase", "Aktuelle Season-AFK-Phase"));
                                     ui.label(text("Guild Manager API URL (optional)", "Guild-Manager-API-URL (optional)"));
-                                    ui.add(egui::TextEdit::singleline(&mut self.guild_scan.guild_members_url).password(true).desired_width(f32::INFINITY));
+                                    let url = ui.add(egui::TextEdit::singleline(&mut self.guild_scan.guild_members_url).desired_width(f32::INFINITY));
+                                    if url.changed() {
+                                        self.guild_scan.take_pasted_key();
+                                    }
+                                    ui.label(text("Guild Manager API key", "Guild-Manager-API-Schlüssel"));
+                                    let key = ui.add(egui::TextEdit::singleline(&mut self.guild_scan.guild_api_key).password(true).desired_width(f32::INFINITY));
+                                    if url.lost_focus() || key.lost_focus() {
+                                        self.guild_access_error = self.guild_scan.save_access().err();
+                                    }
+                                    ui.small(text("A key pasted inside the URL moves to the key field. URL and key are stored in the Windows Credential Manager and the key is sent only as a request header.", "Ein in der URL eingefügter Schlüssel wandert in das Schlüsselfeld. URL und Schlüssel liegen in der Windows-Anmeldeinformationsverwaltung, der Schlüssel wird nur im Header gesendet."));
+                                    if (!self.guild_scan.guild_members_url.is_empty() || !self.guild_scan.guild_api_key.is_empty())
+                                        && ui.button(text("Forget saved access", "Gespeicherten Zugang entfernen")).clicked()
+                                    {
+                                        self.guild_access_error = self.guild_scan.forget_access().err();
+                                    }
+                                    if let Some(error) = &self.guild_access_error {
+                                        ui.label(format_text!("Could not update the saved access: {error}", "Der gespeicherte Zugang konnte nicht geändert werden: {error}"));
+                                    }
                                     ui.small(text("Reads the roster for name matching. Exports are saved locally.", "Liest die Mitgliederliste zum Namensabgleich. Exporte werden lokal gespeichert."));
                                     ui.hyperlink_to("AFKJ Guild Manager", "https://afkj-guildmanager.vercel.app/");
                                 }
@@ -1810,6 +1844,30 @@ impl PlayerApp {
                 ui.label(format_text!(
                     "Could not save the language preference: {error}",
                     "Die Spracheinstellung konnte nicht gespeichert werden: {error}"
+                ));
+            }
+        });
+        ui.add_space(SpaceTokens::MD);
+        card(ui, |ui| {
+            ui.strong(text("Log files", "Log-Dateien"));
+            ui.label(format_text!(
+                "ADBHelper writes one log file per day and keeps the last {} days. Attach the file when you report a problem.",
+                "ADBHelper schreibt pro Tag eine Log-Datei und behält die letzten {} Tage. Hänge die Datei an, wenn du einen Fehler meldest.",
+                crate::logfile::KEEP_DAYS
+            ));
+            if let Ok(directory) = crate::logfile::directory() {
+                ui.small(directory.display().to_string());
+            }
+            if ui
+                .button(text("Open log folder", "Log-Ordner öffnen"))
+                .clicked()
+            {
+                self.log_folder_error = crate::logfile::open_folder().err();
+            }
+            if let Some(error) = &self.log_folder_error {
+                ui.label(format_text!(
+                    "Could not open the log folder: {error}",
+                    "Der Log-Ordner konnte nicht geöffnet werden: {error}"
                 ));
             }
         });
