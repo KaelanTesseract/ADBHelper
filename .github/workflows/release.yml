@@ -10,6 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Test and build with mandatory patchnotes
         shell: pwsh
         run: ./scripts/Build-Release.ps1 -Version $env:GITHUB_REF_NAME

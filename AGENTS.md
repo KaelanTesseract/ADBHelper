@@ -6,7 +6,8 @@
 - Nach jeder Umsetzung aus der AFK-Journey-Roadmap die Checkliste und den Prüfstand in `ROADMAP.md` aktualisieren.
 - Bei jeder veröffentlichten neuen Version die Versionsnummer in Cargo.toml und Cargo.lock erhöhen und neue Patchnotes unter `releases/v<VERSION>.md` schreiben.
 - Jedes GitHub-Release muss genau diese Patchnotes enthalten. Nie ein Release ohne Patchnotes oder mit Platzhaltertext veröffentlichen.
-- Vor einem Release `scripts/Build-Release.ps1` ausführen. Es bricht ab, wenn Formatierung, Clippy (`-D warnings`) oder Tests nicht bestehen. Neue Clippy-Warnungen sofort beheben.
+- Vor einem Release `scripts/Build-Release.ps1` ausführen. Es bricht ab, wenn Formatierung, Clippy (`-D warnings`), `cargo deny check` oder Tests nicht bestehen. Neue Clippy-Warnungen sofort beheben.
 - Der feste Download-Assetname für den eingebauten Updater ist `ADBHelper-Windows-x64.exe`.
 - Die Checkboxen für normale und Season-Stages bleiben nebeneinander. Bei gemeinsamer Auswahl läuft Season vor Normal; Stop beendet die ganze Sequenz.
 - Neue Oberflächentexte nur über `tr!("id")` bzw. `tr!("id", name = wert)`, mit Eintrag in `locales/en.ftl` und `locales/de.ftl`. Die Tests in `src/localization/tests.rs` prüfen gleiche Ids und Platzhalter.
+- Neue Abhängigkeiten nur mit Lizenz aus der Liste in `deny.toml`. Ausnahmen oder ignorierte Sicherheitsmeldungen nur nach Rückfrage, mit Begründung, und bei jedem Abhängigkeits-Update neu prüfen.

@@ -170,6 +170,8 @@ cargo run --locked
 cargo test --release --locked
 ```
 
+The release script also checks formatting, Clippy, and dependency licenses and advisories. Install [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) once with `cargo install cargo-deny --version 0.20.2 --locked`; the rules are in `deny.toml`.
+
 Build the Windows EXE and its SHA-256 file with:
 
 ```powershell

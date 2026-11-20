@@ -1,0 +1,46 @@
+# cargo-deny: licenses, security advisories, duplicate crates, and crate sources.
+# Run `cargo deny check` before every release (scripts/Build-Release.ps1 does).
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# Every ignored advisory needs a reason and a re-check trigger. Review this list
+# on every dependency update.
+ignore = []
+
+[licenses]
+version = 2
+# ADBHelper is MIT licensed, so only permissive licenses are allowed.
+# Anything else: stop and ask before adding the dependency.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+]
+confidence-threshold = 0.9
+# Approved by the maintainer on 2026-11-20. Both crates ship in every release since 0.2.
+exceptions = [
+    # egui's built-in interface fonts (Hack, Ubuntu Light, emoji). Both font licenses
+    # allow embedding and redistribution with the license notice; the notice belongs
+    # in the third-party notes.
+    { crate = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+    # Mozilla's root certificate list for HTTPS (update check, Guild Manager roster).
+    { crate = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
