@@ -19,7 +19,8 @@ pub const ASSET_NAME: &str = "ADBHelper-Windows-x64.exe";
 /// installed when the release carries a matching signature for this version.
 const PUBLIC_KEY: &str = include_str!("../minisign.pub");
 const MAX_SIGNATURE_SIZE: u64 = 4096;
-pub const CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// Background checks after the one at startup; Settings also has a manual check.
+pub const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 pub enum CheckEvent {
     Started,
