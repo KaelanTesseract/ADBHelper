@@ -536,7 +536,8 @@ fn detect_decisive_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)
         (
             &[
                 "battle/victory_rewards.png",
-                "battle/victory_rewards_wide.png",
+                // Wide victory banner, shared with the Sunlit Showdown result screen.
+                "event/sunlit_showdown/victory.png",
             ][..],
             Outcome::VictoryRewards,
             0.76,
@@ -2162,7 +2163,7 @@ mod tests {
     fn victory_rewards_confirm_a_win_even_without_a_next_button() {
         for path in [
             "battle/victory_rewards.png",
-            "battle/victory_rewards_wide.png",
+            "event/sunlit_showdown/victory.png",
         ] {
             let screen = result_screen(&[path]);
             assert_eq!(
