@@ -177,7 +177,8 @@ pub(super) fn run_step(
             &mut |path| {
                 let _ = sender.send(Event::ScanExport(action, path));
             },
-        );
+        )
+        .map_err(String::from);
     }
     let mut collection = crate::afk_journey::daily::Cursor::default();
     let mut extras = crate::afk_journey::daily_extras::Cursor::default();
@@ -315,4 +316,5 @@ pub(super) fn run_step(
             let _ = sender.send(Event::Activity(event));
         },
     )
+    .map_err(String::from)
 }

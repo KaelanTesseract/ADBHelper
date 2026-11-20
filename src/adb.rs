@@ -169,7 +169,8 @@ pub fn devices() -> Result<Vec<Device>, AdbError> {
 
 pub fn shell(serial: &str, args: &[&str]) -> Result<Output, AdbError> {
     if args.first() == Some(&"input") {
-        crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
+        crate::afk_journey::recovery::check_process(serial)
+            .map_err(|error| AdbError::Failed(error.to_string()))?;
     }
     let mut command_args = vec!["-s", serial, "shell"];
     command_args.extend_from_slice(args);
@@ -196,7 +197,8 @@ pub fn press_back(serial: &str) -> Result<(), AdbError> {
 }
 
 pub fn launch_afk_journey(serial: &str) -> Result<String, AdbError> {
-    crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
+    crate::afk_journey::recovery::check_process(serial)
+        .map_err(|error| AdbError::Failed(error.to_string()))?;
     let packages = installed_packages(serial)?;
     let package = packages
         .iter()
@@ -218,7 +220,8 @@ pub fn launch_afk_journey(serial: &str) -> Result<String, AdbError> {
 }
 
 pub fn stop_afk_journey(serial: &str) -> Result<String, AdbError> {
-    crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
+    crate::afk_journey::recovery::check_process(serial)
+        .map_err(|error| AdbError::Failed(error.to_string()))?;
     let packages = installed_packages(serial)?;
     let package = packages
         .iter()
@@ -230,7 +233,8 @@ pub fn stop_afk_journey(serial: &str) -> Result<String, AdbError> {
 }
 
 pub fn screenshot(serial: &str) -> Result<Vec<u8>, AdbError> {
-    crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
+    crate::afk_journey::recovery::check_process(serial)
+        .map_err(|error| AdbError::Failed(error.to_string()))?;
     let started = std::time::Instant::now();
     let output = run(&["-s", serial, "exec-out", "screencap", "-p"])?;
     crate::timing::observe_screenshot(started.elapsed());
@@ -238,7 +242,8 @@ pub fn screenshot(serial: &str) -> Result<Vec<u8>, AdbError> {
 }
 
 pub fn raw_screenshot(serial: &str) -> Result<Vec<u8>, AdbError> {
-    crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
+    crate::afk_journey::recovery::check_process(serial)
+        .map_err(|error| AdbError::Failed(error.to_string()))?;
     Ok(run(&["-s", serial, "exec-out", "screencap"])?.stdout)
 }
 

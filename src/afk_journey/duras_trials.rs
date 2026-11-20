@@ -2,6 +2,7 @@ use super::afk_stages::{self as common, BattleSettings, StageResult};
 use super::ocr::{repeated_counter, repeated_numeric_patch};
 use crate::activity::{ActivityEvent, GameMode};
 use crate::adb;
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::afk_journey::vision::Rect;
 use crate::localization::{format_text, text};
@@ -29,7 +30,7 @@ fn navigate(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     let (mut screen, _) = vision::screenshot(serial)?;
     if vision::get_match(
@@ -182,7 +183,7 @@ fn unique_value(values: impl Iterator<Item = u32>) -> Option<u32> {
     }
 }
 
-fn isolated_daily_counter(gray: &image::GrayImage) -> Result<Option<u32>, String> {
+fn isolated_daily_counter(gray: &image::GrayImage) -> Result<Option<u32>, ActionError> {
     Ok(unique_value(
         repeated_numeric_patch(
             gray,
@@ -270,7 +271,7 @@ struct Frame {
     snapshot: Snapshot,
 }
 
-fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
+fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     let bytes = adb::screenshot(serial).map_err(|e| e.to_string())?;
     let frame = decode_frame(&bytes)?;
@@ -278,7 +279,7 @@ fn read_frame(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
     Ok(frame)
 }
 
-fn decode_frame(bytes: &[u8]) -> Result<Frame, String> {
+fn decode_frame(bytes: &[u8]) -> Result<Frame, ActionError> {
     let (gray, size) = vision::normalize_screenshot(bytes)?;
     let color = image::load_from_memory(bytes)
         .map_err(|e| e.to_string())?
@@ -377,7 +378,7 @@ struct SweepPermit {
     daily_remaining: u32,
 }
 
-fn confirm_sweep(first: &Snapshot, second: &Snapshot) -> Result<SweepPermit, String> {
+fn confirm_sweep(first: &Snapshot, second: &Snapshot) -> Result<SweepPermit, ActionError> {
     for frame in [first, second] {
         if frame.action() != Some(TrialAction::Sweep) {
             return Err(text(
@@ -413,7 +414,7 @@ fn confirm_sweep(first: &Snapshot, second: &Snapshot) -> Result<SweepPermit, Str
     })
 }
 
-pub(super) fn ensure_formation(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
+pub(super) fn ensure_formation(serial: &str, cancelled: &AtomicBool) -> Result<(), ActionError> {
     for _ in 0..6 {
         vision::ensure_not_cancelled(cancelled)?;
         let (screen, size) = vision::screenshot(serial)?;
@@ -451,7 +452,7 @@ pub(super) fn ensure_formation(serial: &str, cancelled: &AtomicBool) -> Result<(
     .into())
 }
 
-fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
+fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), ActionError> {
     for _ in 0..12 {
         vision::ensure_not_cancelled(cancelled)?;
         let (screen, size) = vision::screenshot(serial)?;
@@ -524,15 +525,15 @@ fn after_victory(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
 }
 
 trait SweepDriver {
-    fn observe(&mut self) -> Result<Snapshot, String>;
-    fn settle(&mut self) -> Result<(), String>;
-    fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, String>;
+    fn observe(&mut self) -> Result<Snapshot, ActionError>;
+    fn settle(&mut self) -> Result<(), ActionError>;
+    fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, ActionError>;
     fn report(&mut self, count: u32);
 }
 
 const MAX_SWEEP_BATCH: u32 = 6;
 
-fn daily_sweeps(driver: &mut impl SweepDriver, budget: u32) -> Result<u32, String> {
+fn daily_sweeps(driver: &mut impl SweepDriver, budget: u32) -> Result<u32, ActionError> {
     let mut total = 0;
     for _ in 0..100 {
         if total >= budget {
@@ -586,7 +587,7 @@ fn validate_sweep_dialog(
     dialog: &SweepDialog,
     permit: &SweepPermit,
     quantity: u32,
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     #[cfg(test)]
     println!("Dura sweep dialog: {dialog:?}");
     if dialog.daily_remaining != permit.daily_remaining
@@ -608,7 +609,7 @@ fn validate_sweep_dialog(
     Ok(())
 }
 
-fn sweep_quantity_one(gray: &image::GrayImage) -> Result<bool, String> {
+fn sweep_quantity_one(gray: &image::GrayImage) -> Result<bool, ActionError> {
     // With one daily token left, the same quantity 1 is at the RIGHT end of
     // the slider. Inspect the complete track, without moving it.
     Ok(vision::find_template(
@@ -625,7 +626,7 @@ fn sweep_quantity_one(gray: &image::GrayImage) -> Result<bool, String> {
     .is_some())
 }
 
-fn sweep_quantity(frame: &Frame) -> Result<Option<u32>, String> {
+fn sweep_quantity(frame: &Frame) -> Result<Option<u32>, ActionError> {
     if sweep_quantity_one(&frame.gray)? {
         return Ok(Some(1));
     }
@@ -664,7 +665,7 @@ fn sweep_quantity(frame: &Frame) -> Result<Option<u32>, String> {
     ))
 }
 
-fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<vision::Match>, String> {
+fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<vision::Match>, ActionError> {
     vision::find_template(
         gray,
         "duras_trials/sweep_plus.png",
@@ -678,7 +679,7 @@ fn find_sweep_plus(gray: &image::GrayImage) -> Result<Option<vision::Match>, Str
     )
 }
 
-fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, vision::Match)>, String> {
+fn read_sweep_dialog(frame: &Frame) -> Result<Option<(SweepDialog, vision::Match)>, ActionError> {
     if !frame
         .lines
         .iter()
@@ -857,7 +858,7 @@ fn wait_for_sweep_result(
     serial: &str,
     permit: &SweepPermit,
     cancelled: &AtomicBool,
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     for _ in 0..12 {
         let frame = read_frame(serial, cancelled)?;
         match sweep_completion(&frame.lines) {
@@ -894,13 +895,13 @@ fn wait_for_sweep_result(
 }
 
 impl<P: FnMut(ActivityEvent)> SweepDriver for AdbSweep<'_, P> {
-    fn observe(&mut self) -> Result<Snapshot, String> {
+    fn observe(&mut self) -> Result<Snapshot, ActionError> {
         Ok(read_frame(self.serial, self.cancelled)?.snapshot)
     }
-    fn settle(&mut self) -> Result<(), String> {
+    fn settle(&mut self) -> Result<(), ActionError> {
         vision::settle_cancellable(self.cancelled)
     }
-    fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, String> {
+    fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, ActionError> {
         // Check the visible Sweep offer again before opening its dialog.
         let frame = read_frame(self.serial, self.cancelled)?;
         let fresh = confirm_sweep(&frame.snapshot, &frame.snapshot)?;
@@ -999,7 +1000,7 @@ pub fn run(
     cancelled: &AtomicBool,
     log: impl FnMut(String),
     progress: impl FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     run_with_budget(
         serial,
         settings,
@@ -1019,7 +1020,7 @@ fn run_with_budget(
     cancelled: &AtomicBool,
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     let mode = GameMode::DurasTrials;
     progress(ActivityEvent::ModeOpening(mode));
@@ -1309,7 +1310,7 @@ mod tests {
         remaining_after: Option<u32>,
     }
     impl SweepDriver for FakeSweep {
-        fn observe(&mut self) -> Result<Snapshot, String> {
+        fn observe(&mut self) -> Result<Snapshot, ActionError> {
             self.observe_count += 1;
             let mut snapshot = self.snapshot.clone();
             if self.changed_second && self.observe_count == 2 {
@@ -1317,10 +1318,10 @@ mod tests {
             }
             Ok(snapshot)
         }
-        fn settle(&mut self) -> Result<(), String> {
+        fn settle(&mut self) -> Result<(), ActionError> {
             Ok(())
         }
-        fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, String> {
+        fn sweep(&mut self, permit: &SweepPermit, quantity: u32) -> Result<u32, ActionError> {
             self.actions += 1;
             let after = self
                 .remaining_after

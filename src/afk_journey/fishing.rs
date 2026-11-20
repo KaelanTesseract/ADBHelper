@@ -1,5 +1,6 @@
 //! World-map navigation and the standard AFK Journey fishing minigame.
 use super::{afk_stages as common, ocr, BASE_RESOLUTION};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
@@ -64,12 +65,17 @@ fn raw_image(bytes: &[u8]) -> Option<RgbaImage> {
 }
 
 impl Frame {
-    fn find(&self, paths: &[&str], region: Rect, confidence: f32) -> Result<Option<Point>, String> {
+    fn find(
+        &self,
+        paths: &[&str],
+        region: Rect,
+        confidence: f32,
+    ) -> Result<Option<Point>, ActionError> {
         Ok(vision::get_match(&self.gray, paths, region, confidence)?
             .map(|(_, found)| found.center()))
     }
 
-    fn book(&self) -> Result<bool, String> {
+    fn book(&self) -> Result<bool, ActionError> {
         Ok(self
             .find(
                 &["fishing/book.png"],
@@ -84,7 +90,7 @@ impl Frame {
             .is_some())
     }
 
-    fn cast_button(&self) -> Result<Option<Point>, String> {
+    fn cast_button(&self) -> Result<Option<Point>, ActionError> {
         let button = self.find(RODS, HOOK, 0.77)?;
         if button.is_some() && self.book()? {
             return Ok(button);
@@ -99,7 +105,7 @@ struct Driver<'a> {
 }
 
 impl Driver<'_> {
-    fn read(&self) -> Result<Frame, String> {
+    fn read(&self) -> Result<Frame, ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         let raw = adb::raw_screenshot(self.serial).map_err(|e| e.to_string())?;
         let pixels = match raw_image(&raw) {
@@ -137,12 +143,14 @@ impl Driver<'_> {
         })
     }
 
-    fn tap(&self, size: Point, point: Point) -> Result<(), String> {
+    fn tap(&self, size: Point, point: Point) -> Result<(), ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
-        adb::tap_game_point(self.serial, point.0, point.1, size).map_err(|e| e.to_string())
+        adb::tap_game_point(self.serial, point.0, point.1, size)
+            .map_err(|e| e.to_string())
+            .map_err(ActionError::from)
     }
 
-    fn settle(&self) -> Result<(), String> {
+    fn settle(&self) -> Result<(), ActionError> {
         vision::settle_cancellable(self.cancelled)
     }
 }
@@ -155,7 +163,7 @@ fn normalized(value: &str) -> String {
         .collect()
 }
 
-fn is_map(frame: &Frame) -> Result<bool, String> {
+fn is_map(frame: &Frame) -> Result<bool, ActionError> {
     let top = image::imageops::crop_imm(&frame.gray, 0, 0, 425, 200).to_image();
     Ok(ocr::recognize(&top)?
         .iter()
@@ -175,7 +183,7 @@ fn zero_attempts(label: &str) -> bool {
             .is_some_and(|c| c.is_ascii_digit())
 }
 
-fn open_map(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Frame, String> {
+fn open_map(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Frame, ActionError> {
     let frame = driver.read()?;
     if is_map(&frame)? {
         return Ok(frame);
@@ -196,7 +204,7 @@ fn open_map(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Frame, 
     .into())
 }
 
-fn next_marker(frame: &Frame, rejected: &[Point]) -> Result<Option<Point>, String> {
+fn next_marker(frame: &Frame, rejected: &[Point]) -> Result<Option<Point>, ActionError> {
     let mut masked;
     let gray = if rejected.is_empty() {
         &frame.gray
@@ -232,7 +240,7 @@ fn next_marker(frame: &Frame, rejected: &[Point]) -> Result<Option<Point>, Strin
     .map(|(_, edge)| edge.center()))
 }
 
-fn walking_button(frame: &Frame, marker: Point) -> Result<Option<Point>, String> {
+fn walking_button(frame: &Frame, marker: Point) -> Result<Option<Point>, ActionError> {
     let lines = ocr::recognize(&frame.gray)?;
     let nearby = |line: &&ocr::TextLine| {
         let (x, y) = line.center();
@@ -290,7 +298,7 @@ fn approach_spot(
     driver: &Driver<'_>,
     mut map: Frame,
     log: &mut impl FnMut(String),
-) -> Result<bool, String> {
+) -> Result<bool, ActionError> {
     let mut rejected = Vec::new();
     let mut zoom_steps = 0;
     for _ in 0..22 {
@@ -378,7 +386,7 @@ fn pull_duration(image: &RgbaImage) -> Option<u32> {
     }
 }
 
-fn remaining_status(frame: &Frame) -> Result<Option<bool>, String> {
+fn remaining_status(frame: &Frame) -> Result<Option<bool>, ActionError> {
     let crop = image::imageops::crop_imm(&frame.gray, 160, 120, 760, 135).to_image();
     Ok(ocr::recognize(&crop)?
         .iter()
@@ -388,7 +396,7 @@ fn remaining_status(frame: &Frame) -> Result<Option<bool>, String> {
         .map(|line| zero_attempts(&line.text)))
 }
 
-fn catch_close(frame: &Frame) -> Result<Option<Point>, String> {
+fn catch_close(frame: &Frame) -> Result<Option<Point>, ActionError> {
     const CLOSE_TOP: u32 = 1420;
     let close_region = image::imageops::crop_imm(
         &frame.gray,
@@ -437,7 +445,10 @@ fn catch_close(frame: &Frame) -> Result<Option<Point>, String> {
     }))
 }
 
-fn fish_spot(driver: &Driver<'_>, report: &mut dyn FnMut(ActivityEvent)) -> Result<u32, String> {
+fn fish_spot(
+    driver: &Driver<'_>,
+    report: &mut dyn FnMut(ActivityEvent),
+) -> Result<u32, ActionError> {
     let mut count = 0;
     let mut casts = 0;
     let mut hooked = false;
@@ -519,7 +530,7 @@ pub fn run(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     report(ActivityEvent::ModeOpening(GameMode::Fishing));
     adb::launch_afk_journey(serial).map_err(|e| e.to_string())?;
     let driver = Driver { serial, cancelled };

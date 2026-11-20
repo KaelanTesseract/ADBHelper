@@ -3,6 +3,7 @@
 use super::afk_stages::{self as common, BattleSettings, StageResult};
 use crate::activity::{ActivityEvent, GameMode, LegendTower};
 use crate::adb;
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::afk_journey::vision::{Match, Rect};
 use crate::localization::{format_text, text};
@@ -63,8 +64,8 @@ struct TowerReport {
 fn run_towers(
     selection: TowerSelection,
     cancelled: &AtomicBool,
-    mut execute: impl FnMut(LegendTower) -> Result<TowerReport, String>,
-) -> Result<u32, String> {
+    mut execute: impl FnMut(LegendTower) -> Result<TowerReport, ActionError>,
+) -> Result<u32, ActionError> {
     let towers = selection.selected();
     if towers.is_empty() {
         return Err(text(
@@ -99,7 +100,7 @@ fn selection_region() -> Rect {
     }
 }
 
-fn tower_closed(screen: &GrayImage, tower: LegendTower) -> Result<bool, String> {
+fn tower_closed(screen: &GrayImage, tower: LegendTower) -> Result<bool, ActionError> {
     // As in the original, the faction icon in the left strip marks today's
     // unavailable tower; the large central banner is the selectable entry.
     Ok(vision::find_template(
@@ -120,7 +121,7 @@ fn navigate_to_select(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     let (screen, _) = vision::screenshot(serial)?;
     if vision::get_match(&screen, SELECT_MARKERS, selection_region(), 0.78)?.is_some() {
         return Ok(());
@@ -176,7 +177,7 @@ enum FloorAction {
     Reward,
 }
 
-fn floor_action(screen: &GrayImage) -> Result<Option<(FloorAction, Match)>, String> {
+fn floor_action(screen: &GrayImage) -> Result<Option<(FloorAction, Match)>, ActionError> {
     // Overlays and limits win over buttons visible behind them.
     for (paths, action, roi) in [
         (END_MARKERS, FloorAction::End, vision::full_screen()),
@@ -210,12 +211,12 @@ fn floor_action(screen: &GrayImage) -> Result<Option<(FloorAction, Match)>, Stri
 }
 
 trait FloorDriver {
-    fn observe(&mut self) -> Result<FloorAction, String>;
-    fn activate(&mut self, action: FloorAction) -> Result<(), String>;
-    fn select_floor(&mut self) -> Result<bool, String>;
+    fn observe(&mut self) -> Result<FloorAction, ActionError>;
+    fn activate(&mut self, action: FloorAction) -> Result<(), ActionError>;
+    fn select_floor(&mut self) -> Result<bool, ActionError>;
 }
 
-fn continue_after_win(driver: &mut impl FloorDriver) -> Result<bool, String> {
+fn continue_after_win(driver: &mut impl FloorDriver) -> Result<bool, ActionError> {
     for _ in 0..12 {
         let action = driver.observe()?;
         match action {
@@ -248,7 +249,7 @@ struct AdbFloorDriver<'a> {
 }
 
 impl FloorDriver for AdbFloorDriver<'_> {
-    fn observe(&mut self) -> Result<FloorAction, String> {
+    fn observe(&mut self) -> Result<FloorAction, ActionError> {
         let started = std::time::Instant::now();
         while started.elapsed() < crate::timing::secs(20) {
             vision::ensure_not_cancelled(self.cancelled)?;
@@ -267,7 +268,7 @@ impl FloorDriver for AdbFloorDriver<'_> {
         .into())
     }
 
-    fn activate(&mut self, action: FloorAction) -> Result<(), String> {
+    fn activate(&mut self, action: FloorAction) -> Result<(), ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         if action == FloorAction::Reward {
             adb::tap_game_point(self.serial, 550, 1800, self.size).map_err(|e| e.to_string())?;
@@ -284,7 +285,7 @@ impl FloorDriver for AdbFloorDriver<'_> {
         vision::settle_cancellable(self.cancelled)
     }
 
-    fn select_floor(&mut self) -> Result<bool, String> {
+    fn select_floor(&mut self) -> Result<bool, ActionError> {
         vision::wait_for_match(
             self.serial,
             &[&format!(
@@ -334,7 +335,7 @@ pub fn run(
     cancelled: &AtomicBool,
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     if selection.selected().is_empty() {
         return Err(text(
@@ -451,20 +452,20 @@ mod tests {
     use std::time::Duration;
 
     struct FakeFloor {
-        actions: VecDeque<Result<FloorAction, String>>,
+        actions: VecDeque<Result<FloorAction, ActionError>>,
         activated: Vec<FloorAction>,
         selections: usize,
-        select_result: Result<bool, String>,
+        select_result: Result<bool, ActionError>,
     }
     impl FloorDriver for FakeFloor {
-        fn observe(&mut self) -> Result<FloorAction, String> {
+        fn observe(&mut self) -> Result<FloorAction, ActionError> {
             self.actions.pop_front().expect("unexpected observation")
         }
-        fn activate(&mut self, action: FloorAction) -> Result<(), String> {
+        fn activate(&mut self, action: FloorAction) -> Result<(), ActionError> {
             self.activated.push(action);
             Ok(())
         }
-        fn select_floor(&mut self) -> Result<bool, String> {
+        fn select_floor(&mut self) -> Result<bool, ActionError> {
             self.selections += 1;
             self.select_result.clone()
         }
@@ -603,7 +604,7 @@ mod tests {
     #[test]
     fn navigation_errors_and_stop_are_not_interpreted_as_tower_completion() {
         let mut driver = floor(&[]);
-        driver.actions.push_back(Err("Cancelled by user.".into()));
+        driver.actions.push_back(Err(ActionError::Cancelled));
         assert_eq!(
             continue_after_win(&mut driver).unwrap_err(),
             "Cancelled by user."

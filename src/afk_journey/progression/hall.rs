@@ -1,4 +1,5 @@
 use super::{key, ocr, text, Driver, Point, Progress, Screen};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::afk_journey::{daily_extras::amount_with_thresholds, BASE_RESOLUTION};
 use image::{GrayImage, Luma};
@@ -14,7 +15,7 @@ fn hall(screen: &Screen) -> bool {
             .is_some()
 }
 
-fn open_hall(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, String> {
+fn open_hall(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, ActionError> {
     let screen = driver.read()?;
     if hall(&screen) {
         return Ok(screen);
@@ -194,7 +195,7 @@ fn interact_for_affinity(
     detail: &Screen,
     hero: &HeroNameplate,
     attempted: &mut Vec<HeroNameplate>,
-) -> Result<Screen, String> {
+) -> Result<Screen, ActionError> {
     let center = (BASE_RESOLUTION.0 / 2, BASE_RESOLUTION.1 / 2);
     let interaction_error = || {
         text(
@@ -222,19 +223,22 @@ fn interact_for_affinity(
     driver.tap(&current, back)?;
     // Back closes the verified model view and returns to the underlying profile.
     // Its controls are sufficient to confirm this transition during animations.
-    driver.wait_for(hero_profile)?.ok_or_else(|| {
-        text(
-            "The hero details could not be restored.",
-            "Die Heldenansicht konnte nicht wiederhergestellt werden.",
-        )
-        .to_owned()
-    })
+    driver
+        .wait_for(hero_profile)?
+        .ok_or_else(|| {
+            text(
+                "The hero details could not be restored.",
+                "Die Heldenansicht konnte nicht wiederhergestellt werden.",
+            )
+            .to_owned()
+        })
+        .map_err(ActionError::from)
 }
 
 pub(super) fn open_first_hero(
     driver: &Driver<'_>,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     let screen = open_hall(driver, log)?;
     driver.tap(&screen, (130, 1040))
 }
@@ -242,7 +246,7 @@ pub(super) fn open_first_hero(
 pub(super) fn first_hero(
     driver: &Driver<'_>,
     log: &mut impl FnMut(String),
-) -> Result<Screen, String> {
+) -> Result<Screen, ActionError> {
     open_first_hero(driver, log)?;
     wait_for_hero(driver, None)?.ok_or_else(|| {
         text(
@@ -253,7 +257,7 @@ pub(super) fn first_hero(
     })
 }
 
-fn next_hero(driver: &Driver<'_>, detail: &Screen, hero: &str) -> Result<Screen, String> {
+fn next_hero(driver: &Driver<'_>, detail: &Screen, hero: &str) -> Result<Screen, ActionError> {
     driver.tap(detail, NEXT_HERO)?;
     wait_for_hero(driver, Some(hero))?.ok_or_else(|| {
         text(
@@ -264,7 +268,10 @@ fn next_hero(driver: &Driver<'_>, detail: &Screen, hero: &str) -> Result<Screen,
     })
 }
 
-fn wait_for_hero(driver: &Driver<'_>, previous: Option<&str>) -> Result<Option<Screen>, String> {
+fn wait_for_hero(
+    driver: &Driver<'_>,
+    previous: Option<&str>,
+) -> Result<Option<Screen>, ActionError> {
     let mut observed = None;
     driver.wait_for(|frame| {
         let name = hero_name(frame).filter(|name| Some(name.as_str()) != previous);
@@ -277,7 +284,7 @@ fn wait_for_hero(driver: &Driver<'_>, previous: Option<&str>) -> Result<Option<S
 pub(super) fn wait_for_affinity_profile(
     driver: &Driver<'_>,
     previous: Option<&HeroNameplate>,
-) -> Result<(Screen, HeroNameplate), String> {
+) -> Result<(Screen, HeroNameplate), ActionError> {
     let mut observed: Option<HeroNameplate> = None;
     let screen = driver.wait_for(|frame| {
         let name = HeroNameplate::read(frame)
@@ -289,20 +296,23 @@ pub(super) fn wait_for_affinity_profile(
         observed = name;
         stable
     })?;
-    screen.zip(observed).ok_or_else(|| {
-        text(
-            "Could not verify the hero profile for Affinity.",
-            "Das Heldenprofil für die Affinität konnte nicht eindeutig erkannt werden.",
-        )
-        .to_owned()
-    })
+    screen
+        .zip(observed)
+        .ok_or_else(|| {
+            text(
+                "Could not verify the hero profile for Affinity.",
+                "Das Heldenprofil für die Affinität konnte nicht eindeutig erkannt werden.",
+            )
+            .to_owned()
+        })
+        .map_err(ActionError::from)
 }
 
 pub(super) fn affinity(
     driver: &Driver<'_>,
     progress: &mut Progress<'_>,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     open_first_hero(driver, log)?;
     let (detail, hero) = wait_for_affinity_profile(driver, None)?;
     collect_affinity_profiles(driver, progress, detail, hero)
@@ -313,7 +323,7 @@ fn collect_affinity_profiles(
     progress: &mut Progress<'_>,
     mut detail: Screen,
     mut hero: HeroNameplate,
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     progress.entered();
     let first = hero.clone();
     let mut visited: Vec<HeroNameplate> = Vec::new();
@@ -367,7 +377,7 @@ fn level_up_hall(screen: &Screen) -> bool {
                 .is_some())
 }
 
-fn resonance_level(screen: &Screen) -> Result<Option<u32>, String> {
+fn resonance_level(screen: &Screen) -> Result<Option<u32>, ActionError> {
     if !level_up_hall(screen) {
         return Ok(None);
     }
@@ -384,7 +394,7 @@ fn resonance_level(screen: &Screen) -> Result<Option<u32>, String> {
     )
 }
 
-fn ready_level_control(driver: &Driver<'_>) -> Result<Option<(Screen, Point, u32)>, String> {
+fn ready_level_control(driver: &Driver<'_>) -> Result<Option<(Screen, Point, u32)>, ActionError> {
     let mut absent = 0;
     for _ in 0..8 {
         let screen = driver.read()?;
@@ -424,7 +434,7 @@ pub(super) fn level_up(
     driver: &Driver<'_>,
     progress: &mut Progress<'_>,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     open_hall(driver, log)?;
     progress.entered();
     while progress.count() < 30 {
@@ -540,7 +550,7 @@ pub(super) fn equipment(
     driver: &Driver<'_>,
     progress: &mut Progress<'_>,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     let hall = open_hall(driver, log)?;
     let entry = hall
         .template("resonating_hall/equipment.png", 670..1070, 1530..1765, 0.84)?
@@ -618,7 +628,7 @@ pub(super) fn equipment(
     Ok(())
 }
 
-fn swap_action(screen: &Screen) -> Result<Option<Point>, String> {
+fn swap_action(screen: &Screen) -> Result<Option<Point>, ActionError> {
     for path in [
         "resonating_hall/hero_action.png",
         "resonating_hall/action.png",
@@ -640,7 +650,7 @@ fn find_hero(
     driver: &Driver<'_>,
     target: &str,
     log: &mut impl FnMut(String),
-) -> Result<Option<Screen>, String> {
+) -> Result<Option<Screen>, ActionError> {
     let mut detail = first_hero(driver, log)?;
     let mut visited = std::collections::BTreeSet::new();
     for _ in 0..175 {
@@ -686,7 +696,10 @@ fn swap_confirm(screen: &Screen) -> Option<Point> {
 }
 
 #[cfg(test)]
-pub(super) fn preview(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<(), String> {
+pub(super) fn preview(
+    driver: &Driver<'_>,
+    log: &mut impl FnMut(String),
+) -> Result<(), ActionError> {
     open_hall(driver, log)?;
     let (_, _, level) = ready_level_control(driver)?.expect("available Level Up All");
     println!("Resonating Hall and Level Up All: {level}");
@@ -719,7 +732,7 @@ pub(super) fn swap(
     driver: &Driver<'_>,
     progress: &mut Progress<'_>,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     progress.entered();
     while let Some(hero) = progress.state.purchased_essences.first().cloned() {
         let Some(detail) = find_hero(driver, &hero, log)? else {

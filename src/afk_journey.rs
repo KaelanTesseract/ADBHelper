@@ -7,8 +7,6 @@ pub const PACKAGE_NAMES: &[&str] = &[
 pub const DISPLAY_NAME: &str = "AFK Journey";
 pub const BASE_RESOLUTION: (u32, u32) = (1080, 1920);
 pub const BATTLE_TIMEOUT_SECONDS: u64 = 100;
-// Internal signal for the recovery loop, independent of the selected language.
-const BATTLE_RESULT_TIMEOUT: &str = "battle result timeout";
 
 pub mod afk_stages;
 pub mod arena;
@@ -16,6 +14,7 @@ pub mod daily;
 pub mod daily_extras;
 pub mod dream_realm;
 pub mod duras_trials;
+pub mod error;
 pub mod fishing;
 pub mod legend_trial;
 pub mod menu_rewards;

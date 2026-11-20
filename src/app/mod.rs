@@ -217,7 +217,10 @@ impl PlayerApp {
         let (dream_battle_limit, dream_battle_limit_error) = match dream_realm::load_battle_limit()
         {
             Ok(limit) => (limit, None),
-            Err(error) => (dream_realm::Settings::default().max_battles, Some(error)),
+            Err(error) => (
+                dream_realm::Settings::default().max_battles,
+                Some(error.to_string()),
+            ),
         };
         let logo_image =
             image::load_from_memory(include_bytes!("../../assets/adbhelper-logo-v2.png"))

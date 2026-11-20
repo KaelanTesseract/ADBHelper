@@ -1,4 +1,5 @@
 use super::{key, text, Driver, Point, Progress, Screen};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::{
     activity::ActivityEvent,
@@ -49,7 +50,7 @@ impl Store {
         .min(100_000)
     }
 
-    fn wallet(self, screen: &Screen, offer: bool) -> Result<Option<u32>, String> {
+    fn wallet(self, screen: &Screen, offer: bool) -> Result<Option<u32>, ActionError> {
         let region = if self == Self::Guild && !offer {
             // Keep the wallet's comma and digits clear of the surrounding banner.
             vision::Rect {
@@ -84,7 +85,7 @@ fn selected(screen: &Screen, store: Store) -> bool {
     shop_screen(screen) && r > 210 && g > 205 && b > 175
 }
 
-fn open_house(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, String> {
+fn open_house(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, ActionError> {
     let is_house = |screen: &Screen| {
         screen.point(105..530, 490..615, "nobletavern").is_some()
             && screen.point(70..450, 920..1090, "emporium").is_some()
@@ -103,7 +104,7 @@ fn open_house(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Scree
     })
 }
 
-fn shop_entry(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, String> {
+fn shop_entry(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, ActionError> {
     let screen = driver.read()?;
     if shop_screen(&screen) {
         return Ok(screen);
@@ -182,7 +183,7 @@ fn green_amount(
     y: u32,
     width: u32,
     height: u32,
-) -> Result<Option<u32>, String> {
+) -> Result<Option<u32>, ActionError> {
     // Discount offers show the crossed-out old price next to the mint-green
     // current price. Color isolation prevents OCR from combining both.
     let mut agreed = None;
@@ -218,7 +219,7 @@ fn read_offer(
     screen: &Screen,
     store: Store,
     full_price_affinity: bool,
-) -> Result<Option<Offer>, String> {
+) -> Result<Option<Offer>, ActionError> {
     let Some(button) = screen
         .line(470..795, 1740..1820, |value| value == "purchase")
         .filter(|line| phase_rewards::green_control(&screen.color, line))
@@ -288,7 +289,7 @@ fn product_slot(
     store: Store,
     x: u32,
     settings: EmporiumSettings,
-) -> Result<Option<Point>, String> {
+) -> Result<Option<Point>, ActionError> {
     let (y, templates): (_, &[_]) = match store {
         Store::Guild => (742..1045, &["dailies/emporium/invite_letter.png"]),
         Store::Friendship if settings.full_price_affinity => (
@@ -320,7 +321,7 @@ fn confirmed_charge(before: u32, after: u32, price: u32) -> bool {
     price > 0 && before.checked_sub(after) == Some(price)
 }
 
-fn purchase_charged(screen: &Screen, store: Store, offer: &Offer) -> Result<bool, String> {
+fn purchase_charged(screen: &Screen, store: Store, offer: &Offer) -> Result<bool, ActionError> {
     let store_open = selected(screen, store);
     let offer_open = screen.point(460..810, 1740..1820, "purchase").is_some();
     Ok((store_open || offer_open)
@@ -361,7 +362,7 @@ fn commit_purchase(
     slot: u32,
     offer: &Offer,
     progress: &mut Progress<'_>,
-) -> Result<Screen, String> {
+) -> Result<Screen, ActionError> {
     progress.state.pending = true;
     driver.tap(detail, offer.button)?;
     let mut confirmed_dialog = false;
@@ -413,7 +414,7 @@ pub(super) fn purchase(
     progress: &mut Progress<'_>,
     settings: EmporiumSettings,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     if [
         settings.diamonds,
         settings.pal_coins,
@@ -535,7 +536,7 @@ fn tavern(screen: &Screen) -> bool {
             .is_some()
 }
 
-fn recruit_button(screen: &Screen) -> Result<Option<Point>, String> {
+fn recruit_button(screen: &Screen) -> Result<Option<Point>, ActionError> {
     let Some(button) = screen
         .line(85..392, 1510..1605, |value| value == "recruit1")
         .filter(|line| phase_rewards::green_control(&screen.color, line))
@@ -547,7 +548,7 @@ fn recruit_button(screen: &Screen) -> Result<Option<Point>, String> {
         .map(|_| button.center()))
 }
 
-fn letter_balance(screen: &Screen) -> Result<Option<u32>, String> {
+fn letter_balance(screen: &Screen) -> Result<Option<u32>, ActionError> {
     let badge = vision::Rect {
         x: 368,
         y: 19,
@@ -603,7 +604,7 @@ fn glyph(image: &GrayImage) -> Option<(GrayImage, u32)> {
     ))
 }
 
-fn wallet_digit(image: &GrayImage) -> Result<Option<u32>, String> {
+fn wallet_digit(image: &GrayImage) -> Result<Option<u32>, ActionError> {
     let Some((observed, observed_width)) = glyph(image) else {
         return Ok(None);
     };
@@ -634,7 +635,7 @@ fn wallet_digit(image: &GrayImage) -> Result<Option<u32>, String> {
     })
 }
 
-fn open_all_hero(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, String> {
+fn open_all_hero(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, ActionError> {
     let mut screen = driver.read()?;
     if !tavern(&screen) {
         let house = open_house(driver, log)?;
@@ -676,13 +677,14 @@ fn open_all_hero(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Sc
             )
             .to_owned()
         })
+        .map_err(ActionError::from)
 }
 
 pub(super) fn recruit(
     driver: &Driver<'_>,
     progress: &mut Progress<'_>,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     if progress.count() >= 1 {
         return Ok(());
     }
@@ -750,7 +752,10 @@ pub(super) fn recruit(
 }
 
 #[cfg(test)]
-pub(super) fn preview(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<(), String> {
+pub(super) fn preview(
+    driver: &Driver<'_>,
+    log: &mut impl FnMut(String),
+) -> Result<(), ActionError> {
     let mut screen = shop_entry(driver, log)?;
     for (store, slot) in [
         (Store::Guild, 326),

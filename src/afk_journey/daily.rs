@@ -1,4 +1,5 @@
 use super::{afk_stages as common, ocr};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
@@ -44,11 +45,11 @@ fn find(
     screen: &GrayImage,
     path: &str,
     region: vision::Rect,
-) -> Result<Option<vision::Match>, String> {
+) -> Result<Option<vision::Match>, ActionError> {
     vision::find_template(screen, path, region, 0.9)
 }
 
-pub(super) fn page(screen: &GrayImage) -> Result<bool, String> {
+pub(super) fn page(screen: &GrayImage) -> Result<bool, ActionError> {
     Ok(find(
         screen,
         "navigation/resonating_hall_label.png",
@@ -70,7 +71,7 @@ pub(super) fn page(screen: &GrayImage) -> Result<bool, String> {
         .is_none())
 }
 
-pub(super) fn claim_control(screen: &GrayImage) -> Result<Option<vision::Match>, String> {
+pub(super) fn claim_control(screen: &GrayImage) -> Result<Option<vision::Match>, ActionError> {
     if find(
         screen,
         "daily/afk_time.png",
@@ -100,7 +101,7 @@ pub(super) fn claim_control(screen: &GrayImage) -> Result<Option<vision::Match>,
 pub(super) fn crop_lines(
     screen: &GrayImage,
     rect: vision::Rect,
-) -> Result<Vec<ocr::TextLine>, String> {
+) -> Result<Vec<ocr::TextLine>, ActionError> {
     let crop =
         image::imageops::crop_imm(screen, rect.x, rect.y, rect.width, rect.height).to_image();
     let mut padded = GrayImage::from_pixel(rect.width + 32, rect.height + 32, image::Luma([255]));
@@ -117,7 +118,7 @@ pub(super) fn crop_lines(
 pub(super) fn hourglass_control(
     screen: &GrayImage,
     path: &str,
-) -> Result<Option<vision::Match>, String> {
+) -> Result<Option<vision::Match>, ActionError> {
     let region = if path == "daily/hourglass_zero.png" {
         vision::Rect {
             x: 920,
@@ -136,7 +137,7 @@ pub(super) fn hourglass_control(
     find(screen, path, region)
 }
 
-fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, vision::Match)>, String> {
+fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, vision::Match)>, ActionError> {
     if !page(screen)? {
         return Ok(None);
     }
@@ -152,7 +153,7 @@ fn hourglasses(screen: &GrayImage) -> Result<Option<(u32, vision::Match)>, Strin
     Ok(free_hourglass_count(screen)?.map(|count| (count, button)))
 }
 
-pub(super) fn free_hourglass_count(screen: &GrayImage) -> Result<Option<u32>, String> {
+pub(super) fn free_hourglass_count(screen: &GrayImage) -> Result<Option<u32>, ActionError> {
     let lines = ocr::repeated_numeric_patch(
         screen,
         vision::Rect {
@@ -172,7 +173,7 @@ pub(super) fn free_hourglass_count(screen: &GrayImage) -> Result<Option<u32>, St
     Ok(count)
 }
 
-fn timer_reset(screen: &GrayImage) -> Result<bool, String> {
+fn timer_reset(screen: &GrayImage) -> Result<bool, ActionError> {
     Ok(vision::find_template(
         screen,
         "daily/timer_reset.png",
@@ -190,7 +191,7 @@ fn timer_reset(screen: &GrayImage) -> Result<bool, String> {
 fn wait_hourglasses(
     serial: &str,
     cancelled: &AtomicBool,
-) -> Result<(u32, vision::Match, (u32, u32)), String> {
+) -> Result<(u32, vision::Match, (u32, u32)), ActionError> {
     for _ in 0..8 {
         vision::ensure_not_cancelled(cancelled)?;
         let (screen, size) = vision::screenshot(serial)?;
@@ -229,7 +230,11 @@ fn free_confirmation(lines: &[ocr::TextLine], expected: u32) -> bool {
         && !compact.contains("spend")
 }
 
-fn verify_pending(serial: &str, pending: &Pending, cancelled: &AtomicBool) -> Result<(), String> {
+fn verify_pending(
+    serial: &str,
+    pending: &Pending,
+    cancelled: &AtomicBool,
+) -> Result<(), ActionError> {
     for _ in 0..12 {
         vision::ensure_not_cancelled(cancelled)?;
         let (screen, _) = vision::screenshot(serial)?;
@@ -256,7 +261,7 @@ pub fn run(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     let mode = collection.mode();
     report(ActivityEvent::ModeOpening(mode));
     // A restarted game opens outside AFK. Re-enter the verified page before

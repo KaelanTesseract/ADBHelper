@@ -1,6 +1,7 @@
 //! Normalized cross-correlation template search on 1080 x 1920 grayscale screens.
 
 use super::{load_template, Match, Rect};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::BASE_RESOLUTION;
 use image::GrayImage;
 
@@ -57,7 +58,7 @@ pub(in crate::afk_journey) fn find_template(
     relative_path: &str,
     roi: Rect,
     threshold: f32,
-) -> Result<Option<Match>, String> {
+) -> Result<Option<Match>, ActionError> {
     let template = load_template(relative_path)?;
     let right = roi.x.saturating_add(roi.width).min(screenshot.width());
     let bottom = roi.y.saturating_add(roi.height).min(screenshot.height());
@@ -150,7 +151,7 @@ pub(in crate::afk_journey) fn get_match(
     paths: &[&str],
     roi: Rect,
     threshold: f32,
-) -> Result<Option<(String, Match)>, String> {
+) -> Result<Option<(String, Match)>, ActionError> {
     let mut best = None::<(&str, Match)>;
     for path in paths {
         if let Some(found) = find_template(screenshot, path, roi, threshold)? {

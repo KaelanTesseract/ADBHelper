@@ -1,4 +1,5 @@
 //! Local Windows OCR; no server, Python runtime or downloaded model is used.
+use crate::afk_journey::error::ActionError;
 #[cfg(windows)]
 use crate::localization::format_text;
 #[cfg(not(windows))]
@@ -24,7 +25,7 @@ impl TextLine {
 }
 
 #[cfg(windows)]
-pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
+pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, ActionError> {
     use windows::{
         core::HSTRING,
         Globalization::Language,
@@ -82,16 +83,16 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
     }
     struct Request {
         image: GrayImage,
-        reply: std::sync::mpsc::SyncSender<Result<Vec<TextLine>, String>>,
+        reply: std::sync::mpsc::SyncSender<Result<Vec<TextLine>, ActionError>>,
     }
     // Windows-rs caches WinRT activation factories process-wide. Keep their
     // apartment alive across frames and caller-thread exits, instead of
     // unloading the runtime after every RecognizeAsync call. All COM objects
     // stay on this worker; callers receive only owned text and coordinates.
     // https://learn.microsoft.com/windows/win32/api/roapi/nf-roapi-rouninitialize
-    static WORKER: std::sync::OnceLock<Result<std::sync::mpsc::SyncSender<Request>, String>> =
+    static WORKER: std::sync::OnceLock<Result<std::sync::mpsc::SyncSender<Request>, ActionError>> =
         std::sync::OnceLock::new();
-    let outcome = (|| -> Result<Vec<TextLine>, String> {
+    let outcome = (|| -> Result<Vec<TextLine>, ActionError> {
         let worker = WORKER
             .get_or_init(|| {
                 let (sender, receiver) = std::sync::mpsc::sync_channel::<Request>(1);
@@ -114,7 +115,7 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
                                 }
                                 Err(error) => Err(error.clone()),
                             };
-                            let _ = request.reply.send(result);
+                            let _ = request.reply.send(result.map_err(ActionError::from));
                         }
                         // Engine declared after Runtime: it is released before WinRT.
                     })
@@ -134,16 +135,18 @@ pub(super) fn recognize(image: &GrayImage) -> Result<Vec<TextLine>, String> {
             .recv()
             .map_err(|_| "Local OCR worker did not return a result".to_owned())?
     })();
-    outcome.map_err(|error| {
-        format_text!(
+    outcome
+        .map_err(|error| {
+            format_text!(
             "The action stopped because local Windows OCR is unavailable: {error}.",
             "Lokale Windows-Texterkennung nicht verfügbar: {error}. Die Aktion wurde angehalten."
         )
-    })
+        })
+        .map_err(ActionError::from)
 }
 
 #[cfg(not(windows))]
-pub(super) fn recognize(_: &GrayImage) -> Result<Vec<TextLine>, String> {
+pub(super) fn recognize(_: &GrayImage) -> Result<Vec<TextLine>, ActionError> {
     Err(text(
         "This action requires local Windows OCR.",
         "Für diese Aktion wird die lokale Windows-Texterkennung benötigt.",
@@ -169,7 +172,7 @@ pub(super) fn repeated_counter(text: &str) -> Option<u32> {
 pub(super) fn repeated_numeric_patch(
     gray: &image::GrayImage,
     roi: super::vision::Rect,
-) -> Result<Vec<TextLine>, String> {
+) -> Result<Vec<TextLine>, ActionError> {
     // Windows OCR omits some isolated one-digit counters. Repeat the same
     // captured glyph three times as a single word; accept only three identical
     // readings. No digit is generated, guessed or taken from the Sweep price.

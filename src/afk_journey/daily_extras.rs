@@ -1,5 +1,6 @@
 //! Optional paid Instant AFK and the original stage-reward collection path.
 use super::{afk_stages as common, daily, ocr};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode, HourglassStop},
@@ -36,7 +37,7 @@ pub(super) fn exact_amount(value: &str) -> Option<u32> {
     value.replace(',', "").parse().ok()
 }
 
-pub(super) fn amount(screen: &GrayImage, rect: vision::Rect) -> Result<Option<u32>, String> {
+pub(super) fn amount(screen: &GrayImage, rect: vision::Rect) -> Result<Option<u32>, ActionError> {
     amount_with_thresholds(screen, rect, &[180, 200], 3)
 }
 
@@ -45,7 +46,7 @@ pub(super) fn amount_with_thresholds(
     rect: vision::Rect,
     thresholds: &[u8],
     scale: u32,
-) -> Result<Option<u32>, String> {
+) -> Result<Option<u32>, ActionError> {
     // The dark badge edge can be mistaken for punctuation. Isolate the white
     // digits and require two matching reads. Conflicting readings stop the check.
     let mut previous = None;
@@ -95,7 +96,7 @@ enum PaidStatus {
     Exhausted,
 }
 
-fn paid_status(screen: &GrayImage) -> Result<Option<PaidStatus>, String> {
+fn paid_status(screen: &GrayImage) -> Result<Option<PaidStatus>, ActionError> {
     if !daily::page(screen)? {
         return Ok(None);
     }
@@ -123,7 +124,7 @@ fn paid_status(screen: &GrayImage) -> Result<Option<PaidStatus>, String> {
     Ok(None)
 }
 
-fn wallet(screen: &GrayImage) -> Result<Option<u32>, String> {
+fn wallet(screen: &GrayImage) -> Result<Option<u32>, ActionError> {
     if vision::find_template(
         screen,
         "daily/wallet_diamond.png",
@@ -156,7 +157,7 @@ fn read_wallet(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<Option<u32>, String> {
+) -> Result<Option<u32>, ActionError> {
     let size = common::navigate_to_current_overview(serial, cancelled, log)?;
     vision::ensure_not_cancelled(cancelled)?;
     adb::tap_game_point(serial, 330, 1830, size).map_err(|e| e.to_string())?;
@@ -177,7 +178,7 @@ fn stable_paid_status(
     serial: &str,
     cancelled: &AtomicBool,
     accept: impl Fn(PaidStatus) -> bool,
-) -> Result<Option<(PaidStatus, (u32, u32))>, String> {
+) -> Result<Option<(PaidStatus, (u32, u32))>, ActionError> {
     let mut last = None;
     for _ in 0..10 {
         vision::ensure_not_cancelled(cancelled)?;
@@ -208,7 +209,7 @@ fn finish_purchase(
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<(PaidStatus, (u32, u32)), String> {
+) -> Result<(PaidStatus, (u32, u32)), ActionError> {
     let Some(Receipt::Purchase { price }) = cursor.pending else {
         return Err("No pending hourglass purchase.".into());
     };
@@ -258,7 +259,7 @@ fn read_paid_offer(
     after_purchase: Option<PaidStatus>,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<Result<PaidOffer, HourglassStop>, String> {
+) -> Result<Result<PaidOffer, HourglassStop>, ActionError> {
     let Some((status, _)) = stable_paid_status(serial, cancelled, |_| true)? else {
         return Ok(Err(HourglassStop::OfferUnreadable));
     };
@@ -284,8 +285,8 @@ fn read_paid_offer(
 }
 
 fn retry_paid_offer(
-    mut read: impl FnMut() -> Result<Result<PaidOffer, HourglassStop>, String>,
-) -> Result<Result<PaidOffer, HourglassStop>, String> {
+    mut read: impl FnMut() -> Result<Result<PaidOffer, HourglassStop>, ActionError>,
+) -> Result<Result<PaidOffer, HourglassStop>, ActionError> {
     match read()? {
         Err(
             HourglassStop::OfferUnreadable
@@ -303,7 +304,7 @@ fn run_paid(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<HourglassStop, String> {
+) -> Result<HourglassStop, ActionError> {
     if cursor.pending.is_none() && (settings.purchases == 0 || settings.budget == 0) {
         report(ActivityEvent::ModeEntered(GameMode::DiamondHourglasses));
         return Ok(HourglassStop::Disabled);
@@ -417,7 +418,7 @@ fn finish_stage_claim(
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     for _ in 0..10 {
         vision::ensure_not_cancelled(cancelled)?;
         let (screen, size) = vision::screenshot(serial)?;
@@ -445,7 +446,7 @@ fn run_stage_rewards(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     if cursor.pending.is_some() {
         let (screen, _) = vision::screenshot(serial)?;
         if matches!(stage_view(&ocr::recognize(&screen)?), StageView::Loot(_)) {
@@ -541,7 +542,7 @@ pub fn run(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     report(ActivityEvent::ModeOpening(mode));
     let result = match mode {
         GameMode::DiamondHourglasses => run_paid(serial, settings, cursor, cancelled, log, report)
@@ -874,6 +875,7 @@ mod tests {
                     },
                     &mut |_| {},
                 )
+                .map_err(String::from)
             })
             .unwrap();
         assert!(logs

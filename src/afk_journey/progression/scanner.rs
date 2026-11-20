@@ -1,4 +1,5 @@
 //! Read-only game views and local AFKJ Tracker / Guild Manager exports.
+use crate::afk_journey::error::ActionError;
 mod guild;
 mod hero;
 
@@ -50,11 +51,11 @@ impl GuildSettings {
     }
 
     /// Saves URL and key in the credential store, or removes them when both are empty.
-    pub fn save_access(&self) -> Result<(), String> {
+    pub fn save_access(&self) -> Result<(), ActionError> {
         let url = self.guild_members_url.trim();
         let key = self.guild_api_key.trim();
         if url.is_empty() && key.is_empty() {
-            return crate::credentials::delete(GUILD_CREDENTIAL);
+            return crate::credentials::delete(GUILD_CREDENTIAL).map_err(ActionError::from);
         }
         crate::credentials::save(
             GUILD_CREDENTIAL,
@@ -63,12 +64,13 @@ impl GuildSettings {
                 secret: key.to_owned(),
             },
         )
+        .map_err(ActionError::from)
     }
 
-    pub fn forget_access(&mut self) -> Result<(), String> {
+    pub fn forget_access(&mut self) -> Result<(), ActionError> {
         self.guild_members_url.clear();
         self.guild_api_key.clear();
-        crate::credentials::delete(GUILD_CREDENTIAL)
+        crate::credentials::delete(GUILD_CREDENTIAL).map_err(ActionError::from)
     }
 }
 
@@ -93,7 +95,7 @@ pub fn run(
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
     exported: &mut impl FnMut(PathBuf),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     report(ActivityEvent::ModeOpening(mode));
     let millis = SystemTime::now()
@@ -118,7 +120,7 @@ pub fn run(
     }
 }
 
-fn write_export(folder: &Path, name: &str, value: &impl Serialize) -> Result<PathBuf, String> {
+fn write_export(folder: &Path, name: &str, value: &impl Serialize) -> Result<PathBuf, ActionError> {
     let data = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
     fs::create_dir_all(folder).map_err(|error| error.to_string())?;
     let path = folder.join(name);
@@ -144,7 +146,7 @@ fn crop(
     y: u32,
     width: u32,
     height: u32,
-) -> Result<Vec<super::ocr::TextLine>, String> {
+) -> Result<Vec<super::ocr::TextLine>, ActionError> {
     let mut lines = crate::afk_journey::daily::crop_lines(
         &screen.gray,
         vision::Rect {

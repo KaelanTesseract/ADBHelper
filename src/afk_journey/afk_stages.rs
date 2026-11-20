@@ -1,6 +1,7 @@
 use super::vision::*;
 use crate::activity::{ActivityEvent as ProgressEvent, BattleOutcome, GameMode};
 use crate::adb;
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::{BASE_RESOLUTION, BATTLE_TIMEOUT_SECONDS};
 use crate::localization::{format_text, text};
 use image::GrayImage;
@@ -83,8 +84,8 @@ pub struct ModeSummary {
 fn run_sequence(
     selection: StageSelection,
     cancelled: &AtomicBool,
-    mut execute: impl FnMut(GameMode) -> Result<ModeSummary, String>,
-) -> Result<Vec<ModeSummary>, String> {
+    mut execute: impl FnMut(GameMode) -> Result<ModeSummary, ActionError>,
+) -> Result<Vec<ModeSummary>, ActionError> {
     let modes = selection.modes();
     if modes.is_empty() {
         return Err(text(
@@ -114,7 +115,7 @@ pub fn run_selected(
     cancelled: &AtomicBool,
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ProgressEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     let summaries = run_sequence(selection, cancelled, |mode| {
         progress(ProgressEvent::ModeOpening(mode));
         log(format_text!("Opening {}.", "{} öffnen.", mode.label()));
@@ -193,10 +194,10 @@ enum FormationChoice {
 
 trait FormationBrowser {
     // Opening Records from battle resets the displayed index to one.
-    fn open(&mut self) -> Result<bool, String>;
-    fn next(&mut self) -> Result<bool, String>;
-    fn is_manual(&mut self) -> Result<bool, String>;
-    fn copy(&mut self) -> Result<bool, String>;
+    fn open(&mut self) -> Result<bool, ActionError>;
+    fn next(&mut self) -> Result<bool, ActionError>;
+    fn is_manual(&mut self) -> Result<bool, ActionError>;
+    fn copy(&mut self) -> Result<bool, ActionError>;
 }
 
 fn copy_next_formation(
@@ -204,7 +205,7 @@ fn copy_next_formation(
     target: &mut u32,
     limit: u32,
     pass: FormationPass,
-) -> Result<FormationChoice, String> {
+) -> Result<FormationChoice, ActionError> {
     if !browser.open()? {
         return Ok(FormationChoice::CurrentTeam);
     }
@@ -232,7 +233,7 @@ fn ensure_battle_screen(
     serial: &str,
     mode: GameMode,
     cancelled: &AtomicBool,
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     for _ in 0..4 {
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
@@ -281,7 +282,7 @@ fn ensure_battle_screen(
     Ok(())
 }
 
-fn manual_formation_visible(screen: &GrayImage) -> Result<bool, String> {
+fn manual_formation_visible(screen: &GrayImage) -> Result<bool, ActionError> {
     Ok(get_match(
         screen,
         &["battle/manual_battle.png", "battle/manual_battle_old1.png"],
@@ -304,7 +305,7 @@ struct AdbFormationBrowser<'a, L> {
 }
 
 impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
-    fn open(&mut self) -> Result<bool, String> {
+    fn open(&mut self) -> Result<bool, ActionError> {
         ensure_battle_screen(self.serial, self.mode, self.cancelled)?;
         // The original retries Records while its button remains visible.
         for _ in 0..3 {
@@ -350,7 +351,7 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
         Ok(false)
     }
 
-    fn next(&mut self) -> Result<bool, String> {
+    fn next(&mut self) -> Result<bool, ActionError> {
         ensure_not_cancelled(self.cancelled)?;
         let (before, size) = screenshot(self.serial)?;
         let Some(next) = find_template(
@@ -392,7 +393,7 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
         Ok(false)
     }
 
-    fn is_manual(&mut self) -> Result<bool, String> {
+    fn is_manual(&mut self) -> Result<bool, ActionError> {
         // Original: poll the lower-left manual label for 1.5 seconds at 80%.
         let started = Instant::now();
         while started.elapsed() < crate::timing::millis(1500) {
@@ -406,7 +407,7 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
         Ok(false)
     }
 
-    fn copy(&mut self) -> Result<bool, String> {
+    fn copy(&mut self) -> Result<bool, ActionError> {
         let popup_roi = Rect {
             x: 108,
             y: 1152,
@@ -461,7 +462,7 @@ fn start_battle(
     log: &mut impl FnMut(String),
     size: (u32, u32),
     cancelled: &AtomicBool,
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     ensure_not_cancelled(cancelled)?;
     if mode == GameMode::UnionCampaign {
         super::union_campaign::prepare_floor(serial, cancelled)?;
@@ -517,7 +518,7 @@ fn start_battle(
     Ok(())
 }
 
-fn detect_decisive_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)>, String> {
+fn detect_decisive_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)>, ActionError> {
     // Failure indicators take priority over generic statistics or transition art.
     // A statistics icon alone appears on both victory and defeat screens.
     for (paths, outcome, threshold) in [
@@ -555,7 +556,7 @@ fn detect_decisive_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)
     Ok(None)
 }
 
-fn detect_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)>, String> {
+fn detect_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)>, ActionError> {
     if let Some(result) = detect_decisive_outcome(screen)? {
         return Ok(Some(result));
     }
@@ -568,7 +569,7 @@ fn detect_outcome(screen: &GrayImage) -> Result<Option<(Outcome, Match)>, String
 fn detect_outcome_for_mode(
     screen: &GrayImage,
     mode: GameMode,
-) -> Result<Option<(Outcome, Match)>, String> {
+) -> Result<Option<(Outcome, Match)>, ActionError> {
     if mode == GameMode::DurasTrials {
         let decisive = detect_decisive_outcome(screen)?;
         if decisive
@@ -672,18 +673,18 @@ enum ResultCheck {
 }
 
 trait ResultDriver {
-    fn wait_for_controls(&mut self) -> Result<(), String>;
-    fn check_defeat(&mut self) -> Result<ResultCheck, String>;
-    fn retry(&mut self) -> Result<(), String>;
-    fn back(&mut self) -> Result<(), String>;
-    fn continue_result(&mut self) -> Result<(), String>;
-    fn advance_optional_next(&mut self) -> Result<(), String>;
+    fn wait_for_controls(&mut self) -> Result<(), ActionError>;
+    fn check_defeat(&mut self) -> Result<ResultCheck, ActionError>;
+    fn retry(&mut self) -> Result<(), ActionError>;
+    fn back(&mut self) -> Result<(), ActionError>;
+    fn continue_result(&mut self) -> Result<(), ActionError>;
+    fn advance_optional_next(&mut self) -> Result<(), ActionError>;
 }
 
 /// Mirrors AFKJourneyBase._handle_ambiguous_result_screen:
 /// settle 2s, reject Retry/Power Up, continue, then optionally tap Next.
 /// The original returns success even when the optional Next wait times out.
-fn handle_ambiguous_result(driver: &mut impl ResultDriver) -> Result<BattleOutcome, String> {
+fn handle_ambiguous_result(driver: &mut impl ResultDriver) -> Result<BattleOutcome, ActionError> {
     driver.wait_for_controls()?;
     match driver.check_defeat()? {
         ResultCheck::Retry => {
@@ -711,14 +712,14 @@ struct AdbResultDriver<'a> {
 }
 
 impl ResultDriver for AdbResultDriver<'_> {
-    fn wait_for_controls(&mut self) -> Result<(), String> {
+    fn wait_for_controls(&mut self) -> Result<(), ActionError> {
         for _ in 0..20 {
             ensure_not_cancelled(self.cancelled)?;
             thread::sleep(crate::timing::millis(100));
         }
         ensure_not_cancelled(self.cancelled)
     }
-    fn check_defeat(&mut self) -> Result<ResultCheck, String> {
+    fn check_defeat(&mut self) -> Result<ResultCheck, ActionError> {
         ensure_not_cancelled(self.cancelled)?;
         let (screen, size) = screenshot(self.serial)?;
         self.size = size;
@@ -743,7 +744,7 @@ impl ResultDriver for AdbResultDriver<'_> {
         }
         Ok(ResultCheck::NoDefeat)
     }
-    fn retry(&mut self) -> Result<(), String> {
+    fn retry(&mut self) -> Result<(), ActionError> {
         ensure_not_cancelled(self.cancelled)?;
         if self.mode == GameMode::DurasTrials {
             adb::press_back(self.serial).map_err(|e| e.to_string())?;
@@ -759,21 +760,25 @@ impl ResultDriver for AdbResultDriver<'_> {
         )?;
         settle_cancellable(self.cancelled)
     }
-    fn back(&mut self) -> Result<(), String> {
+    fn back(&mut self) -> Result<(), ActionError> {
         ensure_not_cancelled(self.cancelled)?;
         adb::press_back(self.serial).map_err(|e| e.to_string())?;
         settle_cancellable(self.cancelled)
     }
-    fn continue_result(&mut self) -> Result<(), String> {
+    fn continue_result(&mut self) -> Result<(), ActionError> {
         ensure_not_cancelled(self.cancelled)?;
         if self.mode == GameMode::DurasTrials {
             // Dura result screens may offer a paid Repeat. Only Back is safe
             // here; Sweep is only handled from the Dura stage screen.
-            return adb::press_back(self.serial).map_err(|e| e.to_string());
+            return adb::press_back(self.serial)
+                .map_err(|e| e.to_string())
+                .map_err(ActionError::from);
         }
-        adb::tap_game_point(self.serial, 950, 1800, self.size).map_err(|e| e.to_string())
+        adb::tap_game_point(self.serial, 950, 1800, self.size)
+            .map_err(|e| e.to_string())
+            .map_err(ActionError::from)
     }
-    fn advance_optional_next(&mut self) -> Result<(), String> {
+    fn advance_optional_next(&mut self) -> Result<(), ActionError> {
         if self.mode.has_external_progression() {
             return settle_cancellable(self.cancelled);
         }
@@ -797,7 +802,7 @@ impl ResultDriver for AdbResultDriver<'_> {
     }
 }
 
-fn live_battle_skip(screen: &GrayImage, mode: GameMode) -> Result<Option<Match>, String> {
+fn live_battle_skip(screen: &GrayImage, mode: GameMode) -> Result<Option<Match>, ActionError> {
     if mode != GameMode::UnionCampaign {
         return Ok(None);
     }
@@ -815,7 +820,7 @@ fn wait_for_outcome(
     mode: GameMode,
     log: &mut impl FnMut(String),
     cancelled: &AtomicBool,
-) -> Result<(Outcome, Match, (u32, u32)), String> {
+) -> Result<(Outcome, Match, (u32, u32)), ActionError> {
     let started = Instant::now();
     let mut previous_floor_return = false;
     while started.elapsed() < crate::timing::secs(BATTLE_TIMEOUT_SECONDS) {
@@ -846,7 +851,7 @@ fn wait_for_outcome(
         }
         thread::sleep(crate::timing::millis(500));
     }
-    Err(super::BATTLE_RESULT_TIMEOUT.into())
+    Err(ActionError::BattleResultTimeout)
 }
 
 fn battle_with_current_team(
@@ -857,7 +862,7 @@ fn battle_with_current_team(
     cancelled: &AtomicBool,
     cursor: TeamCursor,
     progress: &mut impl FnMut(ProgressEvent),
-) -> Result<StageResult, String> {
+) -> Result<StageResult, ActionError> {
     let mode = settings.mode;
     let attempts = settings.attempts_per_formation;
     for attempt in (cursor.used + 1)..=attempts {
@@ -879,7 +884,7 @@ fn battle_with_current_team(
                 // Transport loss and game crashes also consume this attempt.
                 // Preserve its budget before the shared supervisor reopens the mode.
                 super::recovery::save_team_cursor(mode, cursor);
-                if error == super::BATTLE_RESULT_TIMEOUT {
+                if error == ActionError::BattleResultTimeout {
                     if !cursor.can_resume(settings) {
                         log(text(
                             "No battle result was detected after 100 seconds.",
@@ -1000,7 +1005,7 @@ pub(super) fn play_one_stage(
     cancelled: &AtomicBool,
     settings: BattleSettings,
     progress: &mut impl FnMut(ProgressEvent),
-) -> Result<StageResult, String> {
+) -> Result<StageResult, ActionError> {
     let (screen, _) = screenshot(serial)?;
     let copy_is_open = find_template(&screen, "battle/copy.png", lower_screen(), 0.78)?.is_some();
     let resume = super::recovery::take_team_cursor(settings.mode);
@@ -1105,7 +1110,7 @@ fn season_button_region() -> Rect {
     }
 }
 
-fn afk_stages_visible(screen: &GrayImage) -> Result<bool, String> {
+fn afk_stages_visible(screen: &GrayImage) -> Result<bool, ActionError> {
     Ok(find_template(
         screen,
         "afk_stages/season_battle.png",
@@ -1134,7 +1139,10 @@ fn afk_stages_visible(screen: &GrayImage) -> Result<bool, String> {
         .is_some())
 }
 
-fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, u32)>, String> {
+fn stage_entry_point(
+    screen: &GrayImage,
+    mode: GameMode,
+) -> Result<Option<(u32, u32)>, ActionError> {
     let large = find_template(
         screen,
         "afk_stages/battle_large.png",
@@ -1215,7 +1223,8 @@ fn stage_entry_point(screen: &GrayImage, mode: GameMode) -> Result<Option<(u32, 
         "Could not detect the entry point for {}.",
         "Der Einstieg für {} wurde nicht erkannt.",
         mode.label()
-    ))
+    )
+    .into())
 }
 
 #[derive(Debug)]
@@ -1228,7 +1237,7 @@ enum OverviewAction {
     SelectCrest(Match),
 }
 
-fn overview_action(screen: &GrayImage) -> Result<OverviewAction, String> {
+fn overview_action(screen: &GrayImage) -> Result<OverviewAction, ActionError> {
     // Handle overlays before looking for overview controls behind them.
     if get_match(
         screen,
@@ -1336,7 +1345,7 @@ pub(super) fn navigate_to_current_overview(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(u32, u32), String> {
+) -> Result<(u32, u32), ActionError> {
     let started = Instant::now();
     for attempt in 0..40 {
         ensure_not_cancelled(cancelled)?;
@@ -1387,13 +1396,13 @@ pub(super) fn navigate_to_current_overview(
 type GameScreen = (GrayImage, (u32, u32));
 
 trait AfkNavigator {
-    fn overview(&mut self) -> Result<(), String>;
-    fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, String>;
-    fn battle_modes(&mut self) -> Result<bool, String>;
-    fn afk_page(&mut self) -> Result<Option<GameScreen>, String>;
+    fn overview(&mut self) -> Result<(), ActionError>;
+    fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, ActionError>;
+    fn battle_modes(&mut self) -> Result<bool, ActionError>;
+    fn afk_page(&mut self) -> Result<Option<GameScreen>, ActionError>;
 }
 
-fn enter_afk_page(navigator: &mut impl AfkNavigator) -> Result<GameScreen, String> {
+fn enter_afk_page(navigator: &mut impl AfkNavigator) -> Result<GameScreen, ActionError> {
     // Every mode, including Season -> normal, starts from a verified overview.
     // A battle/Records/result screen must never be accepted as the AFK selector.
     for _ in 0..3 {
@@ -1410,7 +1419,7 @@ fn enter_afk_page(navigator: &mut impl AfkNavigator) -> Result<GameScreen, Strin
     Err(text("Could not open the AFK page. Check the game connection and unlocked modes.", "Die AFK-Seite konnte nicht automatisch geöffnet werden. Bitte Spielverbindung und freigeschaltete Spielmodi prüfen.").into())
 }
 
-fn apex_stage_shortcut(screen: &GrayImage) -> Result<Option<Match>, String> {
+fn apex_stage_shortcut(screen: &GrayImage) -> Result<Option<Match>, ActionError> {
     find_template(
         screen,
         "navigation/apex_stage_shortcut.png",
@@ -1432,7 +1441,7 @@ struct AdbAfkNavigator<'a, L> {
 }
 
 impl<L: FnMut(String)> AdbAfkNavigator<'_, L> {
-    fn wait_for_afk_page(&self, timeout: Duration) -> Result<Option<GameScreen>, String> {
+    fn wait_for_afk_page(&self, timeout: Duration) -> Result<Option<GameScreen>, ActionError> {
         let started = Instant::now();
         while started.elapsed() < timeout {
             ensure_not_cancelled(self.cancelled)?;
@@ -1451,12 +1460,12 @@ impl<L: FnMut(String)> AdbAfkNavigator<'_, L> {
 }
 
 impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
-    fn overview(&mut self) -> Result<(), String> {
+    fn overview(&mut self) -> Result<(), ActionError> {
         self.size = navigate_to_current_overview(self.serial, self.cancelled, self.log)?;
         settle_cancellable(self.cancelled)
     }
 
-    fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, String> {
+    fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, ActionError> {
         ensure_not_cancelled(self.cancelled)?;
         let (screen, size) = screenshot(self.serial)?;
         let Some(shortcut) = apex_stage_shortcut(&screen)? else {
@@ -1466,7 +1475,7 @@ impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
         self.wait_for_afk_page(crate::timing::secs(10))
     }
 
-    fn battle_modes(&mut self) -> Result<bool, String> {
+    fn battle_modes(&mut self) -> Result<bool, ActionError> {
         ensure_not_cancelled(self.cancelled)?;
         adb::tap_game_point(self.serial, 460, 1830, self.size)
             .map_err(|error| error.to_string())?;
@@ -1490,7 +1499,7 @@ impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
         Ok(false)
     }
 
-    fn afk_page(&mut self) -> Result<Option<GameScreen>, String> {
+    fn afk_page(&mut self) -> Result<Option<GameScreen>, ActionError> {
         // Retry while the tile is still visible, then verify the selector.
         for _ in 0..3 {
             ensure_not_cancelled(self.cancelled)?;
@@ -1512,7 +1521,7 @@ pub(super) fn navigate_to_battle_modes(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(u32, u32), String> {
+) -> Result<(u32, u32), ActionError> {
     let mut navigator = AdbAfkNavigator {
         serial,
         cancelled,
@@ -1536,7 +1545,7 @@ pub(super) fn navigate_to_afk_stages(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<GameScreen, String> {
+) -> Result<GameScreen, ActionError> {
     ensure_not_cancelled(cancelled)?;
     adb::launch_afk_journey(serial).map_err(|error| error.to_string())?;
     for _ in 0..3 {
@@ -1556,7 +1565,7 @@ pub fn run<F, P>(
     cancelled: &AtomicBool,
     mut log: F,
     mut progress: P,
-) -> Result<ModeSummary, String>
+) -> Result<ModeSummary, ActionError>
 where
     F: FnMut(String),
     P: FnMut(ProgressEvent),
@@ -1696,12 +1705,12 @@ mod tests {
     }
 
     impl FormationBrowser for FakeFormations {
-        fn open(&mut self) -> Result<bool, String> {
+        fn open(&mut self) -> Result<bool, ActionError> {
             self.displayed = 1;
             self.visited.push(1);
             Ok(true)
         }
-        fn next(&mut self) -> Result<bool, String> {
+        fn next(&mut self) -> Result<bool, ActionError> {
             if self.next_error {
                 return Err("ADB getrennt".into());
             }
@@ -1712,10 +1721,10 @@ mod tests {
             self.visited.push(self.displayed);
             Ok(true)
         }
-        fn is_manual(&mut self) -> Result<bool, String> {
+        fn is_manual(&mut self) -> Result<bool, ActionError> {
             Ok(self.teams[self.displayed - 1].0)
         }
-        fn copy(&mut self) -> Result<bool, String> {
+        fn copy(&mut self) -> Result<bool, ActionError> {
             if !self.teams[self.displayed - 1].1 {
                 return Ok(false);
             }
@@ -1734,7 +1743,7 @@ mod tests {
         }
     }
 
-    fn exhaust_teams(browser: &mut FakeFormations, skip_manual: bool) -> Result<(), String> {
+    fn exhaust_teams(browser: &mut FakeFormations, skip_manual: bool) -> Result<(), ActionError> {
         for &pass in formation_passes(skip_manual) {
             let mut target = 1;
             while target <= browser.teams.len() as u32 {
@@ -1819,20 +1828,20 @@ mod tests {
     }
 
     impl AfkNavigator for FakeNavigation {
-        fn overview(&mut self) -> Result<(), String> {
+        fn overview(&mut self) -> Result<(), ActionError> {
             self.trace.push("overview");
             if self.fail_overview {
                 return Err("Stop".into());
             }
             Ok(())
         }
-        fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, String> {
+        fn afk_shortcut(&mut self) -> Result<Option<GameScreen>, ActionError> {
             self.trace.push("afk_shortcut");
             Ok(self
                 .shortcut
                 .then(|| (GrayImage::new(1, 1), BASE_RESOLUTION)))
         }
-        fn battle_modes(&mut self) -> Result<bool, String> {
+        fn battle_modes(&mut self) -> Result<bool, ActionError> {
             self.trace.push("battle_modes");
             if self.failures > 0 {
                 self.failures -= 1;
@@ -1840,7 +1849,7 @@ mod tests {
             }
             Ok(true)
         }
-        fn afk_page(&mut self) -> Result<Option<GameScreen>, String> {
+        fn afk_page(&mut self) -> Result<Option<GameScreen>, ActionError> {
             self.trace.push("afk_page");
             Ok(Some((GrayImage::new(1, 1), BASE_RESOLUTION)))
         }
@@ -2205,31 +2214,31 @@ mod tests {
     }
 
     impl ResultDriver for FakeResultDriver {
-        fn wait_for_controls(&mut self) -> Result<(), String> {
+        fn wait_for_controls(&mut self) -> Result<(), ActionError> {
             self.steps.push("wait-2-seconds");
             if self.cancelled {
-                Err("Cancelled by user.".into())
+                Err(ActionError::Cancelled)
             } else {
                 Ok(())
             }
         }
-        fn check_defeat(&mut self) -> Result<ResultCheck, String> {
+        fn check_defeat(&mut self) -> Result<ResultCheck, ActionError> {
             self.steps.push("check-retry-and-power-up");
             Ok(self.check)
         }
-        fn retry(&mut self) -> Result<(), String> {
+        fn retry(&mut self) -> Result<(), ActionError> {
             self.steps.push("tap-retry");
             Ok(())
         }
-        fn back(&mut self) -> Result<(), String> {
+        fn back(&mut self) -> Result<(), ActionError> {
             self.steps.push("back");
             Ok(())
         }
-        fn continue_result(&mut self) -> Result<(), String> {
+        fn continue_result(&mut self) -> Result<(), ActionError> {
             self.steps.push("tap-950-1800");
             Ok(())
         }
-        fn advance_optional_next(&mut self) -> Result<(), String> {
+        fn advance_optional_next(&mut self) -> Result<(), ActionError> {
             self.steps.push(if self.next_present {
                 "tap-next"
             } else {

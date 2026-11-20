@@ -4,6 +4,7 @@ use super::{
     arena::Cursor,
     legend_trial::TowerSelection,
 };
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::localization::{format_text, text};
 use crate::{
@@ -146,17 +147,17 @@ pub fn intentional_stop(serial: &str) {
         }
     });
 }
-pub fn check_process(serial: &str) -> Result<(), String> {
-    let probe = SESSION.with(|slot| -> Result<bool, String> {
+pub fn check_process(serial: &str) -> Result<(), ActionError> {
+    let probe = SESSION.with(|slot| -> Result<bool, ActionError> {
         let mut slot = slot.borrow_mut();
         let Some(s) = slot.as_mut().filter(|s| s.serial == serial) else {
             return Ok(false);
         };
         if s.crashed {
-            return Err(game_crashed().into());
+            return Err(ActionError::GameCrashed);
         }
         if let Some(reason) = &s.restart_reason {
-            return Err(reason.clone());
+            return Err(reason.clone().into());
         }
         if s.suspended
             || !s.expected_running
@@ -174,16 +175,9 @@ pub fn check_process(serial: &str) -> Result<(), String> {
                 s.crashed = true;
             }
         });
-        return Err(game_crashed().into());
+        return Err(ActionError::GameCrashed);
     }
     Ok(())
-}
-
-fn game_crashed() -> &'static str {
-    text(
-        "AFK Journey exited unexpectedly.",
-        "AFK Journey wurde unerwartet beendet.",
-    )
 }
 
 fn state() -> (bool, Checkpoint) {
@@ -194,7 +188,7 @@ fn state() -> (bool, Checkpoint) {
             .unwrap_or_default()
     })
 }
-fn restart(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
+fn restart(serial: &str, cancelled: &AtomicBool) -> Result<(), ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     // A restart means the game got stuck; give the next attempt more time.
     crate::timing::note_timeout();
@@ -215,17 +209,17 @@ fn restart(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
         vision::settle_cancellable(cancelled)?;
     }
     if adb::game_state(serial).map_err(|e| e.to_string())? != adb::GameState::Running {
-        return Err(game_crashed().into());
+        return Err(ActionError::GameCrashed);
     }
     expect_running(serial);
     Ok(())
 }
 
 trait RecoveryDriver {
-    fn probe(&mut self) -> Result<adb::GameState, String>;
-    fn reconnect(&mut self) -> Result<(), String>;
-    fn settle(&mut self) -> Result<(), String>;
-    fn restart(&mut self) -> Result<(), String>;
+    fn probe(&mut self) -> Result<adb::GameState, ActionError>;
+    fn reconnect(&mut self) -> Result<(), ActionError>;
+    fn settle(&mut self) -> Result<(), ActionError>;
+    fn restart(&mut self) -> Result<(), ActionError>;
 }
 
 struct AdbRecovery<'a> {
@@ -233,16 +227,20 @@ struct AdbRecovery<'a> {
     cancelled: &'a AtomicBool,
 }
 impl RecoveryDriver for AdbRecovery<'_> {
-    fn probe(&mut self) -> Result<adb::GameState, String> {
-        adb::game_state(self.serial).map_err(|e| e.to_string())
+    fn probe(&mut self) -> Result<adb::GameState, ActionError> {
+        adb::game_state(self.serial)
+            .map_err(|e| e.to_string())
+            .map_err(ActionError::from)
     }
-    fn reconnect(&mut self) -> Result<(), String> {
-        adb::reconnect(self.serial).map_err(|e| e.to_string())
+    fn reconnect(&mut self) -> Result<(), ActionError> {
+        adb::reconnect(self.serial)
+            .map_err(|e| e.to_string())
+            .map_err(ActionError::from)
     }
-    fn settle(&mut self) -> Result<(), String> {
+    fn settle(&mut self) -> Result<(), ActionError> {
         vision::settle_cancellable(self.cancelled)
     }
-    fn restart(&mut self) -> Result<(), String> {
+    fn restart(&mut self) -> Result<(), ActionError> {
         restart(self.serial, self.cancelled)
     }
 }
@@ -251,14 +249,14 @@ fn connected_state(
     driver: &mut impl RecoveryDriver,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<adb::GameState, String> {
+) -> Result<adb::GameState, ActionError> {
     let mut last_error = String::new();
     for attempt in 0..MAX_CONNECTION_PROBES {
         vision::ensure_not_cancelled(cancelled)?;
         match driver.probe() {
             Ok(state) => return Ok(state),
-            Err(error) if adb::is_transport_error(&error) => {
-                last_error = error;
+            Err(error) if error.is_transport() => {
+                last_error = error.into();
                 if attempt == 0 {
                     log(text("ADB connection interrupted. Reconnecting before checking the game.", "ADB-Verbindung unterbrochen. Verbindung wird vor der Spielprüfung wiederhergestellt.").into());
                 }
@@ -267,7 +265,7 @@ fn connected_state(
                 }
                 if attempt % 3 == 0 {
                     if let Err(error) = driver.reconnect() {
-                        if !adb::is_transport_error(&error) {
+                        if !error.is_transport() {
                             return Err(error);
                         }
                     }
@@ -281,7 +279,8 @@ fn connected_state(
     Err(format_text!(
         "ADB is still unavailable; recovery stopped: {last_error}",
         "ADB ist weiterhin nicht erreichbar; Wiederherstellung beendet: {last_error}"
-    ))
+    )
+    .into())
 }
 
 fn ready_after_recovery(serial: &str) {
@@ -298,11 +297,11 @@ fn ready_after_recovery(serial: &str) {
 fn supervised_with_driver(
     serial: &str,
     cancelled: &AtomicBool,
-    mut execute: impl FnMut(Checkpoint, &mut dyn FnMut(ActivityEvent)) -> Result<u32, String>,
+    mut execute: impl FnMut(Checkpoint, &mut dyn FnMut(ActivityEvent)) -> Result<u32, ActionError>,
     driver: &mut impl RecoveryDriver,
     mut log: impl FnMut(String),
     mut report: impl FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     let _guard = Guard::install(serial);
     let mut pending = None;
     let mut pending_clear = None;
@@ -357,7 +356,7 @@ fn supervised_with_driver(
             report(event);
         });
         vision::ensure_not_cancelled(cancelled)?;
-        let transport_failed = matches!(&result, Err(error) if adb::is_transport_error(error));
+        let transport_failed = matches!(&result, Err(error) if error.is_transport());
         let should_probe = transport_failed
             || SESSION.with(|slot| {
                 slot.borrow().as_ref().is_some_and(|s| {
@@ -395,7 +394,7 @@ fn supervised_with_driver(
             continue;
         }
         if !needs_restart {
-            if matches!(&result, Err(error) if error == super::BATTLE_RESULT_TIMEOUT) {
+            if matches!(&result, Err(ActionError::BattleResultTimeout)) {
                 if let Some(mode) = pending.take() {
                     report(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
                 }
@@ -438,14 +437,14 @@ fn supervised_with_driver(
                     ready_after_recovery(serial);
                     break;
                 }
-                Err(error) if adb::is_transport_error(&error) => {
+                Err(error) if error.is_transport() => {
                     // A launch can succeed even if its response is lost.
                     if connected_state(driver, cancelled, &mut log)? == adb::GameState::Running {
                         ready_after_recovery(serial);
                         break;
                     }
                 }
-                Err(error) if error == game_crashed() => {}
+                Err(ActionError::GameCrashed) => {}
                 Err(error) => return Err(error),
             }
         }
@@ -455,10 +454,10 @@ fn supervised_with_driver(
 pub fn run(
     serial: &str,
     cancelled: &AtomicBool,
-    execute: impl FnMut(Checkpoint, &mut dyn FnMut(ActivityEvent)) -> Result<u32, String>,
+    execute: impl FnMut(Checkpoint, &mut dyn FnMut(ActivityEvent)) -> Result<u32, ActionError>,
     log: impl FnMut(String),
     report: impl FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     supervised_with_driver(
         serial,
         cancelled,
@@ -476,23 +475,23 @@ mod tests {
 
     struct FakeRecovery<F> {
         restart: F,
-        states: VecDeque<Result<adb::GameState, String>>,
+        states: VecDeque<Result<adb::GameState, ActionError>>,
         fallback: adb::GameState,
         reconnects: u32,
         pauses: u32,
         probes: u32,
         stop_on_pause: Option<std::sync::Arc<AtomicBool>>,
     }
-    impl<F: FnMut() -> Result<(), String>> RecoveryDriver for FakeRecovery<F> {
-        fn probe(&mut self) -> Result<adb::GameState, String> {
+    impl<F: FnMut() -> Result<(), ActionError>> RecoveryDriver for FakeRecovery<F> {
+        fn probe(&mut self) -> Result<adb::GameState, ActionError> {
             self.probes += 1;
             self.states.pop_front().unwrap_or(Ok(self.fallback))
         }
-        fn reconnect(&mut self) -> Result<(), String> {
+        fn reconnect(&mut self) -> Result<(), ActionError> {
             self.reconnects += 1;
             Ok(())
         }
-        fn settle(&mut self) -> Result<(), String> {
+        fn settle(&mut self) -> Result<(), ActionError> {
             self.pauses += 1;
             if let Some(stop) = &self.stop_on_pause {
                 stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -500,11 +499,11 @@ mod tests {
             }
             Ok(())
         }
-        fn restart(&mut self) -> Result<(), String> {
+        fn restart(&mut self) -> Result<(), ActionError> {
             (self.restart)()
         }
     }
-    fn driver<F: FnMut() -> Result<(), String>>(restart: F) -> FakeRecovery<F> {
+    fn driver<F: FnMut() -> Result<(), ActionError>>(restart: F) -> FakeRecovery<F> {
         FakeRecovery {
             restart,
             states: VecDeque::new(),
@@ -519,11 +518,11 @@ mod tests {
     fn supervised(
         serial: &str,
         cancelled: &AtomicBool,
-        execute: impl FnMut(Checkpoint, &mut dyn FnMut(ActivityEvent)) -> Result<u32, String>,
-        restart: impl FnMut() -> Result<(), String>,
+        execute: impl FnMut(Checkpoint, &mut dyn FnMut(ActivityEvent)) -> Result<u32, ActionError>,
+        restart: impl FnMut() -> Result<(), ActionError>,
         log: impl FnMut(String),
         report: impl FnMut(ActivityEvent),
-    ) -> Result<u32, String> {
+    ) -> Result<u32, ActionError> {
         supervised_with_driver(
             serial,
             cancelled,
@@ -667,7 +666,8 @@ mod tests {
                         return Err(restart_required(
                             "test",
                             "The Arena result screen could not be closed.".into(),
-                        ));
+                        )
+                        .into());
                     }
                     assert_eq!(checkpoint.mode, Some(mode));
                     assert_eq!(checkpoint.arena.initial, 2);
@@ -706,7 +706,7 @@ mod tests {
                     assert!(check_process("test").is_err());
                     assert!(check_process("unrelated").is_ok());
                     cancelled.store(stop, std::sync::atomic::Ordering::Relaxed);
-                    Err(error)
+                    Err(error.into())
                 },
                 || {
                     restarts += 1;
@@ -854,7 +854,7 @@ mod tests {
                 report(ActivityEvent::ModeEntered(mode));
                 report(ActivityEvent::BattleStarted(mode));
                 report(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
-                Err(super::super::BATTLE_RESULT_TIMEOUT.into())
+                Err(ActionError::BattleResultTimeout)
             },
             || panic!("an in-game screen change must not relaunch the game"),
             |_| {},
@@ -888,7 +888,7 @@ mod tests {
                     report(ActivityEvent::ModeEntered(GameMode::AfkStages));
                     report(ActivityEvent::BattleStarted(GameMode::AfkStages));
                     crash();
-                    Err(game_crashed().into())
+                    Err(ActionError::GameCrashed)
                 } else {
                     assert_eq!(checkpoint.mode, Some(GameMode::AfkStages));
                     assert!(!checkpoint.stages(StageSelection::default()).season);
@@ -937,7 +937,7 @@ mod tests {
             &AtomicBool::new(false),
             |_, _| {
                 crash();
-                Err(game_crashed().into())
+                Err(ActionError::GameCrashed)
             },
             || {
                 restarts += 1;
@@ -960,7 +960,7 @@ mod tests {
             |_, _| {
                 cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
                 crash();
-                Err(game_crashed().into())
+                Err(ActionError::GameCrashed)
             },
             || {
                 calls += 1;
@@ -986,7 +986,7 @@ mod tests {
                 if calls == 1 {
                     save_arena_cursor("test", cursor);
                     crash();
-                    Err(game_crashed().into())
+                    Err(ActionError::GameCrashed)
                 } else {
                     assert_eq!(checkpoint.arena, cursor);
                     Ok(0)

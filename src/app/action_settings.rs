@@ -125,13 +125,13 @@ impl PlayerApp {
                                     ui.label(text("Guild Manager API key", "Guild-Manager-API-Schlüssel"));
                                     let key = ui.add(egui::TextEdit::singleline(&mut self.guild_scan.guild_api_key).password(true).desired_width(f32::INFINITY));
                                     if url.lost_focus() || key.lost_focus() {
-                                        self.guild_access_error = self.guild_scan.save_access().err();
+                                        self.guild_access_error = self.guild_scan.save_access().err().map(String::from);
                                     }
                                     ui.small(text("A key pasted inside the URL moves to the key field. URL and key are stored in the Windows Credential Manager and the key is sent only as a request header.", "Ein in der URL eingefügter Schlüssel wandert in das Schlüsselfeld. URL und Schlüssel liegen in der Windows-Anmeldeinformationsverwaltung, der Schlüssel wird nur im Header gesendet."));
                                     if (!self.guild_scan.guild_members_url.is_empty() || !self.guild_scan.guild_api_key.is_empty())
                                         && ui.button(text("Forget saved access", "Gespeicherten Zugang entfernen")).clicked()
                                     {
-                                        self.guild_access_error = self.guild_scan.forget_access().err();
+                                        self.guild_access_error = self.guild_scan.forget_access().err().map(String::from);
                                     }
                                     if let Some(error) = &self.guild_access_error {
                                         ui.label(format_text!("Could not update the saved access: {error}", "Der gespeicherte Zugang konnte nicht geändert werden: {error}"));

@@ -1,6 +1,7 @@
 //! Polling for screens, pauses that scale with the device speed, and cancellation.
 
 use super::{get_match, screenshot, Match, Rect, MATCH_THRESHOLD};
+use crate::afk_journey::error::ActionError;
 use crate::localization::{format_text, text};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -12,14 +13,16 @@ pub(in crate::afk_journey) fn wait_for_match(
     roi: Rect,
     timeout: Duration,
     cancelled: &AtomicBool,
-) -> Result<(String, Match, (u32, u32)), String> {
-    poll_for_match(serial, paths, roi, timeout, cancelled)?.ok_or_else(|| {
-        format_text!(
-            "Timed out waiting for {}.",
-            "Zeitlimit beim Warten auf {} erreicht.",
-            paths.join(text(" or ", " oder "))
-        )
-    })
+) -> Result<(String, Match, (u32, u32)), ActionError> {
+    poll_for_match(serial, paths, roi, timeout, cancelled)?
+        .ok_or_else(|| {
+            format_text!(
+                "Timed out waiting for {}.",
+                "Zeitlimit beim Warten auf {} erreicht.",
+                paths.join(text(" or ", " oder "))
+            )
+        })
+        .map_err(ActionError::from)
 }
 
 pub(in crate::afk_journey) fn poll_for_match(
@@ -28,7 +31,7 @@ pub(in crate::afk_journey) fn poll_for_match(
     roi: Rect,
     timeout: Duration,
     cancelled: &AtomicBool,
-) -> Result<Option<(String, Match, (u32, u32))>, String> {
+) -> Result<Option<(String, Match, (u32, u32))>, ActionError> {
     let started = Instant::now();
     while started.elapsed() < timeout {
         ensure_not_cancelled(cancelled)?;
@@ -45,15 +48,17 @@ pub(in crate::afk_journey) fn poll_for_match(
     Ok(None)
 }
 
-pub(crate) fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
+pub(crate) fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), ActionError> {
     if cancelled.load(Ordering::Relaxed) {
-        Err(text("Cancelled by user.", "Vom Benutzer abgebrochen.").to_owned())
+        Err(ActionError::Cancelled)
     } else {
         Ok(())
     }
 }
 
-pub(in crate::afk_journey) fn settle_cancellable(cancelled: &AtomicBool) -> Result<(), String> {
+pub(in crate::afk_journey) fn settle_cancellable(
+    cancelled: &AtomicBool,
+) -> Result<(), ActionError> {
     // 900 ms on the reference setup, longer on slow devices; checked every 100 ms.
     let deadline = Instant::now() + crate::timing::millis(900);
     loop {

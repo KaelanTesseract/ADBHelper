@@ -3,6 +3,7 @@
 use super::afk_stages::{self as common, BattleSettings, StageResult};
 use crate::activity::{ActivityEvent, GameMode};
 use crate::adb;
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::afk_journey::vision::{Match, Rect};
 use crate::localization::text;
@@ -34,7 +35,7 @@ enum PreBattle {
     Overlay,
 }
 
-fn pre_battle_state(screen: &GrayImage) -> Result<Option<(PreBattle, Match)>, String> {
+fn pre_battle_state(screen: &GrayImage) -> Result<Option<(PreBattle, Match)>, ActionError> {
     if let Some(found) = floor_battle_button(screen)? {
         return Ok(Some((PreBattle::FloorBattle, found)));
     }
@@ -79,7 +80,7 @@ fn records_region() -> Rect {
     }
 }
 
-pub(super) fn floor_battle_button(screen: &GrayImage) -> Result<Option<Match>, String> {
+pub(super) fn floor_battle_button(screen: &GrayImage) -> Result<Option<Match>, ActionError> {
     let button = vision::find_template(
         screen,
         "union_campaign/battle.png",
@@ -108,7 +109,7 @@ pub(super) fn navigate(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     let (screen, _) = vision::screenshot(serial)?;
     if vision::find_template(
@@ -228,7 +229,7 @@ pub(super) fn navigate(
     Err(text("Could not open Union Campaign. Check guild membership, game access, and connection.", "Union Campaign konnte nicht geöffnet werden. Bitte Gildenmitgliedschaft, Freischaltung und Spielverbindung prüfen.").into())
 }
 
-pub(super) fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
+pub(super) fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), ActionError> {
     let started = Instant::now();
     while started.elapsed() < crate::timing::secs(45) {
         vision::ensure_not_cancelled(cancelled)?;
@@ -257,7 +258,7 @@ enum PostBattle {
     NoFurtherFloor,
 }
 
-fn post_battle_state(screen: &GrayImage) -> Result<Option<(PostBattle, Match)>, String> {
+fn post_battle_state(screen: &GrayImage) -> Result<Option<(PostBattle, Match)>, ActionError> {
     for (path, state, region) in [
         ("arena/continue.png", PostBattle::Continue, bottom_bar()),
         ("battle/records.png", PostBattle::Ready, records_region()),
@@ -286,11 +287,11 @@ fn post_battle_state(screen: &GrayImage) -> Result<Option<(PostBattle, Match)>, 
 }
 
 trait PostBattleDriver {
-    fn observe(&mut self, after_tap: bool) -> Result<PostBattle, String>;
-    fn tap_continue(&mut self) -> Result<(), String>;
+    fn observe(&mut self, after_tap: bool) -> Result<PostBattle, ActionError>;
+    fn tap_continue(&mut self) -> Result<(), ActionError>;
 }
 
-fn advance_after_win(driver: &mut impl PostBattleDriver) -> Result<PostBattle, String> {
+fn advance_after_win(driver: &mut impl PostBattleDriver) -> Result<PostBattle, ActionError> {
     // At most three Continue taps. Observe once more after the last tap so
     // a successful third tap cannot be mistaken for the end of the campaign.
     for taps in 0..3 {
@@ -313,7 +314,7 @@ struct AdbPostBattle<'a> {
 }
 
 impl PostBattleDriver for AdbPostBattle<'_> {
-    fn observe(&mut self, mut waiting_for_transition: bool) -> Result<PostBattle, String> {
+    fn observe(&mut self, mut waiting_for_transition: bool) -> Result<PostBattle, ActionError> {
         let started = Instant::now();
         while started.elapsed() < crate::timing::secs(20) {
             vision::ensure_not_cancelled(self.cancelled)?;
@@ -339,7 +340,7 @@ impl PostBattleDriver for AdbPostBattle<'_> {
         Ok(PostBattle::NoFurtherFloor)
     }
 
-    fn tap_continue(&mut self) -> Result<(), String> {
+    fn tap_continue(&mut self) -> Result<(), ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         vision::tap_match(
             self.serial,
@@ -358,7 +359,7 @@ pub fn run(
     cancelled: &AtomicBool,
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     let mode = GameMode::UnionCampaign;
     progress(ActivityEvent::ModeOpening(mode));
@@ -417,11 +418,11 @@ mod tests {
     use std::collections::VecDeque;
 
     struct FakePost {
-        states: VecDeque<Result<PostBattle, String>>,
+        states: VecDeque<Result<PostBattle, ActionError>>,
         trace: Vec<&'static str>,
     }
     impl PostBattleDriver for FakePost {
-        fn observe(&mut self, after_tap: bool) -> Result<PostBattle, String> {
+        fn observe(&mut self, after_tap: bool) -> Result<PostBattle, ActionError> {
             self.trace.push(if after_tap {
                 "observe_after_tap"
             } else {
@@ -431,7 +432,7 @@ mod tests {
                 .pop_front()
                 .expect("unexpected extra observation")
         }
-        fn tap_continue(&mut self) -> Result<(), String> {
+        fn tap_continue(&mut self) -> Result<(), ActionError> {
             self.trace.push("tap");
             Ok(())
         }
@@ -506,7 +507,7 @@ mod tests {
         driver.states.push_back(Err("ADB getrennt".into()));
         assert_eq!(advance_after_win(&mut driver).unwrap_err(), "ADB getrennt");
         let mut driver = post(&[PostBattle::Continue]);
-        driver.states.push_back(Err("Cancelled by user.".into()));
+        driver.states.push_back(Err(ActionError::Cancelled));
         assert_eq!(
             advance_after_win(&mut driver).unwrap_err(),
             "Cancelled by user."

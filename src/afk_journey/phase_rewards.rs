@@ -1,5 +1,6 @@
 //! Season Phase Rankings: free District / Server / Guild first-clear rewards.
 use super::{afk_stages as common, daily, ocr};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode, RankingScope},
@@ -73,7 +74,7 @@ fn digits(value: &str) -> Option<u32> {
         .flatten()
 }
 
-fn decode(bytes: &[u8]) -> Result<Frame, String> {
+fn decode(bytes: &[u8]) -> Result<Frame, ActionError> {
     let (gray, size) = vision::normalize_screenshot(bytes)?;
     let color = image::load_from_memory(bytes)
         .map_err(|e| e.to_string())?
@@ -88,7 +89,7 @@ fn decode(bytes: &[u8]) -> Result<Frame, String> {
     })
 }
 
-fn read(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
+fn read(serial: &str, cancelled: &AtomicBool) -> Result<Frame, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     let frame = decode(&adb::screenshot(serial).map_err(|e| e.to_string())?)?;
     vision::ensure_not_cancelled(cancelled)?;
@@ -302,7 +303,7 @@ fn reward_badge(frame: &Frame, scope: RankingScope) -> bool {
     orange > 60 && gold > 20
 }
 
-fn rows(frame: &Frame) -> Result<Vec<Row>, String> {
+fn rows(frame: &Frame) -> Result<Vec<Row>, ActionError> {
     let mut result = Vec::new();
     for status_line in &frame.lines {
         if status_line.x < 820.0 || !(810.0..1600.0).contains(&status_line.y) {
@@ -368,7 +369,7 @@ fn quick_claim(frame: &Frame) -> Option<(u32, u32)> {
         .map(ocr::TextLine::center)
 }
 
-fn claim_control(frame: &Frame) -> Result<Option<(Claim, (u32, u32))>, String> {
+fn claim_control(frame: &Frame) -> Result<Option<(Claim, (u32, u32))>, ActionError> {
     let quick = quick_claim(frame).map(|point| (Claim::Quick, point));
     match rows(frame) {
         Ok(rows) => Ok(rows
@@ -416,13 +417,13 @@ fn tap(
     point: (u32, u32),
     frame: &Frame,
     cancelled: &AtomicBool,
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     adb::tap_game_point(serial, point.0, point.1, frame.size).map_err(|e| e.to_string())?;
     vision::settle_cancellable(cancelled)
 }
 
-fn wait_ranking(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
+fn wait_ranking(serial: &str, cancelled: &AtomicBool) -> Result<Frame, ActionError> {
     for _ in 0..18 {
         let frame = read(serial, cancelled)?;
         if ranking(&frame) {
@@ -441,7 +442,7 @@ fn open_ranking(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<Frame, String> {
+) -> Result<Frame, ActionError> {
     let frame = read(serial, cancelled)?;
     if ranking(&frame) {
         return Ok(frame);
@@ -484,11 +485,11 @@ pub(super) fn open_rankings_for_scan(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     open_ranking(serial, cancelled, log).map(|_| ())
 }
 
-fn discover_phases(serial: &str, cancelled: &AtomicBool) -> Result<Vec<u32>, String> {
+fn discover_phases(serial: &str, cancelled: &AtomicBool) -> Result<Vec<u32>, ActionError> {
     let mut phases = BTreeSet::new();
     for _ in 0..8 {
         let frame = wait_ranking(serial, cancelled)?;
@@ -515,7 +516,7 @@ fn open_scope(
     scope: RankingScope,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<Option<Frame>, String> {
+) -> Result<Option<Frame>, ActionError> {
     let frame = read(serial, cancelled)?;
     if first_clear(&frame) == Some((phase, scope)) {
         return Ok(Some(frame));
@@ -601,7 +602,7 @@ fn finish_claim(
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     let receipt = cursor.pending.clone().ok_or("No pending ranking reward")?;
     let mut badge_absent = false;
     for attempt in 0..18 {
@@ -679,7 +680,7 @@ fn collect_scope(
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     let mut quiet = 0;
     let mut scrolls = 0;
     for _ in 0..120 {
@@ -750,7 +751,7 @@ pub fn run(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     if let Some(pending) = cursor.pending.clone() {
         let mode = GameMode::SeasonRankingRewards(pending.scope);

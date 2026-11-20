@@ -4,6 +4,7 @@ use super::afk_stages::{self as common};
 use super::ocr::{self, TextLine};
 use crate::activity::{ActivityEvent, BattleOutcome, GameMode};
 use crate::adb;
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::afk_journey::vision::{Match, Rect};
 use crate::localization::{format_text, text};
@@ -139,13 +140,13 @@ fn popup() -> Rect {
         height: 1120,
     }
 }
-fn find(screen: &GrayImage, path: &str, roi: Rect) -> Result<Option<Match>, String> {
+fn find(screen: &GrayImage, path: &str, roi: Rect) -> Result<Option<Match>, ActionError> {
     vision::find_template(screen, path, roi, 0.85)
 }
-fn purchase_popup(screen: &GrayImage) -> Result<bool, String> {
+fn purchase_popup(screen: &GrayImage) -> Result<bool, ActionError> {
     Ok(find(screen, "supreme_arena/no_attempts_popup.png", popup())?.is_some())
 }
-fn confirmation(screen: &GrayImage) -> Result<bool, String> {
+fn confirmation(screen: &GrayImage) -> Result<bool, ActionError> {
     Ok(vision::get_match(
         screen,
         &["navigation/confirm.png", "confirm_text.png", "cancel.png"],
@@ -155,7 +156,7 @@ fn confirmation(screen: &GrayImage) -> Result<bool, String> {
     .is_some())
 }
 
-fn home_control(screen: &GrayImage, kind: Kind) -> Result<Option<(String, Match)>, String> {
+fn home_control(screen: &GrayImage, kind: Kind) -> Result<Option<(String, Match)>, ActionError> {
     let label = match kind {
         Kind::Arena => "arena/home_label.png",
         Kind::Supreme => "supreme_arena/label.png",
@@ -191,7 +192,7 @@ fn off_season_text(lines: &[TextLine]) -> bool {
     status && disabled_action
 }
 
-fn supreme_off_season(screen: &GrayImage) -> Result<bool, String> {
+fn supreme_off_season(screen: &GrayImage) -> Result<bool, ActionError> {
     if find(
         screen,
         "supreme_arena/label.png",
@@ -209,7 +210,11 @@ fn supreme_off_season(screen: &GrayImage) -> Result<bool, String> {
     Ok(off_season_text(&ocr::recognize(screen)?))
 }
 
-fn skip_off_season(serial: &str, kind: Kind, log: &mut impl FnMut(String)) -> Result<bool, String> {
+fn skip_off_season(
+    serial: &str,
+    kind: Kind,
+    log: &mut impl FnMut(String),
+) -> Result<bool, ActionError> {
     if kind == Kind::Supreme && supreme_off_season(&vision::screenshot(serial)?.0)? {
         log(text(
             "Supreme Arena is in Off Season. Skipping this step.",
@@ -230,7 +235,7 @@ fn attempt_count(value: &str) -> Option<u32> {
     remaining.parse().ok()
 }
 
-fn challenge_attempts(screen: &GrayImage) -> Result<Option<u32>, String> {
+fn challenge_attempts(screen: &GrayImage) -> Result<Option<u32>, ActionError> {
     // Read only the ratio beside the ticket. Matching the whole badge made
     // the shared ticket and "/1" pixels outweigh the difference between 0 and 5.
     let padded = GrayImage::from_fn(106, 83, |x, y| {
@@ -252,7 +257,7 @@ pub(super) fn navigate(
     kind: Kind,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     common::navigate_to_battle_modes(serial, cancelled, log)?;
     for swipe in 0..=4 {
@@ -287,7 +292,8 @@ pub(super) fn navigate(
         "{} is unavailable in Battle Modes.",
         "{} ist in den Kampfmodi nicht verfügbar.",
         kind.mode().label()
-    ))
+    )
+    .into())
 }
 
 fn dismiss_notice(
@@ -295,7 +301,7 @@ fn dismiss_notice(
     kind: Kind,
     screen: &GrayImage,
     size: (u32, u32),
-) -> Result<bool, String> {
+) -> Result<bool, ActionError> {
     if kind == Kind::Supreme && ranking_rewards(&ocr::recognize(screen)?) {
         // This is the reward table, not the post-battle result or a claim.
         // Leave it with Back instead of opening Daily Rewards again.
@@ -343,7 +349,7 @@ fn wait_home(
     serial: &str,
     kind: Kind,
     cancelled: &AtomicBool,
-) -> Result<(GrayImage, (u32, u32)), String> {
+) -> Result<(GrayImage, (u32, u32)), ActionError> {
     for _ in 0..12 {
         vision::ensure_not_cancelled(cancelled)?;
         let (screen, size) = vision::screenshot(serial)?;
@@ -370,7 +376,8 @@ fn wait_home(
             "{}-Übersicht nicht erkannt.",
             kind.mode().label()
         ),
-    ))
+    )
+    .into())
 }
 
 /// Mirrors the original Spend + diamond + 0 prompt without treating 10/20 as 0.
@@ -391,7 +398,7 @@ fn zero_cost(lines: &[TextLine]) -> bool {
     costs.len() == 1 && costs[0] == ["0"]
 }
 
-fn verified_free_offer(screen: &GrayImage) -> Result<bool, String> {
+fn verified_free_offer(screen: &GrayImage) -> Result<bool, ActionError> {
     let Some(price) = vision::find_template(screen, "arena/buy_free.png", popup(), 0.95)? else {
         return Ok(false);
     };
@@ -496,7 +503,7 @@ fn result_prompt(lines: &[TextLine], outcome: BattleOutcome) -> Option<(u32, u32
 fn battle_result(
     screen: &GrayImage,
     seen_battle: bool,
-) -> Result<Option<(BattleOutcome, (u32, u32))>, String> {
+) -> Result<Option<(BattleOutcome, (u32, u32))>, ActionError> {
     let lines = ocr::recognize(screen)?;
     let outcome = result_outcome(&lines);
     if let Some(close) = result_prompt(&lines, outcome) {
@@ -577,7 +584,7 @@ fn supreme_opponent_heading(lines: &[TextLine]) -> bool {
     ) && has("refresh", footer())
 }
 
-fn supreme_selection_view(screen: &GrayImage) -> Result<SupremeSelectionView, String> {
+fn supreme_selection_view(screen: &GrayImage) -> Result<SupremeSelectionView, ActionError> {
     if supreme_off_season(screen)? {
         return Ok(SupremeSelectionView::Exhausted);
     }
@@ -621,9 +628,9 @@ fn supreme_selection_view(screen: &GrayImage) -> Result<SupremeSelectionView, St
     Ok(SupremeSelectionView::Unknown)
 }
 trait Driver {
-    fn choose(&mut self) -> Result<Choice, String>;
-    fn battle(&mut self) -> Result<BattleOutcome, String>;
-    fn free_attempt(&mut self) -> Result<bool, String>;
+    fn choose(&mut self) -> Result<Choice, ActionError>;
+    fn battle(&mut self) -> Result<BattleOutcome, ActionError>;
+    fn free_attempt(&mut self) -> Result<bool, ActionError>;
     fn checkpoint(&mut self, _: Cursor) {}
 }
 
@@ -641,7 +648,7 @@ fn attempts(
     driver: &mut impl Driver,
     settings: Settings,
     cancelled: &AtomicBool,
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     attempts_from(driver, settings, &mut Cursor::default(), cancelled)
 }
 
@@ -650,7 +657,7 @@ fn attempts_from(
     settings: Settings,
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     let mut wins = 0;
     while !cursor.initial_done && cursor.initial < settings.attempts() {
         vision::ensure_not_cancelled(cancelled)?;
@@ -667,7 +674,7 @@ fn attempts_from(
         match driver.battle() {
             Ok(BattleOutcome::Won) => wins += 1,
             Err(error)
-                if error == super::BATTLE_RESULT_TIMEOUT
+                if error == ActionError::BattleResultTimeout
                     && cursor.initial == settings.attempts()
                     && cursor.claims >= settings.free_claims() =>
             {
@@ -705,7 +712,7 @@ fn attempts_from(
         match driver.battle() {
             Ok(BattleOutcome::Won) => wins += 1,
             Err(error)
-                if error == super::BATTLE_RESULT_TIMEOUT
+                if error == ActionError::BattleResultTimeout
                     && cursor.claims >= settings.free_claims() =>
             {
                 return Ok(wins);
@@ -726,7 +733,7 @@ struct AdbDriver<'a, P> {
 }
 
 impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
-    fn choose_supreme(&mut self) -> Result<Choice, String> {
+    fn choose_supreme(&mut self) -> Result<Choice, ActionError> {
         let mut sent = [false; 3];
         for _ in 0..24 {
             vision::ensure_not_cancelled(self.cancelled)?;
@@ -777,10 +784,11 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                 "Supreme Arena konnte die Aufstellung des ausgewählten Gegners nicht öffnen.",
             )
             .into(),
-        ))
+        )
+        .into())
     }
 
-    fn prepare_supreme_battle(&mut self) -> Result<Option<(Match, (u32, u32))>, String> {
+    fn prepare_supreme_battle(&mut self) -> Result<Option<(Match, (u32, u32))>, ActionError> {
         // Continue may resume any of the three formations. Advance only while
         // Next is actually present; an existing Battle screen needs no Next taps.
         let mut advances = 0;
@@ -821,10 +829,11 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                 "Der Supreme-Arena-Kampfbutton wurde nach der Teamvorbereitung nicht erreicht.",
             )
             .into(),
-        ))
+        )
+        .into())
     }
 
-    fn wait_control(&self, path: &str, roi: Rect) -> Result<(Match, (u32, u32)), String> {
+    fn wait_control(&self, path: &str, roi: Rect) -> Result<(Match, (u32, u32)), ActionError> {
         for _ in 0..14 {
             vision::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = vision::screenshot(self.serial)?;
@@ -847,7 +856,8 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                 "Arena control {path} was not detected.",
                 "Arena-Steuerelement {path} nicht erkannt."
             ),
-        ))
+        )
+        .into())
     }
 
     fn complete_battle(
@@ -855,7 +865,7 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
         mut outcome: BattleOutcome,
         close: (u32, u32),
         size: (u32, u32),
-    ) -> Result<BattleOutcome, String> {
+    ) -> Result<BattleOutcome, ActionError> {
         let finish = (|| {
             vision::ensure_not_cancelled(self.cancelled)?;
             adb::tap_game_point(self.serial, close.0, close.1, size).map_err(|e| e.to_string())?;
@@ -869,7 +879,7 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
         finish.map(|()| outcome)
     }
 
-    fn finish_result(&self, outcome: &mut BattleOutcome) -> Result<(), String> {
+    fn finish_result(&self, outcome: &mut BattleOutcome) -> Result<(), ActionError> {
         for _ in 0..8 {
             vision::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = vision::screenshot(self.serial)?;
@@ -906,7 +916,8 @@ impl<P: FnMut(ActivityEvent)> AdbDriver<'_, P> {
                 "Die Arena-Ergebnisansicht ließ sich nicht schließen.",
             )
             .into(),
-        ))
+        )
+        .into())
     }
 }
 
@@ -914,7 +925,7 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
     fn checkpoint(&mut self, cursor: Cursor) {
         super::recovery::save_arena_cursor(self.serial, cursor);
     }
-    fn choose(&mut self) -> Result<Choice, String> {
+    fn choose(&mut self) -> Result<Choice, ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         let kind = self.settings.kind();
         if kind == Kind::Supreme {
@@ -972,10 +983,11 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
                 "Arena-Gegnerauswahl nicht erkannt.",
             )
             .into(),
-        ))
+        )
+        .into())
     }
 
-    fn battle(&mut self) -> Result<BattleOutcome, String> {
+    fn battle(&mut self) -> Result<BattleOutcome, ActionError> {
         let kind = self.settings.kind();
         let (battle, size) = if kind == Kind::Supreme {
             let Some(control) = self.prepare_supreme_battle()? else {
@@ -1031,10 +1043,10 @@ impl<P: FnMut(ActivityEvent)> Driver for AdbDriver<'_, P> {
             vision::settle_cancellable(self.cancelled)?;
         }
         (self.progress)(ActivityEvent::BattleFinished(mode, BattleOutcome::Unclear));
-        Err(super::BATTLE_RESULT_TIMEOUT.into())
+        Err(ActionError::BattleResultTimeout)
     }
 
-    fn free_attempt(&mut self) -> Result<bool, String> {
+    fn free_attempt(&mut self) -> Result<bool, ActionError> {
         if self.settings.kind() != Kind::Arena {
             return Ok(false);
         }
@@ -1096,7 +1108,7 @@ pub fn run(
     cancelled: &AtomicBool,
     mut log: impl FnMut(String),
     mut progress: impl FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     // Fail before any ticket can be used if local OCR support is unavailable.
     ocr::recognize(&GrayImage::new(128, 64))?;
@@ -1216,6 +1228,7 @@ mod tests {
                         |m| panic!("Off Season must not trigger recovery: {m}"),
                         |e| events.push(e),
                     )
+                    .map_err(String::from)
                 } else {
                     // Confirm that Daily reaches its next step without claiming
                     // anything on the user's account during this diagnostic.
@@ -1570,7 +1583,7 @@ mod tests {
         timed_out: bool,
     }
     impl Driver for Fake {
-        fn choose(&mut self) -> Result<Choice, String> {
+        fn choose(&mut self) -> Result<Choice, ActionError> {
             if self.choose_failed {
                 return Err("crashed during opponent selection".into());
             }
@@ -1580,18 +1593,18 @@ mod tests {
                 Choice::Exhausted
             })
         }
-        fn battle(&mut self) -> Result<BattleOutcome, String> {
+        fn battle(&mut self) -> Result<BattleOutcome, ActionError> {
             if self.failed {
                 return Err("unrecognized result".into());
             }
             self.available -= 1;
             self.battles += 1;
             if self.timed_out {
-                return Err(super::super::BATTLE_RESULT_TIMEOUT.into());
+                return Err(ActionError::BattleResultTimeout);
             }
             Ok(BattleOutcome::Won)
         }
-        fn free_attempt(&mut self) -> Result<bool, String> {
+        fn free_attempt(&mut self) -> Result<bool, ActionError> {
             self.claims += 1;
             if self.free == 0 {
                 return Ok(false);
@@ -1617,7 +1630,7 @@ mod tests {
         let cancelled = AtomicBool::new(false);
         assert_eq!(
             attempts_from(&mut driver, settings, &mut cursor, &cancelled).unwrap_err(),
-            super::super::BATTLE_RESULT_TIMEOUT
+            ActionError::BattleResultTimeout
         );
         assert_eq!(cursor.initial, settings.attempts() - 1);
         assert_eq!(

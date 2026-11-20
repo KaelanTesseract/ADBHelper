@@ -1,5 +1,6 @@
 //! Dream Realm challenges and the previous day's ranking reward.
-use super::{afk_stages as common, ocr, BATTLE_RESULT_TIMEOUT, BATTLE_TIMEOUT_SECONDS};
+use super::{afk_stages as common, ocr, BATTLE_TIMEOUT_SECONDS};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, BattleOutcome, GameMode},
@@ -61,16 +62,17 @@ impl Default for Settings {
     }
 }
 
-pub fn load_battle_limit() -> Result<u32, String> {
+pub fn load_battle_limit() -> Result<u32, ActionError> {
     let path = crate::settings::file(BATTLE_LIMIT_FILE).map_err(|error| error.to_string())?;
     match std::fs::read_to_string(path) {
         Ok(value) => value
             .trim()
             .parse::<u32>()
             .map(|limit| limit.clamp(1, MAX_BATTLES))
-            .map_err(|error| error.to_string()),
+            .map_err(|error| error.to_string())
+            .map_err(ActionError::from),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(DEFAULT_BATTLES),
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(error.to_string().into()),
     }
 }
 
@@ -94,7 +96,7 @@ struct Frame {
 }
 
 impl Frame {
-    fn read(serial: &str, cancelled: &AtomicBool) -> Result<Self, String> {
+    fn read(serial: &str, cancelled: &AtomicBool) -> Result<Self, ActionError> {
         vision::ensure_not_cancelled(cancelled)?;
         let (screen, size) = vision::screenshot(serial)?;
         let lines = ocr::recognize(&screen)?;
@@ -110,7 +112,7 @@ impl Frame {
         path: &str,
         roi: vision::Rect,
         confidence: f32,
-    ) -> Result<Option<(u32, u32)>, String> {
+    ) -> Result<Option<(u32, u32)>, ActionError> {
         Ok(vision::find_template(&self.screen, path, roi, confidence)?.map(vision::Match::center))
     }
 
@@ -126,12 +128,19 @@ impl Frame {
         })
     }
 
-    fn tap(&self, serial: &str, point: (u32, u32), cancelled: &AtomicBool) -> Result<(), String> {
+    fn tap(
+        &self,
+        serial: &str,
+        point: (u32, u32),
+        cancelled: &AtomicBool,
+    ) -> Result<(), ActionError> {
         vision::ensure_not_cancelled(cancelled)?;
-        adb::tap_game_point(serial, point.0, point.1, self.size).map_err(|e| e.to_string())
+        adb::tap_game_point(serial, point.0, point.1, self.size)
+            .map_err(|e| e.to_string())
+            .map_err(ActionError::from)
     }
 
-    fn home(&self) -> Result<Option<(u32, u32)>, String> {
+    fn home(&self) -> Result<Option<(u32, u32)>, ActionError> {
         // The boss title changes daily. The Monsters control distinguishes
         // the overview from other screens with a Rankings icon.
         if self
@@ -143,7 +152,7 @@ impl Frame {
         self.point("dream_realm/dr_ranking.png", RANKINGS, 0.82)
     }
 
-    fn ranked(&self) -> Result<bool, String> {
+    fn ranked(&self) -> Result<bool, ActionError> {
         let badge = region(75, 1310, 350, 112);
         Ok(self.label(badge, |s| s == "serverranking").is_some()
             || self
@@ -151,7 +160,7 @@ impl Frame {
                 .is_some())
     }
 
-    fn remaining(&self) -> Result<Option<u32>, String> {
+    fn remaining(&self) -> Result<Option<u32>, ActionError> {
         let counts: Vec<_> = self
             .lines
             .iter()
@@ -181,7 +190,7 @@ impl Frame {
                 .is_some()
     }
 
-    fn ranking_gift(&self) -> Result<bool, String> {
+    fn ranking_gift(&self) -> Result<bool, ActionError> {
         Ok(self
             .point(
                 "dailies/hamburger/rewards_available.png",
@@ -191,11 +200,11 @@ impl Frame {
             .is_some())
     }
 
-    fn rankings_back(&self) -> Result<Option<(u32, u32)>, String> {
+    fn rankings_back(&self) -> Result<Option<(u32, u32)>, ActionError> {
         self.point("navigation/resonating_hall_back.png", RANKING_BACK, 0.86)
     }
 
-    fn close_prompt(&self) -> Result<Option<(u32, u32)>, String> {
+    fn close_prompt(&self) -> Result<Option<(u32, u32)>, ActionError> {
         if let Some(point) = self.label(CLOSE, |s| s == "taptoclose") {
             return Ok(Some(point));
         }
@@ -208,7 +217,7 @@ impl Frame {
         .map(|(_, found)| found.center()))
     }
 
-    fn reward_close(&self, ranking: bool) -> Result<Option<(u32, u32)>, String> {
+    fn reward_close(&self, ranking: bool) -> Result<Option<(u32, u32)>, ActionError> {
         let verified = if ranking {
             self.label(region(20, 315, 1040, 350), |s| {
                 s.contains("rewardsobtained")
@@ -227,7 +236,7 @@ impl Frame {
         Ok(Some(self.close_prompt()?.unwrap_or((540, 1815))))
     }
 
-    fn battle_summary(&self) -> Result<bool, String> {
+    fn battle_summary(&self) -> Result<bool, ActionError> {
         let details = self
             .label(region(120, 1310, 590, 130), |s| s.contains("damagedealt"))
             .is_some()
@@ -246,7 +255,7 @@ impl Frame {
                 .is_some())
     }
 
-    fn formation_control(&self) -> Result<Option<((u32, u32), bool)>, String> {
+    fn formation_control(&self) -> Result<Option<((u32, u32), bool)>, ActionError> {
         if self
             .point("battle/records.png", region(205, 1695, 200, 190), 0.82)?
             .is_none()
@@ -265,7 +274,7 @@ impl Frame {
         Ok(Some((skip.unwrap_or(battle), skip.is_some())))
     }
 
-    fn gold_offer(&self) -> Result<Option<GoldOffer>, String> {
+    fn gold_offer(&self) -> Result<Option<GoldOffer>, ActionError> {
         if self
             .label(region(250, 920, 580, 64), |s| s == "realmchallengeattempt")
             .is_none()
@@ -313,7 +322,7 @@ impl Frame {
         }))
     }
 
-    fn battle_button(&self) -> Result<(u32, u32), String> {
+    fn battle_button(&self) -> Result<(u32, u32), ActionError> {
         self.point("battle/battle.png", FOOTER, 0.8)?
             .ok_or_else(|| {
                 text(
@@ -322,6 +331,7 @@ impl Frame {
                 )
                 .to_owned()
             })
+            .map_err(ActionError::from)
     }
 }
 
@@ -351,7 +361,7 @@ fn purchase_chance(
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<Option<Frame>, String> {
+) -> Result<Option<Frame>, ActionError> {
     home.tap(serial, home.battle_button()?, cancelled)?;
     let start = Instant::now();
     while start.elapsed() < short_wait() {
@@ -393,7 +403,7 @@ fn purchase_chance(
                 return Ok(Some(next));
             }
         }
-        return Err(unconfirmed_purchase());
+        return Err(unconfirmed_purchase().into());
     }
     Err(text(
         "A Dream Realm offer with a verified Gold price was not found.",
@@ -410,7 +420,7 @@ fn unconfirmed_purchase() -> String {
     .into()
 }
 
-fn wait_home(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
+fn wait_home(serial: &str, cancelled: &AtomicBool) -> Result<Frame, ActionError> {
     let start = Instant::now();
     while start.elapsed() < short_wait() {
         let frame = Frame::read(serial, cancelled)?;
@@ -430,7 +440,7 @@ pub(super) fn open_rankings_for_scan(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     if Frame::read(serial, cancelled)?.rankings() {
         return Ok(());
     }
@@ -459,7 +469,7 @@ fn navigate(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<Frame, String> {
+) -> Result<Frame, ActionError> {
     let frame = Frame::read(serial, cancelled)?;
     if frame.home()?.is_some() {
         return Ok(frame);
@@ -484,7 +494,7 @@ fn return_from_rankings(
     serial: &str,
     mut frame: Frame,
     cancelled: &AtomicBool,
-) -> Result<Frame, String> {
+) -> Result<Frame, ActionError> {
     let start = Instant::now();
     while start.elapsed() < short_wait() {
         if let Some(close) = frame.reward_close(true)? {
@@ -515,7 +525,7 @@ fn claim_yesterday(
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(ActivityEvent),
-) -> Result<Frame, String> {
+) -> Result<Frame, ActionError> {
     let point = home.home()?.ok_or("Dream Realm rankings entry missing.")?;
     let gift_available = home.ranking_gift()?;
     home.tap(serial, point, cancelled)?;
@@ -545,7 +555,10 @@ fn claim_yesterday(
     .into())
 }
 
-fn formation(serial: &str, cancelled: &AtomicBool) -> Result<(Frame, (u32, u32), bool), String> {
+fn formation(
+    serial: &str,
+    cancelled: &AtomicBool,
+) -> Result<(Frame, (u32, u32), bool), ActionError> {
     let start = Instant::now();
     while start.elapsed() < short_wait() {
         vision::settle_cancellable(cancelled)?;
@@ -566,7 +579,7 @@ fn finish_battle(
     cursor: &mut Cursor,
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(ActivityEvent),
-) -> Result<Frame, String> {
+) -> Result<Frame, ActionError> {
     let start = Instant::now();
     let mut scored = false;
     let mut skip_sent = false;
@@ -611,7 +624,7 @@ fn finish_battle(
             }
         }
     }
-    Err(BATTLE_RESULT_TIMEOUT.into())
+    Err(ActionError::BattleResultTimeout)
 }
 
 pub fn run(
@@ -621,7 +634,7 @@ pub fn run(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     progress: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     vision::ensure_not_cancelled(cancelled)?;
     let limit = settings.max_battles.clamp(1, MAX_BATTLES);
     if cursor.launched >= limit {
@@ -632,7 +645,7 @@ pub fn run(
     progress(ActivityEvent::ModeEntered(MODE));
     if cursor.confirming_gold {
         if !home.remaining()?.is_some_and(|n| n > 0) {
-            return Err(unconfirmed_purchase());
+            return Err(unconfirmed_purchase().into());
         }
         cursor.confirming_gold = false;
     }

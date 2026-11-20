@@ -1,5 +1,6 @@
 //! Template images embedded in the executable, decoded once and cached.
 
+use crate::afk_journey::error::ActionError;
 use crate::localization::{format_text, text};
 use image::GrayImage;
 use std::sync::{Mutex, OnceLock};
@@ -9,16 +10,18 @@ mod generated {
 }
 
 /// Template bytes embedded by `build.rs` for every name used in `src/`.
-fn embedded_template(relative_path: &str) -> Result<&'static [u8], String> {
-    generated::embedded(relative_path).ok_or_else(|| {
-        format_text!(
-            "Template is not embedded in this build: {relative_path}",
-            "Die Vorlage fehlt in dieser Version: {relative_path}"
-        )
-    })
+fn embedded_template(relative_path: &str) -> Result<&'static [u8], ActionError> {
+    generated::embedded(relative_path)
+        .ok_or_else(|| {
+            format_text!(
+                "Template is not embedded in this build: {relative_path}",
+                "Die Vorlage fehlt in dieser Version: {relative_path}"
+            )
+        })
+        .map_err(ActionError::from)
 }
 
-pub(in crate::afk_journey) fn load_template(relative_path: &str) -> Result<GrayImage, String> {
+pub(in crate::afk_journey) fn load_template(relative_path: &str) -> Result<GrayImage, ActionError> {
     static CACHE: OnceLock<Mutex<std::collections::HashMap<String, GrayImage>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     if let Some(image) = cache

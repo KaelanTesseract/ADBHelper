@@ -1,4 +1,5 @@
 use super::{client, crop, text, ActivityEvent, Driver, GameMode, Screen};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::progression::{hall, key};
 use crate::afk_journey::vision;
 use serde_json::Value;
@@ -6,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const TRACKER: &str = "https://afkj-tracker.vercel.app/data/";
 
-fn reference(name: &str) -> Result<Value, String> {
+fn reference(name: &str) -> Result<Value, ActionError> {
     client()
         .get(format!("{TRACKER}{name}"))
         .call()
@@ -18,6 +19,7 @@ fn reference(name: &str) -> Result<Value, String> {
                 .read_json()
         })
         .map_err(|error| format!("AFKJ Tracker · {error}"))
+        .map_err(ActionError::from)
 }
 
 fn ascension_label(label: &str) -> Option<&'static str> {
@@ -45,7 +47,7 @@ fn ascension_label(label: &str) -> Option<&'static str> {
     })
 }
 
-fn ascension(screen: &Screen) -> Result<Option<&'static str>, String> {
+fn ascension(screen: &Screen) -> Result<Option<&'static str>, ActionError> {
     for (asset, label) in [
         ("progression/scan_crown.png", "Paragon 4"),
         ("progression/scan_paragon_three.png", "Paragon 3"),
@@ -82,7 +84,7 @@ fn weapon_level(label: &str) -> Option<u32> {
     digits.parse().ok().filter(|level| *level <= 40)
 }
 
-fn exclusive_level(screen: &Screen) -> Result<Option<u32>, String> {
+fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionError> {
     // Only the weapon badge occupies this strip. The surrounding artwork,
     // upgrade arrow, and the neighboring level label can confuse OCR.
     let mut badge = image::imageops::crop_imm(&screen.gray, 82, 1514, 69, 31).to_image();
@@ -119,8 +121,8 @@ pub(super) fn scan(
     driver: &Driver<'_>,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-    save: &mut impl FnMut(&str, &Value) -> Result<(), String>,
-) -> Result<u32, String> {
+    save: &mut impl FnMut(&str, &Value) -> Result<(), ActionError>,
+) -> Result<u32, ActionError> {
     let mut backup = reference("heroes-template.json")?;
     let aliases: BTreeMap<String, String> = reference("hero_synonyms.json")
         .ok()
@@ -206,7 +208,7 @@ pub(super) fn scan(
         return Err(crate::localization::format_text!(
             "Partial roster scan. {unresolved} profiles or weapon levels could not be verified. Review the export before importing.",
             "Teilweiser Kaderscan. {unresolved} Profile oder Waffenstufen konnten nicht bestätigt werden. Prüfe den Export vor dem Import."
-        ));
+        ).into());
     }
     if count == 0 {
         return Err(text(

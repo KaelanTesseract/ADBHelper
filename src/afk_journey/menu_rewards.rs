@@ -1,4 +1,5 @@
 use super::{afk_stages as common, ocr, phase_rewards};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::{
     activity::{ActivityEvent, GameMode},
@@ -56,7 +57,7 @@ fn normalized(value: &str) -> String {
 }
 
 impl Frame {
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> Result<Self, ActionError> {
         let (gray, size) = vision::normalize_screenshot(bytes)?;
         let color = image::load_from_memory(bytes)
             .map_err(|error| error.to_string())?
@@ -99,7 +100,7 @@ impl Frame {
             .map(ocr::TextLine::center)
     }
 
-    fn main_menu_button(&self) -> Result<Option<Point>, String> {
+    fn main_menu_button(&self) -> Result<Option<Point>, ActionError> {
         Ok(vision::find_template(
             &self.gray,
             "navigation/hamburger_menu.png",
@@ -194,7 +195,7 @@ impl Frame {
         })
     }
 
-    fn pass_reward_tab(&self) -> Result<Option<Point>, String> {
+    fn pass_reward_tab(&self) -> Result<Option<Point>, ActionError> {
         let badge = vision::find_template(
             &self.gray,
             "dailies/hamburger/rewards_available.png",
@@ -263,7 +264,7 @@ struct Session<'a> {
 }
 
 impl Session<'_> {
-    fn read(&self) -> Result<Frame, String> {
+    fn read(&self) -> Result<Frame, ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         let frame =
             Frame::decode(&adb::screenshot(self.serial).map_err(|error| error.to_string())?)?;
@@ -271,26 +272,26 @@ impl Session<'_> {
         Ok(frame)
     }
 
-    fn tap(&self, frame: &Frame, (x, y): Point) -> Result<(), String> {
+    fn tap(&self, frame: &Frame, (x, y): Point) -> Result<(), ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         adb::tap_game_point(self.serial, x, y, frame.size).map_err(|error| error.to_string())?;
         vision::settle_cancellable(self.cancelled)
     }
 
-    fn back(&self) -> Result<(), String> {
+    fn back(&self) -> Result<(), ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         adb::press_back(self.serial).map_err(|error| error.to_string())?;
         vision::settle_cancellable(self.cancelled)
     }
 
-    fn open_main_menu(&self, log: &mut impl FnMut(String)) -> Result<(), String> {
+    fn open_main_menu(&self, log: &mut impl FnMut(String)) -> Result<(), ActionError> {
         let size = common::navigate_to_current_overview(self.serial, self.cancelled, log)?;
         vision::ensure_not_cancelled(self.cancelled)?;
         adb::tap_game_point(self.serial, 990, 1840, size).map_err(|error| error.to_string())?;
         vision::settle_cancellable(self.cancelled)
     }
 
-    fn leave_reward_page(&self, frame: &Frame) -> Result<(), String> {
+    fn leave_reward_page(&self, frame: &Frame) -> Result<(), ActionError> {
         let back = vision::find_template(
             &frame.gray,
             "back.png",
@@ -308,7 +309,7 @@ impl Session<'_> {
         }
     }
 
-    fn reset_pass_tabs(&self, frame: &Frame) -> Result<Frame, String> {
+    fn reset_pass_tabs(&self, frame: &Frame) -> Result<Frame, ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         adb::swipe_game_points(self.serial, (270, 1805), (1010, 1805), frame.size, 400)
             .map_err(|error| error.to_string())?;
@@ -323,7 +324,7 @@ impl Session<'_> {
             })
     }
 
-    fn wait_for(&self, accept: impl Fn(&Frame) -> bool) -> Result<Option<Frame>, String> {
+    fn wait_for(&self, accept: impl Fn(&Frame) -> bool) -> Result<Option<Frame>, ActionError> {
         for _ in 0..8 {
             let frame = self.read()?;
             if accept(&frame) {
@@ -334,7 +335,7 @@ impl Session<'_> {
         Ok(None)
     }
 
-    fn open(&self, target: Page, log: &mut impl FnMut(String)) -> Result<Frame, String> {
+    fn open(&self, target: Page, log: &mut impl FnMut(String)) -> Result<Frame, ActionError> {
         let mut frame = self.read()?;
         if let Some(close) = frame.receipt_close() {
             self.tap(&frame, close)?;
@@ -377,7 +378,7 @@ impl Session<'_> {
         .into())
     }
 
-    fn wait_for_page_change(&self, previous: Option<Page>) -> Result<Option<Frame>, String> {
+    fn wait_for_page_change(&self, previous: Option<Page>) -> Result<Option<Frame>, ActionError> {
         for _ in 0..8 {
             let frame = self.read()?;
             let page = frame.page();
@@ -401,7 +402,7 @@ impl Session<'_> {
         page: Page,
         milestone: bool,
         report: &mut impl FnMut(),
-    ) -> Result<Frame, String> {
+    ) -> Result<Frame, ActionError> {
         let mut missing = false;
         for _ in 0..8 {
             let frame = self.read()?;
@@ -572,7 +573,7 @@ pub(super) fn emporium_already_purchased(
     serial: &str,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
-) -> Result<bool, String> {
+) -> Result<bool, ActionError> {
     let session = Session { serial, cancelled };
     let mut frame = session.open(Page::Daily, log)?;
     // The quest list remembers its scroll position. Completed rows may be
@@ -604,7 +605,7 @@ pub fn run(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     let page = match mode {
         GameMode::FriendRewards => Page::Friends,
         GameMode::MailRewards => Page::Mail,

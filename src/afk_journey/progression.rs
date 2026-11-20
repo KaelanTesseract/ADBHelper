@@ -1,4 +1,5 @@
 //! Optional hero, equipment and shopping steps in the Daily routine.
+use crate::afk_journey::error::ActionError;
 mod hall;
 pub mod scanner;
 mod shop;
@@ -42,7 +43,7 @@ fn key(value: &str) -> String {
 }
 
 impl Screen {
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> Result<Self, ActionError> {
         let (gray, size) = vision::normalize_screenshot(bytes)?;
         let color = image::load_from_memory(bytes)
             .map_err(|error| error.to_string())?
@@ -84,7 +85,7 @@ impl Screen {
         x: Range<u32>,
         y: Range<u32>,
         confidence: f32,
-    ) -> Result<Option<Point>, String> {
+    ) -> Result<Option<Point>, ActionError> {
         vision::find_template(
             &self.gray,
             path,
@@ -123,7 +124,7 @@ struct Driver<'a> {
 }
 
 impl Driver<'_> {
-    fn read(&self) -> Result<Screen, String> {
+    fn read(&self) -> Result<Screen, ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         let bytes = adb::screenshot(self.serial).map_err(|error| error.to_string())?;
         let screen = Screen::decode(&bytes)?;
@@ -131,7 +132,10 @@ impl Driver<'_> {
         Ok(screen)
     }
 
-    fn wait_for(&self, mut ready: impl FnMut(&Screen) -> bool) -> Result<Option<Screen>, String> {
+    fn wait_for(
+        &self,
+        mut ready: impl FnMut(&Screen) -> bool,
+    ) -> Result<Option<Screen>, ActionError> {
         for _ in 0..8 {
             let screen = self.read()?;
             if ready(&screen) {
@@ -142,23 +146,23 @@ impl Driver<'_> {
         Ok(None)
     }
 
-    fn tap_at(&self, size: Point, (x, y): Point) -> Result<(), String> {
+    fn tap_at(&self, size: Point, (x, y): Point) -> Result<(), ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         adb::tap_game_point(self.serial, x, y, size).map_err(|error| error.to_string())?;
         vision::settle_cancellable(self.cancelled)
     }
 
-    fn tap(&self, screen: &Screen, point: Point) -> Result<(), String> {
+    fn tap(&self, screen: &Screen, point: Point) -> Result<(), ActionError> {
         self.tap_at(screen.size, point)
     }
 
-    fn back(&self) -> Result<(), String> {
+    fn back(&self) -> Result<(), ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         adb::press_back(self.serial).map_err(|error| error.to_string())?;
         vision::settle_cancellable(self.cancelled)
     }
 
-    fn overview_tab(&self, x: u32, log: &mut impl FnMut(String)) -> Result<(), String> {
+    fn overview_tab(&self, x: u32, log: &mut impl FnMut(String)) -> Result<(), ActionError> {
         let size = common::navigate_to_current_overview(self.serial, self.cancelled, log)?;
         self.tap_at(size, (x, 1830))
     }
@@ -194,7 +198,7 @@ pub fn run(
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, String> {
+) -> Result<u32, ActionError> {
     if state.pending {
         return Err(text(
             "The previous operation could not be confirmed. Check its result in the game.",
@@ -221,7 +225,8 @@ pub fn run(
                 "Invalid progression step {}",
                 "Ungültiger Fortschrittsschritt {}",
                 mode.label()
-            ))
+            )
+            .into())
         }
     }
     Ok(progress.count())

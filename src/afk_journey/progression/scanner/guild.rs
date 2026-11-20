@@ -1,4 +1,5 @@
 use super::{client, crop, text, ActivityEvent, Driver, GameMode, GuildSettings, Screen};
+use crate::afk_journey::error::ActionError;
 use crate::afk_journey::vision;
 use crate::afk_journey::{arena, dream_realm, phase_rewards};
 use serde::Deserialize;
@@ -30,7 +31,7 @@ struct Member {
     id: Option<Value>,
 }
 
-fn members_url(input: &str) -> Result<ureq::http::Uri, String> {
+fn members_url(input: &str) -> Result<ureq::http::Uri, ActionError> {
     let uri: ureq::http::Uri = input.trim().parse().map_err(|_| invalid_endpoint())?;
     let project = uri
         .host()
@@ -45,7 +46,7 @@ fn members_url(input: &str) -> Result<ureq::http::Uri, String> {
             .authority()
             .is_some_and(|authority| authority.as_str().contains('@'))
     {
-        return Err(invalid_endpoint());
+        return Err(invalid_endpoint().into());
     }
     Ok(uri)
 }
@@ -88,7 +89,7 @@ pub(crate) fn split_access(input: &str) -> (String, Option<String>) {
     (url, key)
 }
 
-fn remote_members(input: &str, api_key: &str) -> Result<Vec<Member>, String> {
+fn remote_members(input: &str, api_key: &str) -> Result<Vec<Member>, ActionError> {
     let (url, pasted_key) = split_access(input);
     let uri = members_url(&url)?;
     let api_key = Some(api_key.trim())
@@ -232,7 +233,7 @@ fn clean_name(label: &str) -> Option<String> {
     .then_some(name)
 }
 
-fn read_members(screen: &Screen) -> Result<Vec<(String, u32)>, String> {
+fn read_members(screen: &Screen) -> Result<Vec<(String, u32)>, ActionError> {
     use image::{GrayImage, Luma};
 
     let scores = crop(screen, 752, 640, 126, 960)?;
@@ -274,7 +275,7 @@ fn read_members(screen: &Screen) -> Result<Vec<(String, u32)>, String> {
     Ok(rows)
 }
 
-fn open_members(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, String> {
+fn open_members(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, ActionError> {
     let screen = driver.read()?;
     if member_header(&screen) {
         return Ok(screen);
@@ -294,11 +295,14 @@ fn open_members(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Scr
         }
         if let Some(entry) = screen.point(480..1070, 120..990, "members") {
             driver.tap(&screen, entry)?;
-            return driver.wait_for(member_header)?.ok_or_else(member_error);
+            return driver
+                .wait_for(member_header)?
+                .ok_or_else(member_error)
+                .map_err(ActionError::from);
         }
         swipe(driver, &screen, (700, 600), (300, 1200))?;
     }
-    Err(member_error())
+    Err(member_error().into())
 }
 
 fn member_error() -> String {
@@ -314,7 +318,7 @@ fn swipe(
     screen: &Screen,
     start: (u32, u32),
     end: (u32, u32),
-) -> Result<(), String> {
+) -> Result<(), ActionError> {
     vision::ensure_not_cancelled(driver.cancelled)?;
     crate::adb::swipe_game_points(driver.serial, start, end, screen.size, 650)
         .map_err(|error| error.to_string())?;
@@ -346,7 +350,7 @@ fn activity_export(
     driver: &Driver<'_>,
     roster: &[Member],
     log: &mut impl FnMut(String),
-) -> Result<ActivityScan, String> {
+) -> Result<ActivityScan, ActionError> {
     let mut screen = open_members(driver, log)?;
     // A manually opened Members list can already be scrolled down.
     let mut first_page = read_members(&screen)?;
@@ -354,7 +358,7 @@ fn activity_export(
         swipe(driver, &screen, (960, 776), (960, 1480))?;
         let frame = driver.read()?;
         if !member_header(&frame) {
-            return Err(member_error());
+            return Err(member_error().into());
         }
         let page = read_members(&frame)?;
         screen = frame;
@@ -464,7 +468,7 @@ fn open_rankings(
     driver: &Driver<'_>,
     kind: Rankings,
     log: &mut impl FnMut(String),
-) -> Result<Screen, String> {
+) -> Result<Screen, ActionError> {
     let serial = driver.serial;
     let cancelled = driver.cancelled;
     match kind {
@@ -493,6 +497,7 @@ fn open_rankings(
     driver
         .wait_for(|screen| kind.verifies(screen))?
         .ok_or_else(rank_error)
+        .map_err(ActionError::from)
 }
 
 fn rank_error() -> String {
@@ -527,7 +532,7 @@ fn card_centers(screen: &Screen, top: u32) -> Vec<u32> {
     centers
 }
 
-fn rank_number(screen: &Screen, center: u32) -> Result<Option<u32>, String> {
+fn rank_number(screen: &Screen, center: u32) -> Result<Option<u32>, ActionError> {
     use image::{GrayImage, Luma};
     let area = image::imageops::crop_imm(&screen.gray, 54, center - 44, 90, 80).to_image();
     for threshold in [175, 150, 190] {
@@ -597,7 +602,7 @@ fn name_ink(screen: &Screen, x: u32, y: u32) -> bool {
     (86..=166).contains(&r) && (4..=25).contains(&(r - g)) && (0..=10).contains(&(b - g))
 }
 
-fn rank_names(screen: &Screen, center: u32) -> Result<Vec<String>, String> {
+fn rank_names(screen: &Screen, center: u32) -> Result<Vec<String>, ActionError> {
     use image::{GrayImage, Luma};
     let mut candidates = Vec::new();
     // Isolate the warm gray name from the colored avatar and server pill.
@@ -644,7 +649,7 @@ fn ranking_page(
     kind: Rankings,
     roster: &[Member],
     guild: &str,
-) -> Result<Vec<(u32, Option<Value>)>, String> {
+) -> Result<Vec<(u32, Option<Value>)>, ActionError> {
     let mut page = Vec::new();
     for center in card_centers(screen, kind.top()) {
         let Some(rank) = rank_number(screen, center)? else {
@@ -680,7 +685,7 @@ fn scan_ranks(
     roster: &[Member],
     guild: &str,
     date: &str,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<Value>, ActionError> {
     let first_rank = |screen: &Screen| {
         card_centers(screen, kind.top())
             .first()
@@ -691,7 +696,7 @@ fn scan_ranks(
             swipe(driver, &screen, (960, 920), (960, 1490))?;
             screen = driver.read()?;
             if !kind.verifies(&screen) {
-                return Err(rank_error());
+                return Err(rank_error().into());
             }
             let Some(current) = first_rank(&screen) else {
                 continue;
@@ -708,12 +713,12 @@ fn scan_ranks(
     for _ in 0..150 {
         vision::ensure_not_cancelled(driver.cancelled)?;
         if !kind.verifies(&screen) {
-            return Err(rank_error());
+            return Err(rank_error().into());
         }
         let page = ranking_page(&screen, kind, roster, guild)?;
         let ranks: Vec<_> = page.iter().map(|(rank, _)| *rank).collect();
         if ranks.is_empty() {
-            return Err(rank_error());
+            return Err(rank_error().into());
         }
         for (rank, row) in page {
             if let Some(mut row) = row {
@@ -793,7 +798,7 @@ fn select_date(
     driver: &Driver<'_>,
     mut screen: Screen,
     date: (u32, u32),
-) -> Result<Screen, String> {
+) -> Result<Screen, ActionError> {
     for _ in 0..4 {
         if let Some(tab) = screen
             .lines
@@ -818,7 +823,8 @@ fn select_date(
                             })
                         })
                 })?
-                .ok_or_else(rank_error);
+                .ok_or_else(rank_error)
+                .map_err(ActionError::from);
         }
         swipe(driver, &screen, (930, 745), (230, 745))?;
         screen = driver.read()?;
@@ -835,8 +841,8 @@ pub(super) fn scan(
     settings: &GuildSettings,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-    save: &mut impl FnMut(&str, &Value) -> Result<(), String>,
-) -> Result<u32, String> {
+    save: &mut impl FnMut(&str, &Value) -> Result<(), ActionError>,
+) -> Result<u32, ActionError> {
     if settings.dream_days == 0
         && !settings.supreme_arena
         && !settings.activeness
@@ -869,7 +875,7 @@ pub(super) fn scan(
         }
     };
     let mut total = 0;
-    let mut export = |file, rows: Vec<Value>| -> Result<(), String> {
+    let mut export = |file, rows: Vec<Value>| -> Result<(), ActionError> {
         save(file, &json!(rows))?;
         total += rows.len() as u32;
         report(ActivityEvent::Collected(
