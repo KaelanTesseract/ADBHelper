@@ -37,7 +37,7 @@ ADBHelper runs AFK Journey actions on an Android device or emulator through ADB.
 
 ### First run
 
-1. Download and run **[ADBHelper-Setup-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Setup-x64.exe)**. It installs ADBHelper for your Windows user under `%LOCALAPPDATA%\Programs\ADBHelper` without administrator rights and adds a Start menu entry. Prefer no installation? Download **[ADBHelper-Windows-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Windows-x64.exe)** and run it from any folder you can write to.
+1. Download and run **[ADBHelper-Setup-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Setup-x64.exe)**. It installs ADBHelper for your Windows user under `%LOCALAPPDATA%\Programs\ADBHelper` without administrator rights and adds a Start menu entry. Prefer no installation? Download **[ADBHelper-Windows-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Windows-x64.exe)** and run it from any folder you can write to. A standalone copy can switch to the installed version later with **Settings → Install ADBHelper → Install now**; settings and the Daily routine stay, and the installed app offers to delete the old file.
 2. Start your emulator or connect your Android device, then open AFK Journey.
 3. Launch ADBHelper. In **Settings**, find and select your authorized device. Accept the Android USB debugging prompt if shown.
 4. Open an action's **gear button** to configure it, then click **Start**.

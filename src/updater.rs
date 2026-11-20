@@ -15,6 +15,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REPOSITORY: &str = "KaelanTesseract/ADBHelper";
 pub const REPOSITORY_URL: &str = "https://github.com/KaelanTesseract/ADBHelper";
 pub const ASSET_NAME: &str = "ADBHelper-Windows-x64.exe";
+/// Installer published next to the EXE; used to move a standalone copy to an installed one.
+pub const SETUP_NAME: &str = "ADBHelper-Setup-x64.exe";
 /// Public half of the maintainer's minisign key. Updates are only offered and
 /// installed when the release carries a matching signature for this version.
 const PUBLIC_KEY: &str = include_str!("../minisign.pub");
@@ -245,10 +247,20 @@ fn verify_signature(
     version: &str,
     public_key: &str,
 ) -> Result<(), String> {
+    verify_signature_of(file, ASSET_NAME, signature, version, public_key)
+}
+
+fn verify_signature_of(
+    file: &Path,
+    file_name: &str,
+    signature: &str,
+    version: &str,
+    public_key: &str,
+) -> Result<(), String> {
     let invalid = || tr!("updater-the-update-signature-is-not-valid").to_owned();
     let key = minisign_verify::PublicKey::decode(public_key).map_err(|_| invalid())?;
     let signature = minisign_verify::Signature::decode(signature).map_err(|_| invalid())?;
-    if signature.trusted_comment() != crate::release_signature::trusted_comment(ASSET_NAME, version)
+    if signature.trusted_comment() != crate::release_signature::trusted_comment(file_name, version)
     {
         return Err(invalid());
     }
@@ -266,6 +278,14 @@ fn verify_signature(
 }
 
 pub fn check(current: &str) -> Result<Option<Release>, String> {
+    match latest_release_json()? {
+        Some(json) => parse_release(&json, current),
+        None => Ok(None),
+    }
+}
+
+/// The latest public release from the GitHub API, or `None` before the first release.
+fn latest_release_json() -> Result<Option<String>, String> {
     let url = format!("https://api.github.com/repos/{REPOSITORY}/releases/latest");
     let mut response = match agent(Duration::from_secs(20))
         .get(&url)
@@ -283,7 +303,7 @@ pub fn check(current: &str) -> Result<Option<Release>, String> {
         .limit(1024 * 1024)
         .read_to_string()
         .map_err(|e| e.to_string())?;
-    parse_release(&json, current)
+    Ok(Some(json))
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
@@ -376,6 +396,140 @@ fn hidden_command(path: &Path) -> Command {
     command
 }
 
+/// Streams a release file to `path`, reporting whole percentages.
+fn download_to(
+    url: &str,
+    size: u64,
+    path: &Path,
+    progress: &mut impl FnMut(u8),
+) -> Result<(), String> {
+    let mut output = fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut response = agent(Duration::from_secs(600))
+        .get(url)
+        .header("User-Agent", &format!("ADBHelper/{VERSION}"))
+        .call()
+        .map_err(|e| tr!("updater-download-failed-e", e = e))?;
+    let mut reader = response.body_mut().as_reader();
+    let mut buffer = [0_u8; 65536];
+    let mut total = 0_u64;
+    let mut last = 101;
+    loop {
+        let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > size || total > MAX_SIZE {
+            return Err(tr!("updater-the-download-is-larger-than-the").into());
+        }
+        output
+            .write_all(&buffer[..count])
+            .map_err(|e| e.to_string())?;
+        let percent = (total * 100 / size) as u8;
+        if percent != last {
+            progress(percent);
+            last = percent;
+        }
+    }
+    output.sync_all().map_err(|e| e.to_string())
+}
+
+/// The signed installer of the latest release.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InstallerAsset {
+    version: String,
+    download: String,
+    size: u64,
+    sha256: String,
+    signature: String,
+}
+
+fn parse_installer(json: &str) -> Result<InstallerAsset, String> {
+    let release: GithubRelease =
+        serde_json::from_str(json).map_err(|e| tr!("updater-invalid-release-response-e", e = e))?;
+    let version = Version::parse(
+        release
+            .tag_name
+            .strip_prefix('v')
+            .unwrap_or(&release.tag_name),
+    )
+    .map_err(|e| e.to_string())?;
+    let prefix = format!("{REPOSITORY_URL}/releases/download/");
+    let signature_name = format!("{SETUP_NAME}{}", crate::release_signature::SUFFIX);
+    let setup = release.assets.iter().find(|a| a.name == SETUP_NAME);
+    let signature = release.assets.iter().find(|a| a.name == signature_name);
+    let (Some(setup), Some(signature)) = (setup, signature) else {
+        return Err(tr!("updater-the-latest-release-has-no-signed-installer").into());
+    };
+    let sha256 = setup
+        .digest
+        .as_deref()
+        .and_then(|d| d.strip_prefix("sha256:"))
+        .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or(tr!("updater-invalid-release-checksum"))?;
+    if release.draft
+        || release.prerelease
+        || !version.pre.is_empty()
+        || !setup.browser_download_url.starts_with(&prefix)
+        || !signature.browser_download_url.starts_with(&prefix)
+        || !(4096..=MAX_SIZE).contains(&setup.size)
+        || !(1..=MAX_SIGNATURE_SIZE).contains(&signature.size)
+    {
+        return Err(tr!("updater-invalid-release-file").into());
+    }
+    Ok(InstallerAsset {
+        version: version.to_string(),
+        download: setup.browser_download_url.clone(),
+        size: setup.size,
+        sha256: sha256.to_ascii_lowercase(),
+        signature: signature.browser_download_url.clone(),
+    })
+}
+
+/// Downloads the latest installer to a new temporary folder and checks its
+/// SHA-256 and signature like an update. Runs off the UI thread.
+pub fn download_installer(mut progress: impl FnMut(u8)) -> Result<PathBuf, String> {
+    let json =
+        latest_release_json()?.ok_or(tr!("updater-the-latest-release-has-no-signed-installer"))?;
+    let installer = parse_installer(&json)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let folder =
+        std::env::temp_dir().join(format!("adbhelper-setup-{}-{nonce}", std::process::id()));
+    fs::create_dir(&folder).map_err(|e| e.to_string())?;
+    let path = folder.join(SETUP_NAME);
+    let checked =
+        download_to(&installer.download, installer.size, &path, &mut progress).and_then(|()| {
+            let size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
+            if size != installer.size || sha256_file(&path)? != installer.sha256 {
+                return Err(tr!("updater-the-download-does-not-match").into());
+            }
+            let signature = fetch_signature(&installer.signature)?;
+            verify_signature_of(
+                &path,
+                SETUP_NAME,
+                &signature,
+                &installer.version,
+                PUBLIC_KEY,
+            )
+        });
+    if let Err(error) = checked {
+        let _ = fs::remove_dir_all(&folder);
+        return Err(error);
+    }
+    Ok(path)
+}
+
+/// Starts the verified installer with its normal wizard.
+pub fn launch_installer(path: &Path) -> Result<(), String> {
+    Command::new(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| tr!("updater-could-not-start-the-installer", e = e))
+}
+
 /// Runs off the UI thread. The original app stays open until the helper is ready.
 pub fn download_and_handoff(release: &Release, mut progress: impl FnMut(u8)) -> Result<(), String> {
     let target = std::env::current_exe()
@@ -396,36 +550,7 @@ pub fn download_and_handoff(release: &Release, mut progress: impl FnMut(u8)) -> 
         handed_off: false,
     };
     let download = staging.join("new.exe");
-    let mut output = fs::File::create(&download).map_err(|e| e.to_string())?;
-    let mut response = agent(Duration::from_secs(600))
-        .get(&release.download)
-        .header("User-Agent", &format!("ADBHelper/{VERSION}"))
-        .call()
-        .map_err(|e| tr!("updater-download-failed-e", e = e))?;
-    let mut reader = response.body_mut().as_reader();
-    let mut buffer = [0_u8; 65536];
-    let mut total = 0_u64;
-    let mut last = 101;
-    loop {
-        let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
-        if count == 0 {
-            break;
-        }
-        total += count as u64;
-        if total > release.size || total > MAX_SIZE {
-            return Err(tr!("updater-the-download-is-larger-than-the").into());
-        }
-        output
-            .write_all(&buffer[..count])
-            .map_err(|e| e.to_string())?;
-        let percent = (total * 100 / release.size) as u8;
-        if percent != last {
-            progress(percent);
-            last = percent;
-        }
-    }
-    output.sync_all().map_err(|e| e.to_string())?;
-    drop(output);
+    download_to(&release.download, release.size, &download, &mut progress)?;
     verify_executable(&download, release.size, &release.sha256)?;
     let signature = fetch_signature(&release.signature)?;
     verify_signature(&download, &signature, &release.version, PUBLIC_KEY)?;
@@ -850,6 +975,50 @@ mod tests {
         assert!(verify_signature(&file, "not a signature", "0.5.0", &key).is_err());
         let (_, other_file) = signed(b"other", &comment);
         assert!(verify_signature(&file, &other_file, "0.5.0", &key).is_err());
+    }
+
+    fn installer_release(version: &str) -> serde_json::Value {
+        let mut json = release(version);
+        let assets = json["assets"].as_array_mut().unwrap();
+        assets.push(serde_json::json!({"name":SETUP_NAME,"browser_download_url":format!("{REPOSITORY_URL}/releases/download/{version}/{SETUP_NAME}"),"size":9000,"digest":format!("sha256:{}", "B".repeat(64))}));
+        assets.push(serde_json::json!({"name":format!("{SETUP_NAME}.minisig"),"browser_download_url":format!("{REPOSITORY_URL}/releases/download/{version}/{SETUP_NAME}.minisig"),"size":320}));
+        json
+    }
+
+    #[test]
+    fn the_installer_needs_its_own_signature_from_the_repository() {
+        let installer = parse_installer(&installer_release("v0.4.11").to_string()).unwrap();
+        assert_eq!(installer.version, "0.4.11");
+        assert_eq!(installer.size, 9000);
+        assert_eq!(installer.sha256, "b".repeat(64));
+        // Older releases without an installer, or without its signature, are refused.
+        assert!(parse_installer(&release("v0.4.10").to_string()).is_err());
+        let mut unsigned = installer_release("v0.4.11");
+        unsigned["assets"].as_array_mut().unwrap().pop();
+        assert!(parse_installer(&unsigned.to_string()).is_err());
+        let mut foreign = installer_release("v0.4.11");
+        foreign["assets"][2]["browser_download_url"] =
+            serde_json::json!("https://example.com/setup.exe");
+        assert!(parse_installer(&foreign.to_string()).is_err());
+        let mut prerelease = installer_release("v0.4.11");
+        prerelease["prerelease"] = true.into();
+        assert!(parse_installer(&prerelease.to_string()).is_err());
+    }
+
+    #[test]
+    fn an_exe_signature_does_not_cover_the_installer() {
+        let dir = TestDir::new();
+        let file = dir.file("ADBHelper-Setup-x64.exe");
+        fs::write(&file, b"installer bytes").unwrap();
+        let comment = crate::release_signature::trusted_comment(ASSET_NAME, "0.5.0");
+        let (key, signature) = signed(b"installer bytes", &comment);
+        assert!(verify_signature_of(&file, SETUP_NAME, &signature, "0.5.0", &key).is_err());
+        let comment = crate::release_signature::trusted_comment(SETUP_NAME, "0.5.0");
+        let (key, signature) = signed(b"installer bytes", &comment);
+        assert_eq!(
+            verify_signature_of(&file, SETUP_NAME, &signature, "0.5.0", &key),
+            Ok(())
+        );
     }
 
     #[test]

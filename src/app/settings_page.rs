@@ -102,6 +102,7 @@ impl PlayerApp {
                 ui.add(egui::Label::new(error).wrap());
             }
         });
+        self.show_install_offer(ui);
         ui.add_space(SpaceTokens::MD);
         card(ui, |ui| {
             ui.strong(tr!("app-settings-page-device-connection"));

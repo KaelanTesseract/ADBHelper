@@ -621,3 +621,20 @@ app-settings-page-third-party-notices = Third-party notices and licenses
 ## updater-signature
 
 updater-the-update-signature-is-not-valid = The update signature is not valid. The update was not installed. Download ADBHelper from the official GitHub releases page.
+
+## app-install
+
+app-install-title = Install ADBHelper
+app-install-body = This copy runs without installation. Install ADBHelper to get a Start menu entry and a normal uninstall in Windows Settings. Your settings and Daily routine stay as they are. ADBHelper downloads the installer from the latest release, checks its signature, starts it, and closes this copy.
+app-install-now = Install now
+app-install-stop-first = Stop the running action first.
+app-install-downloading = Downloading installer … { $percent } %
+app-install-done-title = ADBHelper is installed
+app-install-done-body = The old standalone copy is still here. You no longer need it, because the installed app uses the same settings:
+app-install-delete-old = Delete old copy
+app-install-open-folder = Show in folder
+app-install-keep-old = Keep it
+app-install-delete-failed = Could not delete the old copy: { $error }. Close it if it is still running, or delete it in Explorer.
+updater-the-latest-release-has-no-signed-installer = The latest release has no signed installer yet. Try again later.
+updater-the-download-does-not-match = The download does not match the published file. Nothing was installed.
+updater-could-not-start-the-installer = Could not start the installer: { $e }

@@ -5,6 +5,7 @@ mod action_settings;
 mod daily_editor;
 mod dashboard;
 mod fishing_warning;
+mod install_migration;
 mod run;
 mod settings_page;
 mod updates;
@@ -54,6 +55,8 @@ enum Event {
     UpdateCheckStarted,
     UpdateProgress(u8),
     UpdateReady(Result<(), String>),
+    InstallerProgress(u8),
+    InstallerReady(Result<std::path::PathBuf, String>),
 }
 
 enum ArtworkState {
@@ -206,6 +209,11 @@ pub struct PlayerApp {
     update_dialog_open: bool,
     fishing_warning_open: bool,
     fishing_warning_accepted: bool,
+    runs_installed: bool,
+    installer_progress: Option<u8>,
+    installer_error: Option<String>,
+    old_copy: Option<std::path::PathBuf>,
+    old_copy_error: Option<String>,
     update_requests: Sender<()>,
 }
 
@@ -292,6 +300,11 @@ impl PlayerApp {
             update_dialog_open: false,
             fishing_warning_open: false,
             fishing_warning_accepted: false,
+            runs_installed: crate::install_info::runs_installed(),
+            installer_progress: None,
+            installer_error: None,
+            old_copy: crate::install_info::standalone_copy(),
+            old_copy_error: None,
             update_requests,
         };
         app.log(format!(
@@ -436,6 +449,8 @@ impl PlayerApp {
                     self.update_progress = None;
                     self.update_error = Some(error);
                 }
+                Event::InstallerProgress(percent) => self.installer_progress = Some(percent),
+                Event::InstallerReady(result) => self.installer_ready(result),
                 Event::Busy(busy) => {
                     self.busy = busy;
                     if !busy {
@@ -587,6 +602,7 @@ impl eframe::App for PlayerApp {
             self.show_action_settings_dialog(ui.ctx());
         }
         self.show_fishing_warning(ui.ctx());
+        self.show_old_copy_notice(ui.ctx());
     }
 }
 

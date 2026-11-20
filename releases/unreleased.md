@@ -10,3 +10,4 @@
 - **Third-party notices** are linked from **Settings** and installed next to the app.
 - **Signed updates**: updates are now installed only when the release carries a valid signature from the maintainer's key for exactly that version, in addition to the SHA-256 check. Releases are signed with minisign; the public key is `minisign.pub` in the repository.
 - **Fewer update checks**: ADBHelper checks at startup and then every six hours instead of every five minutes. **Settings → App updates** still checks on demand.
+- **Switch to the installer**: a standalone copy shows **Settings → Install ADBHelper**. **Install now** downloads the installer from the latest release, checks its signature, starts it, and closes the old copy. Settings and the Daily routine stay. The installed app then shows where the old file is and can delete it on request.
