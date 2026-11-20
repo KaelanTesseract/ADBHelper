@@ -6,7 +6,6 @@ use crate::adb;
 use crate::localization::{format_text, text};
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 
 const SELECT_MARKERS: &[&str] = &[
     "legend_trials/s_header.png",
@@ -154,7 +153,7 @@ fn navigate_to_select(
             serial,
             SELECT_MARKERS,
             selection_region(),
-            Duration::from_secs(20),
+            crate::timing::secs(20),
             cancelled,
         )?
         .is_some()
@@ -249,7 +248,7 @@ struct AdbFloorDriver<'a> {
 impl FloorDriver for AdbFloorDriver<'_> {
     fn observe(&mut self) -> Result<FloorAction, String> {
         let started = std::time::Instant::now();
-        while started.elapsed() < Duration::from_secs(20) {
+        while started.elapsed() < crate::timing::secs(20) {
             common::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = common::screenshot(self.serial)?;
             if let Some((action, found)) = floor_action(&screen)? {
@@ -257,7 +256,7 @@ impl FloorDriver for AdbFloorDriver<'_> {
                 self.size = size;
                 return Ok(action);
             }
-            std::thread::sleep(Duration::from_millis(400));
+            std::thread::sleep(crate::timing::millis(400));
         }
         Err(text(
             "Could not detect the next Legend Trial floor or its completion.",
@@ -296,7 +295,7 @@ impl FloorDriver for AdbFloorDriver<'_> {
                 width: 216,
                 height: 384,
             },
-            Duration::from_secs(20),
+            crate::timing::secs(20),
             self.cancelled,
         )?;
         let paths: Vec<_> = END_MARKERS.iter().chain(CHALLENGES).copied().collect();
@@ -304,7 +303,7 @@ impl FloorDriver for AdbFloorDriver<'_> {
             self.serial,
             &paths,
             selection_region(),
-            Duration::from_secs(8),
+            crate::timing::secs(8),
             self.cancelled,
         )?
         else {
@@ -319,7 +318,7 @@ impl FloorDriver for AdbFloorDriver<'_> {
             self.serial,
             &["battle/records.png", "battle/battle.png"],
             common::lower_screen(),
-            Duration::from_secs(20),
+            crate::timing::secs(20),
             self.cancelled,
         )?;
         Ok(true)
@@ -368,7 +367,7 @@ pub fn run(
             serial,
             &[&banner],
             selection_region(),
-            Duration::from_secs(15),
+            crate::timing::secs(15),
             cancelled,
         )?
         else {
@@ -447,6 +446,7 @@ mod tests {
     use crate::activity::{BattleOutcome, RunActivity};
     use std::collections::VecDeque;
     use std::sync::atomic::Ordering;
+    use std::time::Duration;
 
     struct FakeFloor {
         actions: VecDeque<Result<FloorAction, String>>,

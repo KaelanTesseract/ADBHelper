@@ -231,7 +231,9 @@ pub fn stop_afk_journey(serial: &str) -> Result<String, AdbError> {
 
 pub fn screenshot(serial: &str) -> Result<Vec<u8>, AdbError> {
     crate::afk_journey::recovery::check_process(serial).map_err(AdbError::Failed)?;
+    let started = std::time::Instant::now();
     let output = run(&["-s", serial, "exec-out", "screencap", "-p"])?;
+    crate::timing::observe_screenshot(started.elapsed());
     Ok(output.stdout)
 }
 

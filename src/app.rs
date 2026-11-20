@@ -900,6 +900,7 @@ impl PlayerApp {
                 Event::StagesFinished(action, error) => {
                     self.recovery_notice = None;
                     self.daily_step = None;
+                    self.log(crate::timing::summary());
                     self.action_error = error.map(|error| (action, error))
                 }
                 Event::UpdateChecked(result) => {

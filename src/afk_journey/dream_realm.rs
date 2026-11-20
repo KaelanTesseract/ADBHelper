@@ -19,7 +19,9 @@ const CLOSE: common::Rect = region(300, 1700, 450, 180);
 const RANKINGS: common::Rect = region(915, 125, 165, 140);
 const RANKING_GIFT: common::Rect = region(1000, 109, 80, 72);
 const RANKING_BACK: common::Rect = region(0, 1740, 220, 180);
-const SHORT_WAIT: Duration = Duration::from_secs(20);
+fn short_wait() -> Duration {
+    crate::timing::secs(20)
+}
 pub const MAX_BATTLES: u32 = 30;
 const DEFAULT_BATTLES: u32 = 2;
 const BATTLE_LIMIT_FILE: &str = "dream-realm-battle-limit.txt";
@@ -351,7 +353,7 @@ fn purchase_chance(
 ) -> Result<Option<Frame>, String> {
     home.tap(serial, home.battle_button()?, cancelled)?;
     let start = Instant::now();
-    while start.elapsed() < SHORT_WAIT {
+    while start.elapsed() < short_wait() {
         common::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         let Some(offer) = frame.gold_offer()? else {
@@ -375,7 +377,7 @@ fn purchase_chance(
         cursor.confirming_gold = true;
         frame.tap(serial, confirm, cancelled)?;
         let purchased = Instant::now();
-        while purchased.elapsed() < SHORT_WAIT {
+        while purchased.elapsed() < short_wait() {
             common::settle_cancellable(cancelled)?;
             let next = Frame::read(serial, cancelled)?;
             if (next.home()?.is_some() && next.remaining()?.is_some_and(|n| n > 0))
@@ -409,7 +411,7 @@ fn unconfirmed_purchase() -> String {
 
 fn wait_home(serial: &str, cancelled: &AtomicBool) -> Result<Frame, String> {
     let start = Instant::now();
-    while start.elapsed() < SHORT_WAIT {
+    while start.elapsed() < short_wait() {
         let frame = Frame::read(serial, cancelled)?;
         if frame.home()?.is_some() {
             return Ok(frame);
@@ -435,7 +437,7 @@ pub(super) fn open_rankings_for_scan(
     let entry = home.home()?.ok_or("Dream Realm rankings entry missing.")?;
     home.tap(serial, entry, cancelled)?;
     let start = Instant::now();
-    while start.elapsed() < SHORT_WAIT {
+    while start.elapsed() < short_wait() {
         common::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         if frame.rankings() {
@@ -469,7 +471,7 @@ fn navigate(
         serial,
         &["dream_realm/label.png"],
         BATTLE_MODES_ENTRY,
-        SHORT_WAIT,
+        short_wait(),
         cancelled,
     )?;
     common::ensure_not_cancelled(cancelled)?;
@@ -483,7 +485,7 @@ fn return_from_rankings(
     cancelled: &AtomicBool,
 ) -> Result<Frame, String> {
     let start = Instant::now();
-    while start.elapsed() < SHORT_WAIT {
+    while start.elapsed() < short_wait() {
         if let Some(close) = frame.reward_close(true)? {
             frame.tap(serial, close, cancelled)?;
         } else if frame.home()?.is_some() {
@@ -518,7 +520,7 @@ fn claim_yesterday(
     home.tap(serial, point, cancelled)?;
     let start = Instant::now();
     let mut reward_seen = false;
-    while start.elapsed() < SHORT_WAIT {
+    while start.elapsed() < short_wait() {
         common::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         if let Some(close) = frame.reward_close(true)? {
@@ -544,7 +546,7 @@ fn claim_yesterday(
 
 fn formation(serial: &str, cancelled: &AtomicBool) -> Result<(Frame, (u32, u32), bool), String> {
     let start = Instant::now();
-    while start.elapsed() < SHORT_WAIT {
+    while start.elapsed() < short_wait() {
         common::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         if let Some((button, skipped)) = frame.formation_control()? {
@@ -567,7 +569,7 @@ fn finish_battle(
     let start = Instant::now();
     let mut scored = false;
     let mut skip_sent = false;
-    while start.elapsed() < Duration::from_secs(BATTLE_TIMEOUT_SECONDS) {
+    while start.elapsed() < crate::timing::secs(BATTLE_TIMEOUT_SECONDS) {
         common::settle_cancellable(cancelled)?;
         let frame = Frame::read(serial, cancelled)?;
         if frame.battle_summary()? {

@@ -195,6 +195,8 @@ fn state() -> (bool, Checkpoint) {
 }
 fn restart(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
     common::ensure_not_cancelled(cancelled)?;
+    // A restart means the game got stuck; give the next attempt more time.
+    crate::timing::note_timeout();
     SESSION.with(|slot| {
         if let Some(s) = slot.borrow_mut().as_mut() {
             s.crashed = false;

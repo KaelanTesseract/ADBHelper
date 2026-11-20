@@ -4,7 +4,6 @@ use crate::activity::{ActivityEvent, GameMode};
 use crate::adb;
 use crate::localization::{format_text, text};
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 
 fn overview_region() -> Rect {
     Rect {
@@ -126,7 +125,7 @@ fn navigate(
                     serial,
                     &["duras_trials/socketed_charms_overview.png"],
                     overview_region(),
-                    Duration::from_secs(20),
+                    crate::timing::secs(20),
                     cancelled,
                 )?
                 .is_some()

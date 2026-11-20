@@ -11,6 +11,7 @@ mod localization;
 mod logfile;
 mod routine;
 mod settings;
+mod timing;
 mod updater;
 
 use std::env;

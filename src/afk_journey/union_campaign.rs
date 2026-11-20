@@ -6,7 +6,7 @@ use crate::adb;
 use crate::localization::text;
 use image::GrayImage;
 use std::sync::atomic::AtomicBool;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 fn floor_label_region() -> Rect {
     Rect {
@@ -134,7 +134,7 @@ pub(super) fn navigate(
                     "popup/quick_purchase.png",
                 ],
                 common::full_screen(),
-                Duration::from_secs(20),
+                crate::timing::secs(20),
                 cancelled,
             )?;
             if menu
@@ -207,7 +207,7 @@ pub(super) fn navigate(
                     serial,
                     &["union_campaign/current_label.png"],
                     floor_label_region(),
-                    Duration::from_secs(20),
+                    crate::timing::secs(20),
                     cancelled,
                 )?
                 .is_some()
@@ -228,7 +228,7 @@ pub(super) fn navigate(
 
 pub(super) fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), String> {
     let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(45) {
+    while started.elapsed() < crate::timing::secs(45) {
         common::ensure_not_cancelled(cancelled)?;
         let (screen, size) = common::screenshot(serial)?;
         match pre_battle_state(&screen)? {
@@ -237,7 +237,7 @@ pub(super) fn prepare_floor(serial: &str, cancelled: &AtomicBool) -> Result<(), 
                 common::tap_match(serial, found, size)?;
                 common::settle_cancellable(cancelled)?;
             }
-            None => std::thread::sleep(Duration::from_millis(400)),
+            None => std::thread::sleep(crate::timing::millis(400)),
         }
     }
     Err(text(
@@ -313,7 +313,7 @@ struct AdbPostBattle<'a> {
 impl PostBattleDriver for AdbPostBattle<'_> {
     fn observe(&mut self, mut waiting_for_transition: bool) -> Result<PostBattle, String> {
         let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(20) {
+        while started.elapsed() < crate::timing::secs(20) {
             common::ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = common::screenshot(self.serial)?;
             let observation = post_battle_state(&screen)?;
@@ -323,13 +323,13 @@ impl PostBattleDriver for AdbPostBattle<'_> {
             if let Some((state, found)) = observation.filter(|(state, _)| {
                 *state != PostBattle::Continue
                     || !waiting_for_transition
-                    || started.elapsed() >= Duration::from_secs(5)
+                    || started.elapsed() >= crate::timing::secs(5)
             }) {
                 self.found = Some(found);
                 self.size = size;
                 return Ok(state);
             }
-            std::thread::sleep(Duration::from_millis(250));
+            std::thread::sleep(crate::timing::millis(250));
         }
         common::ensure_not_cancelled(self.cancelled)?;
         // Original's last-floor screen is unknown: only a genuine timeout ends

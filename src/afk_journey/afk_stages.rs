@@ -865,11 +865,14 @@ pub(super) fn poll_for_match(
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
         if let Some((path, found)) = get_match(&screen, paths, roi, MATCH_THRESHOLD)? {
+            crate::timing::note_success();
             return Ok(Some((path, found, size)));
         }
-        thread::sleep(Duration::from_millis(700));
+        thread::sleep(crate::timing::millis(700));
     }
     ensure_not_cancelled(cancelled)?;
+    // No timing penalty here: optional checks (popups, banners) end this way by design.
+    // Only a recovery restart counts as "the device was too slow".
     Ok(None)
 }
 
@@ -882,11 +885,16 @@ pub(crate) fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<(), String>
 }
 
 pub(super) fn settle_cancellable(cancelled: &AtomicBool) -> Result<(), String> {
-    for _ in 0..9 {
+    // 900 ms on the reference setup, longer on slow devices; checked every 100 ms.
+    let deadline = Instant::now() + crate::timing::millis(900);
+    loop {
         ensure_not_cancelled(cancelled)?;
-        thread::sleep(Duration::from_millis(100));
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(());
+        }
+        thread::sleep(left.min(Duration::from_millis(100)));
     }
-    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1020,7 +1028,7 @@ fn ensure_battle_screen(
                 serial,
                 &["battle/records.png", "battle/battle.png"],
                 lower_screen(),
-                Duration::from_secs(5),
+                crate::timing::secs(5),
                 cancelled,
             )?
             .is_some()
@@ -1035,7 +1043,7 @@ fn ensure_battle_screen(
         serial,
         &["battle/records.png", "battle/battle.png"],
         lower_screen(),
-        Duration::from_secs(20),
+        crate::timing::secs(20),
         cancelled,
     )?;
     Ok(())
@@ -1081,7 +1089,7 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
                     self.serial,
                     &["battle/copy.png"],
                     lower_screen(),
-                    Duration::from_secs(5),
+                    crate::timing::secs(5),
                     self.cancelled,
                 )?
                 .is_some()
@@ -1140,14 +1148,14 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
             image::imageops::crop_imm(&before, roi.x, roi.y, roi.width, roi.height).to_image();
         let samples = template_samples(&previous, 6);
         let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(5) {
+        while started.elapsed() < crate::timing::secs(5) {
             ensure_not_cancelled(self.cancelled)?;
             let (screen, _) = screenshot(self.serial)?;
             if normalized_correlation(&screen, (roi.x, roi.y), &samples) < 0.95 {
                 settle_cancellable(self.cancelled)?;
                 return Ok(true);
             }
-            thread::sleep(Duration::from_millis(300));
+            thread::sleep(crate::timing::millis(300));
         }
         Ok(false)
     }
@@ -1155,12 +1163,12 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
     fn is_manual(&mut self) -> Result<bool, String> {
         // Original: poll the lower-left manual label for 1.5 seconds at 80%.
         let started = Instant::now();
-        while started.elapsed() < Duration::from_millis(1500) {
+        while started.elapsed() < crate::timing::millis(1500) {
             ensure_not_cancelled(self.cancelled)?;
             if manual_formation_visible(&screenshot(self.serial)?.0)? {
                 return Ok(true);
             }
-            thread::sleep(Duration::from_millis(300));
+            thread::sleep(crate::timing::millis(300));
         }
         ensure_not_cancelled(self.cancelled)?;
         Ok(false)
@@ -1173,7 +1181,7 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
             width: 432,
             height: 576,
         };
-        let deadline = Instant::now() + Duration::from_secs(12);
+        let deadline = Instant::now() + crate::timing::secs(12);
         loop {
             ensure_not_cancelled(self.cancelled)?;
             let (screen, size) = screenshot(self.serial)?;
@@ -1234,7 +1242,7 @@ fn start_battle(
                 "battle/battle.png",
             ],
             lower_screen(),
-            Duration::from_secs(20),
+            crate::timing::secs(20),
             cancelled,
         )?;
         log(format!(
@@ -1473,7 +1481,7 @@ impl ResultDriver for AdbResultDriver<'_> {
     fn wait_for_controls(&mut self) -> Result<(), String> {
         for _ in 0..20 {
             ensure_not_cancelled(self.cancelled)?;
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(crate::timing::millis(100));
         }
         ensure_not_cancelled(self.cancelled)
     }
@@ -1546,7 +1554,7 @@ impl ResultDriver for AdbResultDriver<'_> {
             self.serial,
             &["next.png", "battle/next.png"],
             roi,
-            Duration::from_secs(5),
+            crate::timing::secs(5),
             self.cancelled,
         )? {
             tap_match(self.serial, next, size)?;
@@ -1577,13 +1585,13 @@ fn wait_for_outcome(
 ) -> Result<(Outcome, Match, (u32, u32)), String> {
     let started = Instant::now();
     let mut previous_floor_return = false;
-    while started.elapsed() < Duration::from_secs(BATTLE_TIMEOUT_SECONDS) {
+    while started.elapsed() < crate::timing::secs(BATTLE_TIMEOUT_SECONDS) {
         ensure_not_cancelled(cancelled)?;
         let (screen, size) = screenshot(serial)?;
         match detect_outcome_for_mode(&screen, mode)? {
             Some((Outcome::UnionFloorReturned, _)) if !previous_floor_return => {
                 previous_floor_return = true;
-                thread::sleep(Duration::from_millis(500));
+                thread::sleep(crate::timing::millis(500));
                 continue;
             }
             Some((outcome, found)) => {
@@ -1603,7 +1611,7 @@ fn wait_for_outcome(
             settle_cancellable(cancelled)?;
             continue;
         }
-        thread::sleep(Duration::from_millis(500));
+        thread::sleep(crate::timing::millis(500));
     }
     Err(super::BATTLE_RESULT_TIMEOUT.into())
 }
@@ -2099,7 +2107,7 @@ pub(super) fn navigate_to_current_overview(
     let started = Instant::now();
     for attempt in 0..40 {
         ensure_not_cancelled(cancelled)?;
-        if started.elapsed() > Duration::from_secs(240) {
+        if started.elapsed() > crate::timing::secs(240) {
             break;
         }
         if attempt == 20 {
@@ -2222,7 +2230,7 @@ impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
             return Ok(None);
         };
         tap_match(self.serial, shortcut, size)?;
-        self.wait_for_afk_page(Duration::from_secs(10))
+        self.wait_for_afk_page(crate::timing::secs(10))
     }
 
     fn battle_modes(&mut self) -> Result<bool, String> {
@@ -2234,7 +2242,7 @@ impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
                 self.serial,
                 &["battle_modes/afk_stage.png", "popup/quick_purchase.png"],
                 full_screen(),
-                Duration::from_secs(20),
+                crate::timing::secs(20),
                 self.cancelled,
             )?
             else {
@@ -2263,7 +2271,7 @@ impl<L: FnMut(String)> AfkNavigator for AdbAfkNavigator<'_, L> {
                 break;
             }
         }
-        self.wait_for_afk_page(Duration::from_secs(20))
+        self.wait_for_afk_page(crate::timing::secs(20))
     }
 }
 

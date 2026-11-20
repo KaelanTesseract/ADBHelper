@@ -316,7 +316,7 @@ pub fn run(
                         width: 680,
                         height: 190,
                     },
-                    std::time::Duration::from_secs(10),
+                    crate::timing::secs(10),
                     cancelled,
                 )?;
                 let (screen, _) = common::screenshot(serial)?;

@@ -315,7 +315,7 @@ fn approach_spot(
             log(text("Walking to the fishing spot.", "Läuft zur Angelstelle.").into());
             driver.tap(panel.size, walk)?;
             driver.settle()?;
-            let deadline = Instant::now() + Duration::from_secs(65);
+            let deadline = Instant::now() + crate::timing::secs(65);
             while Instant::now() < deadline {
                 let frame = driver.read()?;
                 if let Some(rod) = frame.find(RODS, ARRIVAL, 0.76)? {
@@ -444,7 +444,7 @@ fn fish_spot(driver: &Driver<'_>, report: &mut dyn FnMut(ActivityEvent)) -> Resu
     let mut bite_visible_since = None::<Instant>;
     let mut last_action = Instant::now();
     let mut next_check = last_action;
-    let deadline = Instant::now() + Duration::from_secs(330);
+    let deadline = Instant::now() + crate::timing::secs(330);
     while Instant::now() < deadline && casts < 24 {
         let frame = driver.read()?;
         if Instant::now() >= next_check {
@@ -501,7 +501,7 @@ fn fish_spot(driver: &Driver<'_>, report: &mut dyn FnMut(ActivityEvent)) -> Resu
                 last_action = Instant::now();
             }
         }
-        if last_action.elapsed() > Duration::from_secs(45) {
+        if last_action.elapsed() > crate::timing::secs(45) {
             break;
         }
         thread::sleep(Duration::from_millis(50));
