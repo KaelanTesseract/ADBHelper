@@ -15,10 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-// The map search is wired into `run` in the next step.
-#[allow(dead_code)]
 mod map;
-#[allow(dead_code)]
 mod route;
 
 type Point = (u32, u32);
@@ -188,12 +185,16 @@ impl Frame {
 
 /// The open fishing screen: the fish book at the top right and a minigame
 /// control (cast, bite, or pull) at the bottom, as in ADB AutoPlayer.
+/// The fishing screen is open: the book with a fishing control, or, while a
+/// round runs and the book is hidden, the "Remaining attempts" line.
 fn on_fishing_screen(frame: &Frame) -> Result<bool, ActionError> {
-    if !frame.book()? {
-        return Ok(false);
+    if frame.book()? {
+        let controls: Vec<&str> = RODS.iter().chain(BITES).chain(PULL).copied().collect();
+        if frame.find(&controls, HOOK, 0.70)?.is_some() {
+            return Ok(true);
+        }
     }
-    let controls: Vec<&str> = RODS.iter().chain(BITES).chain(PULL).copied().collect();
-    Ok(frame.find(&controls, HOOK, 0.70)?.is_some())
+    Ok(remaining_status(frame)?.is_some())
 }
 
 struct Driver<'a> {
@@ -332,15 +333,34 @@ fn pull_bar(image: &RgbaImage) -> Option<(usize, usize)> {
 
 fn pull_duration(image: &RgbaImage) -> Option<u32> {
     let (center, hook) = pull_bar(image)?;
-    // Hold times as in ADB AutoPlayer's _handle_hold_for_distance.
-    match center.saturating_sub(hook) {
-        601.. => Some(600),
-        401.. => Some(450),
-        201.. => Some(300),
-        101.. => Some(200),
-        51.. => Some(100),
+    hold_for_distance(center.saturating_sub(hook))
+}
+
+/// Hold time for the hook's distance to the target: ADB AutoPlayer's
+/// _handle_hold_for_distance steps (600/450/300/200/100 ms), held 50 % longer
+/// so fewer fish escape.
+fn hold_for_distance(distance: usize) -> Option<u32> {
+    match distance {
+        601.. => Some(900),
+        401.. => Some(675),
+        201.. => Some(450),
+        101.. => Some(300),
+        51.. => Some(150),
         _ => None,
     }
+}
+
+/// How long to hold when the hook is far from the target (`ms` of 450 or
+/// more): nearly until the next frame (`frame_ms` apart), so a far hook does
+/// not drop back between holds. Not longer: the next hold is only sent when
+/// the previous one has ended. Measured at a Lucky Spot: one 300–450 ms hold
+/// moved the hook about 70 px, frames came 0.58 s apart, and it fell back in
+/// between.
+fn chained_hold(ms: u32, frame_ms: u32) -> u32 {
+    if ms < 450 {
+        return ms;
+    }
+    ms.max(frame_ms.saturating_sub(50)).min(1500)
 }
 
 /// "Remaining attempts: 3/10" as (3, 10); the separator may be "/", a space,
@@ -463,6 +483,7 @@ fn fish_spot(
     let mut casts = 0;
     let mut hooked = false;
     let mut pull_frames = 0;
+    let mut last_pull_frame = None::<Instant>;
     let mut bite_visible_since = None::<Instant>;
     let mut last_action = Instant::now();
     let mut next_check = last_action;
@@ -505,6 +526,7 @@ fn fish_spot(
                 hooked = true;
                 round.hooked = true;
                 pull_frames = 0;
+                last_pull_frame = None;
                 last_action = Instant::now();
             }
         } else if let Some(control) = match frame.find(PULL, HOOK, 0.70)? {
@@ -518,7 +540,10 @@ fn fish_spot(
             hooked = true;
             round.hooked = true;
             pull_frames += 1;
-            let duration = pull_duration(&frame.pixels);
+            let frame_ms = last_pull_frame
+                .replace(Instant::now())
+                .map_or(0, |at| at.elapsed().as_millis() as u32);
+            let duration = pull_duration(&frame.pixels).map(|ms| chained_hold(ms, frame_ms));
             trace::note(&format!(
                 "pull control at {control:?}, frames={pull_frames}, hold={duration:?}"
             ));
@@ -601,6 +626,16 @@ fn fish_spot(
         }
     }
     trace::note(&format!("stop: casts={casts} count={count}"));
+    // Still at the spot between two rounds (escaped fish may not cost an
+    // attempt): give this spot up and leave, so the run goes on elsewhere.
+    let frame = driver.read()?;
+    if frame.book()? && on_fishing_screen(&frame)? {
+        trace::note("spot given up");
+        count_silent(&round, &mut count, report);
+        driver.tap(frame.size, (102, 1792))?;
+        driver.settle()?;
+        return Ok(count);
+    }
     Err(tr!("fishing-fishing-did-not-return-to-a").into())
 }
 
@@ -611,11 +646,10 @@ pub fn run(
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, ActionError> {
     report(ActivityEvent::ModeOpening(GameMode::Fishing));
-    // A launch intent makes the running game leave the fishing screen, so the
-    // minigame never sends one. It starts where the player opened fishing.
-    let open_first = || ActionError::from(tr!("fishing-open-the-fishing-screen-first"));
+    // A launch intent makes the running game leave the fishing screen, so
+    // fishing never sends one; the game has to be running already.
     if adb::game_state(serial).map_err(|e| e.to_string())? != adb::GameState::Running {
-        return Err(open_first());
+        return Err(tr!("afk-stages-could-not-reach-the-main-screen").into());
     }
     crate::afk_journey::recovery::expect_running(serial);
     let mut driver = Driver {
@@ -625,18 +659,124 @@ pub fn run(
         seen: std::cell::Cell::new(0),
         input_busy: std::sync::Arc::new(AtomicBool::new(false)),
     };
-    if !on_fishing_screen(&driver.read()?)? {
-        return Err(open_first());
+    report(ActivityEvent::ModeEntered(GameMode::Fishing));
+    let mut count = 0;
+    // First the spot the player already stands at.
+    let frame = driver.read()?;
+    if on_fishing_screen(&frame)? {
+        log(tr!("fishing-fishing-at-the-open-spot").into());
+        count += fish_streamed(&mut driver, log, report)?;
+    } else if let Some(rod) = frame.find(RODS, ARRIVAL, 0.76)? {
+        driver.tap(frame.size, rod)?;
+        for _ in 0..6 {
+            driver.settle()?;
+            if on_fishing_screen(&driver.read()?)? {
+                log(tr!("fishing-fishing-at-the-open-spot").into());
+                count += fish_streamed(&mut driver, log, report)?;
+                break;
+            }
+        }
     }
-    let size = adb::display_size(serial).map_err(|e| e.to_string())?;
-    driver.stream = vision::ScreenStream::start(serial, size, Duration::from_secs(4));
+    let frame = map::open_map(&driver, log)?;
+    let tabs = map::read_tabs(&frame)?;
+    trace::note(&format!("tabs {tabs:?}"));
+    let mut visits = route::Visits::new(route::MAX_VISITS_PER_MAP);
+    for tab in &tabs {
+        count += fish_map(&mut driver, &tab.name, &mut visits, log, report)?;
+    }
+    if let Ok(frame) = driver.read() {
+        if map::is_map(&frame)? {
+            map::close_map(&driver, frame.size)?;
+        }
+    }
+    log(tr!("fishing-no-spots-with-attempts-left").into());
+    Ok(count)
+}
+
+/// Plays the minigame at the open fishing screen with the live stream, which
+/// only runs here; the map steps use plain screenshots.
+fn fish_streamed(
+    driver: &mut Driver<'_>,
+    log: &mut impl FnMut(String),
+    report: &mut dyn FnMut(ActivityEvent),
+) -> Result<u32, ActionError> {
+    let size = adb::display_size(driver.serial).map_err(|e| e.to_string())?;
+    driver.stream = vision::ScreenStream::start(driver.serial, size, Duration::from_secs(4));
     trace::note(&format!("live stream: {}", driver.stream.is_some()));
     if driver.stream.is_none() {
         log(tr!("fishing-no-live-stream").into());
     }
-    log(tr!("fishing-fishing-at-the-open-spot").into());
-    report(ActivityEvent::ModeEntered(GameMode::Fishing));
-    fish_spot(&driver, report)
+    let caught = fish_spot(driver, report);
+    driver.stream = None;
+    caught
+}
+
+/// Searches one map tab, then walks to each spot found there and fishes until
+/// it has no attempts left. Spots are map points with the location arrow at
+/// (0, 0) when the search began; after walking, the arrow is the character at
+/// the spot it walked to.
+fn fish_map(
+    driver: &mut Driver<'_>,
+    name: &str,
+    visits: &mut route::Visits,
+    log: &mut impl FnMut(String),
+    report: &mut dyn FnMut(ActivityEvent),
+) -> Result<u32, ActionError> {
+    log(tr!("fishing-searching-map", map = name.to_owned()));
+    let Some((view, arrow)) = map::anchor(driver, name)? else {
+        trace::note(&format!("{name}: no arrow, skipped"));
+        return Ok(0);
+    };
+    let spots = map::explore(driver, view, map::origin((0, 0), arrow))?;
+    trace::note(&format!("{name}: spots {spots:?}"));
+    let mut arrow_at = (0, 0);
+    let mut count = 0;
+    for spot in spots {
+        // A marker tap zooms in, so every spot starts from a fresh map view.
+        reopen_map(driver, log)?;
+        let Some((view, arrow)) = map::anchor(driver, name)? else {
+            break;
+        };
+        let Some((marker, frame)) = map::go_to(driver, view, map::origin(arrow_at, arrow), spot)?
+        else {
+            continue;
+        };
+        driver.tap(frame.size, marker)?;
+        driver.settle()?;
+        let panel = driver.read()?;
+        let map::PanelDecision::Walk(walk) = map::read_panel(&panel, marker)? else {
+            continue;
+        };
+        if !visits.visit(name) {
+            trace::note(&format!("{name}: visit limit"));
+            break;
+        }
+        match map::walk_to(driver, panel.size, walk, log)? {
+            map::Arrival::Arrived => {
+                arrow_at = spot;
+                count += fish_streamed(driver, log, report)?;
+            }
+            map::Arrival::Blocked => {
+                // Where the character stopped is unknown, so the map's
+                // remaining spots cannot be found again from the arrow.
+                log(tr!("fishing-spot-skipped").into());
+                break;
+            }
+        }
+    }
+    reopen_map(driver, log)?;
+    Ok(count)
+}
+
+/// Closes the map if it is open (the back arrow is only tapped on the map),
+/// then opens it again at the character.
+fn reopen_map(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<(), ActionError> {
+    let frame = driver.read()?;
+    if map::is_map(&frame)? {
+        map::close_map(driver, frame.size)?;
+    }
+    map::open_map(driver, log)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -671,6 +811,29 @@ mod tests {
         };
         assert!(!treasure.card(false));
         assert!(treasure.silent_catch());
+    }
+
+    #[test]
+    fn pull_holds_are_half_as_long_again_as_adb_autoplayer() {
+        assert_eq!(hold_for_distance(700), Some(900));
+        assert_eq!(hold_for_distance(450), Some(675));
+        assert_eq!(hold_for_distance(250), Some(450));
+        assert_eq!(hold_for_distance(150), Some(300));
+        assert_eq!(hold_for_distance(60), Some(150));
+        assert_eq!(hold_for_distance(50), None);
+    }
+
+    #[test]
+    fn far_holds_last_until_the_next_frame_is_read() {
+        // Slow frames: a far hook is held without a gap, at most 1.5 s.
+        assert_eq!(chained_hold(450, 700), 650);
+        assert_eq!(chained_hold(675, 580), 675);
+        assert_eq!(chained_hold(900, 2000), 1500);
+        // Fast frames keep ADB AutoPlayer's times.
+        assert_eq!(chained_hold(450, 40), 450);
+        // Close to the target the short taps stay short.
+        assert_eq!(chained_hold(300, 580), 300);
+        assert_eq!(chained_hold(150, 580), 150);
     }
 
     #[test]
@@ -770,7 +933,7 @@ mod tests {
             "pull control"
         );
         assert!(
-            matches!(pull_duration(&pulling.pixels), Some(450 | 750)),
+            matches!(pull_duration(&pulling.pixels), Some(675)),
             "pull duration"
         );
         assert_eq!(
@@ -966,6 +1129,23 @@ mod tests {
         let size = driver.read().unwrap().size;
         map::close_map(&driver, size).unwrap();
         std::thread::sleep(Duration::from_secs(2));
+    }
+
+    #[test]
+    #[ignore = "searches every map tab, walks to each spot and fishes it empty"]
+    fn connected_emulator_fishing_run() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let result = run(
+            &serial,
+            &cancelled,
+            &mut |line| {
+                trace::note(&format!("log: {line}"));
+                println!("{line}");
+            },
+            &mut |event| println!("{event:?}"),
+        );
+        println!("result: {result:?}");
     }
 
     #[test]

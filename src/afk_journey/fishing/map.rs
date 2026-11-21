@@ -644,6 +644,11 @@ pub(super) fn walk_to(
     while Instant::now() < deadline {
         driver.settle()?;
         let frame = driver.read()?;
+        // The game opens fishing by itself when the walk ends at a spot.
+        if on_fishing_screen(&frame)? {
+            trace::note("arrived, fishing open");
+            return Ok(Arrival::Arrived);
+        }
         let Some(rod) = frame.find(RODS, ARRIVAL, 0.76)? else {
             continue;
         };

@@ -310,12 +310,11 @@ pub(super) fn same_tab(a: &str, b: &str) -> bool {
     short.len() >= 5 && (0..=short.len() - 5).any(|i| long.contains(&short[i..i + 5]))
 }
 
-/// Spots given up for this run and how often each map sent the character
-/// walking, so no spot or map can keep the run busy forever.
+/// How often each map sent the character walking, so no map can keep the run
+/// busy forever.
 pub(super) struct Visits {
     cap_per_map: u32,
     walks: HashMap<String, u32>,
-    blocked: HashSet<(String, String)>,
 }
 
 impl Visits {
@@ -323,7 +322,6 @@ impl Visits {
         Self {
             cap_per_map,
             walks: HashMap::new(),
-            blocked: HashSet::new(),
         }
     }
 
@@ -335,14 +333,6 @@ impl Visits {
         }
         *walks += 1;
         true
-    }
-
-    pub(super) fn block(&mut self, map: &str, spot: &str) {
-        self.blocked.insert((map.to_owned(), spot.to_owned()));
-    }
-
-    pub(super) fn is_blocked(&self, map: &str, spot: &str) -> bool {
-        self.blocked.contains(&(map.to_owned(), spot.to_owned()))
     }
 }
 
@@ -502,9 +492,6 @@ mod tests {
         assert!(visits.visit("novaris") && visits.visit("novaris"));
         assert!(!visits.visit("novaris"));
         assert!(visits.visit("refinery"));
-        visits.block("novaris", "luckyspot");
-        assert!(visits.is_blocked("novaris", "luckyspot"));
-        assert!(!visits.is_blocked("refinery", "luckyspot"));
     }
 
     #[test]
