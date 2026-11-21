@@ -14,9 +14,10 @@ pub(super) const MAP_VIEW: Rect = Rect {
     width: 930,
     height: 1310,
 };
-/// Buttons inside `MAP_VIEW` that are not map: the side buttons top left and
-/// the Homestead button bottom left.
-const MAP_BUTTONS: [Rect; 2] = [
+/// Buttons inside `MAP_VIEW` that are not map: the side buttons top left, the
+/// Homestead button bottom left and "Return to World" bottom right (shown when
+/// the viewed map is not the character's).
+const MAP_BUTTONS: [Rect; 3] = [
     Rect {
         x: 0,
         y: 0,
@@ -29,26 +30,35 @@ const MAP_BUTTONS: [Rect; 2] = [
         width: 120,
         height: 580,
     },
+    Rect {
+        x: 640,
+        y: 1380,
+        width: 440,
+        height: 140,
+    },
 ];
 /// A view with fewer bright pixels than this shows no map, only the dark
 /// background beyond the map's edge (measured 0.001–0.003 empty, 0.009 and
 /// more with map).
 const EMPTY_VIEW: f32 = 0.005;
 const BRIGHT: u8 = 60;
+/// Mean brightness change below which a swipe did not move the map: the map
+/// is clamped at its edge (measured 2.1 still, 8 and more moved).
+const STILL: f32 = 5.0;
 /// The strip of map tabs below the map.
 pub(super) const TAB_STRIP: Rect = Rect {
     x: 0,
     y: 1540,
     width: 1080,
-    height: 110,
+    height: 150,
 };
 /// Finger travel of one grid step; the map moves about 550 px.
 const STEP: u32 = 600;
 /// Swipe duration; 500 ms swipes were sometimes ignored by the game.
 pub(super) const SWIPE_MS: u32 = 700;
-/// Empty views in a row that are still crossed, so water between islands does
-/// not end the search.
-const MAX_GAP: u8 = 2;
+/// Width of the band along each side of the view that decides whether the map
+/// goes on in that direction.
+const SIDE_BAND: u32 = 250;
 pub(super) const MAX_VIEWS_PER_MAP: usize = 80;
 pub(super) const MAX_VISITS_PER_MAP: u32 = 20;
 
@@ -74,11 +84,12 @@ pub(super) fn swipe_for(heading: Heading) -> (Point, Point) {
     }
 }
 
-/// True when the view shows only the dark background beyond the map.
-pub(super) fn is_empty_view(frame: &GrayImage) -> bool {
+/// True when the part `area` of the view shows only the dark background
+/// beyond the map.
+fn is_empty(frame: &GrayImage, area: Rect) -> bool {
     let (mut bright, mut total) = (0u32, 0u32);
-    for y in (MAP_VIEW.y..MAP_VIEW.y + MAP_VIEW.height).step_by(4) {
-        for x in (MAP_VIEW.x..MAP_VIEW.x + MAP_VIEW.width).step_by(4) {
+    for y in (area.y..area.y + area.height).step_by(4) {
+        for x in (area.x..area.x + area.width).step_by(4) {
             if x >= frame.width() || y >= frame.height() || on_button(x, y) {
                 continue;
             }
@@ -89,22 +100,73 @@ pub(super) fn is_empty_view(frame: &GrayImage) -> bool {
     total == 0 || (bright as f32) < EMPTY_VIEW * total as f32
 }
 
-fn on_button(x: u32, y: u32) -> bool {
+/// True when the view shows only the dark background beyond the map.
+pub(super) fn is_empty_view(frame: &GrayImage) -> bool {
+    is_empty(frame, MAP_VIEW)
+}
+
+/// For each side (right, left, down, up): does the map reach the view's edge
+/// there, so the map may go on in that direction?
+pub(super) fn open_sides(frame: &GrayImage) -> [bool; 4] {
+    let v = MAP_VIEW;
+    let band = |x, y, width, height| {
+        !is_empty(
+            frame,
+            Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+        )
+    };
+    [
+        band(v.x + v.width - SIDE_BAND, v.y, SIDE_BAND, v.height),
+        band(v.x, v.y, SIDE_BAND, v.height),
+        band(v.x, v.y + v.height - SIDE_BAND, v.width, SIDE_BAND),
+        band(v.x, v.y, v.width, SIDE_BAND),
+    ]
+}
+
+/// True when the map moved between two views; false when a swipe hit the
+/// edge the game clamps the map to.
+pub(super) fn moved(before: &GrayImage, after: &GrayImage) -> bool {
+    let (mut change, mut total) = (0u64, 0u64);
+    let v = MAP_VIEW;
+    for y in (v.y..v.y + v.height).step_by(4) {
+        for x in (v.x..v.x + v.width).step_by(4) {
+            let inside =
+                x < before.width().min(after.width()) && y < before.height().min(after.height());
+            if !inside || on_button(x, y) {
+                continue;
+            }
+            let (a, b) = (before.get_pixel(x, y).0[0], after.get_pixel(x, y).0[0]);
+            change += u64::from(a.abs_diff(b));
+            total += 1;
+        }
+    }
+    total > 0 && change as f32 >= STILL * total as f32
+}
+
+pub(super) fn on_button(x: u32, y: u32) -> bool {
     MAP_BUTTONS
         .iter()
         .any(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
 }
 
-type Cell = (i32, i32);
+pub(super) type Cell = (i32, i32);
 
 /// Flood fill over grid views, starting where the map opened. Every view with
-/// map is scanned once; its neighbours are visited, crossing up to
-/// `MAX_GAP - 1` empty views.
+/// map is scanned once; a neighbour is visited when the map reaches the edge of
+/// the view towards it.
 pub(super) struct Explorer {
     at: Cell,
+    /// The view before the last step, to go back to when it did not move.
+    from: Cell,
     max_views: usize,
-    /// Gap (empty views since the last map) of every visited cell.
-    seen: HashMap<Cell, u8>,
+    seen: HashSet<Cell>,
+    /// Visited cells that show map; the view moves across these.
+    land: HashSet<Cell>,
     queue: Vec<Cell>,
     queued: HashSet<Cell>,
 }
@@ -113,45 +175,43 @@ impl Explorer {
     pub(super) fn new(max_views: usize) -> Self {
         Self {
             at: (0, 0),
+            from: (0, 0),
             max_views,
-            seen: HashMap::new(),
+            seen: HashSet::new(),
+            land: HashSet::new(),
             queue: Vec::new(),
             queued: HashSet::new(),
         }
     }
 
-    /// Records what the current view shows. Returns true when the view is new
-    /// and shows map, so it should be searched for markers.
-    pub(super) fn record(&mut self, empty: bool) -> bool {
-        if self.seen.contains_key(&self.at) {
+    /// The grid position of the current view; (0, 0) is where the search began.
+    pub(super) fn at(&self) -> Cell {
+        self.at
+    }
+
+    /// Records what the current view shows: whether it is empty and towards
+    /// which sides (right, left, down, up) the map goes on. Returns true when
+    /// the view is new and shows map, so it should be searched for markers.
+    pub(super) fn record(&mut self, empty: bool, open: [bool; 4]) -> bool {
+        if !self.seen.insert(self.at) {
             return false;
         }
-        let gap = if empty {
-            1 + self
-                .neighbours(self.at)
-                .iter()
-                .filter_map(|c| self.seen.get(c))
-                .min()
-                .copied()
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        self.seen.insert(self.at, gap);
-        if gap < MAX_GAP {
-            for cell in self.neighbours(self.at) {
-                if !self.seen.contains_key(&cell) && self.queued.insert(cell) {
-                    self.queue.push(cell);
-                }
+        if empty {
+            return false;
+        }
+        self.land.insert(self.at);
+        for (cell, open) in self.neighbours(self.at).into_iter().zip(open) {
+            if open && !self.seen.contains(&cell) && self.queued.insert(cell) {
+                self.queue.push(cell);
             }
         }
-        !empty
+        true
     }
 
     /// The next grid step towards the nearest view still to visit; `None` when
     /// every reachable view was seen or the view limit is reached.
     pub(super) fn next_move(&mut self) -> Option<Heading> {
-        self.queue.retain(|c| !self.seen.contains_key(c));
+        self.queue.retain(|c| !self.seen.contains(c));
         if self.seen.len() >= self.max_views {
             return None;
         }
@@ -160,15 +220,8 @@ impl Explorer {
             .queue
             .iter()
             .min_by_key(|c| ((c.0 - at.0).abs() + (c.1 - at.1).abs(), c.1, c.0))?;
-        let heading = if target.0 > at.0 {
-            Heading::Right
-        } else if target.0 < at.0 {
-            Heading::Left
-        } else if target.1 > at.1 {
-            Heading::Down
-        } else {
-            Heading::Up
-        };
+        let heading = self.first_step(target);
+        self.from = at;
         self.at = match heading {
             Heading::Right => (at.0 + 1, at.1),
             Heading::Left => (at.0 - 1, at.1),
@@ -176,6 +229,45 @@ impl Explorer {
             Heading::Up => (at.0, at.1 - 1),
         };
         Some(heading)
+    }
+
+    /// The last step did not move the map: the view is still where it was.
+    /// The cell it aimed at lies beyond the clamped edge and is given up.
+    pub(super) fn stuck(&mut self) {
+        self.seen.insert(self.at);
+        self.at = self.from;
+    }
+
+    /// First step of the shortest way to `target` across views that show map,
+    /// so no empty views are crossed on the way; straight when there is none.
+    fn first_step(&self, target: Cell) -> Heading {
+        let headings = [Heading::Right, Heading::Left, Heading::Down, Heading::Up];
+        let mut first: HashMap<Cell, Heading> = HashMap::new();
+        let mut frontier = std::collections::VecDeque::from([self.at]);
+        while let Some(cell) = frontier.pop_front() {
+            if cell == target {
+                if let Some(&heading) = first.get(&cell) {
+                    return heading;
+                }
+            }
+            for (next, heading) in self.neighbours(cell).into_iter().zip(headings) {
+                let passable = next == target || self.land.contains(&next);
+                if passable && next != self.at && !first.contains_key(&next) {
+                    first.insert(next, *first.get(&cell).unwrap_or(&heading));
+                    frontier.push_back(next);
+                }
+            }
+        }
+        let at = self.at;
+        if target.0 > at.0 {
+            Heading::Right
+        } else if target.0 < at.0 {
+            Heading::Left
+        } else if target.1 > at.1 {
+            Heading::Down
+        } else {
+            Heading::Up
+        }
     }
 
     fn neighbours(&self, (x, y): Cell) -> [Cell; 4] {
@@ -208,6 +300,14 @@ pub(super) fn map_tabs(lines: &[TextLine], locks: &[Point]) -> Vec<Tab> {
         .collect();
     tabs.sort_by_key(|tab| tab.at.0);
     tabs
+}
+
+/// True when two tab names read by OCR name the same map. OCR misreads single
+/// letters ("Refinerv") and adds stray letters in front ("rrefinery"), so five
+/// letters in a row that both share decide.
+pub(super) fn same_tab(a: &str, b: &str) -> bool {
+    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    short.len() >= 5 && (0..=short.len() - 5).any(|i| long.contains(&short[i..i + 5]))
 }
 
 /// Spots given up for this run and how often each map sent the character
@@ -250,8 +350,9 @@ impl Visits {
 mod tests {
     use super::*;
 
-    /// Runs the explorer over a map given as content cells and returns the
-    /// cells it searched and how many views it looked at.
+    /// Runs the explorer over a map given as content cells (a side is open
+    /// when the neighbour there has content) and returns the cells it searched
+    /// and how many views it looked at.
     fn explore(content: &[Cell], max_views: usize) -> (Vec<Cell>, usize) {
         let mut explorer = Explorer::new(max_views);
         let mut scanned = Vec::new();
@@ -259,8 +360,10 @@ mod tests {
         loop {
             views += 1;
             assert!(views < 1000, "explorer does not end");
-            if explorer.record(!content.contains(&explorer.at)) {
-                scanned.push(explorer.at);
+            let at = explorer.at;
+            let open = explorer.neighbours(at).map(|c| content.contains(&c));
+            if explorer.record(!content.contains(&at), open) {
+                scanned.push(at);
             }
             if explorer.next_move().is_none() {
                 break;
@@ -271,20 +374,21 @@ mod tests {
 
     #[test]
     fn explorer_searches_every_part_of_an_irregular_map_once() {
-        // An L-shaped main land and an island across one empty view.
-        let content = [(0, 0), (1, 0), (2, 0), (0, 1), (0, 2), (2, 2)];
-        let (mut scanned, _) = explore(&content, 200);
+        let content = [(0, 0), (1, 0), (2, 0), (0, 1), (0, 2), (2, -1), (2, -2)];
+        let (mut scanned, views) = explore(&content, 200);
         scanned.sort();
         let mut expected = content.to_vec();
         expected.sort();
         assert_eq!(scanned, expected);
+        assert_eq!(views, content.len(), "no empty views around the map");
     }
 
     #[test]
-    fn explorer_does_not_cross_two_empty_views() {
+    fn explorer_does_not_leave_the_map_where_it_ends() {
         let content = [(0, 0), (3, 0)];
-        let (scanned, _) = explore(&content, 200);
+        let (scanned, views) = explore(&content, 200);
         assert_eq!(scanned, vec![(0, 0)]);
+        assert_eq!(views, 1);
     }
 
     #[test]
@@ -297,11 +401,23 @@ mod tests {
     #[test]
     fn explorer_moves_one_grid_step_at_a_time() {
         let mut explorer = Explorer::new(50);
-        explorer.record(false);
+        explorer.record(false, [true; 4]);
         let before = explorer.at;
         explorer.next_move().unwrap();
         let after = explorer.at;
         assert_eq!((before.0 - after.0).abs() + (before.1 - after.1).abs(), 1);
+    }
+
+    #[test]
+    fn sides_are_open_where_the_map_touches_the_edge() {
+        // Map only along the right edge of the view.
+        let mut image = GrayImage::from_pixel(1080, 1920, image::Luma([20]));
+        for y in 115..1425 {
+            for x in 900..970 {
+                image.put_pixel(x, y, image::Luma([200]));
+            }
+        }
+        assert_eq!(open_sides(&image), [true, false, true, true]);
     }
 
     #[test]
@@ -364,6 +480,16 @@ mod tests {
     }
 
     #[test]
+    fn tabs_match_despite_single_misread_letters() {
+        assert!(same_tab("refinery", "refinerv"));
+        assert!(same_tab("rrefinery", "refinery"));
+        assert!(same_tab("hnovaris", "novaris"));
+        assert!(same_tab("arcaneaffa", "arcaneaff"));
+        assert!(!same_tab("novaris", "refinery"));
+        assert!(!same_tab("", ""));
+    }
+
+    #[test]
     fn text_outside_the_strip_is_no_tab() {
         let mut title = line("Novaris", 200.0);
         title.y = 40.0;
@@ -379,5 +505,46 @@ mod tests {
         visits.block("novaris", "luckyspot");
         assert!(visits.is_blocked("novaris", "luckyspot"));
         assert!(!visits.is_blocked("refinery", "luckyspot"));
+    }
+
+    #[test]
+    fn a_step_that_does_not_move_the_map_goes_back_and_is_not_tried_again() {
+        let mut explorer = Explorer::new(80);
+        assert!(explorer.record(false, [true, false, false, false]));
+        assert_eq!(explorer.next_move(), Some(Heading::Right));
+        explorer.stuck();
+        assert_eq!(explorer.at(), (0, 0));
+        assert_eq!(explorer.next_move(), None, "the clamped side is done");
+    }
+
+    #[test]
+    fn a_still_view_is_told_from_a_moved_one() {
+        let mut before = GrayImage::from_pixel(1080, 1920, image::Luma([20]));
+        for y in 600..900 {
+            for x in 500..800 {
+                before.put_pixel(x, y, image::Luma([200]));
+            }
+        }
+        let mut still = before.clone();
+        // A pulsing icon changes a few pixels without the map moving.
+        for y in 300..340 {
+            for x in 600..640 {
+                still.put_pixel(x, y, image::Luma([255]));
+            }
+        }
+        assert!(!moved(&before, &still));
+        let mut shifted = GrayImage::from_pixel(1080, 1920, image::Luma([20]));
+        for y in 600..900 {
+            for x in 100..400 {
+                shifted.put_pixel(x, y, image::Luma([200]));
+            }
+        }
+        assert!(moved(&before, &shifted));
+    }
+
+    #[test]
+    fn the_return_to_world_button_is_not_map() {
+        assert!(on_button(850, 1440));
+        assert!(!on_button(850, 1300));
     }
 }

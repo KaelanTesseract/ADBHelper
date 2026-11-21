@@ -15,7 +15,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-// Used by the map navigation that follows in the next step.
+// The map search is wired into `run` in the next step.
+#[allow(dead_code)]
+mod map;
 #[allow(dead_code)]
 mod route;
 
@@ -28,21 +30,12 @@ const HOOK: Rect = Rect {
     width: 300,
     height: 345,
 };
-// Parked: map navigation is off until the minigame works reliably (2026-11-21).
-#[allow(dead_code)]
+/// Where the fishing button shows when the character stands at a spot.
 const ARRIVAL: Rect = Rect {
     x: 390,
     y: 1060,
     width: 300,
     height: 340,
-};
-// Parked: map navigation is off until the minigame works reliably (2026-11-21).
-#[allow(dead_code)]
-const MAP_MARKERS: Rect = Rect {
-    x: 40,
-    y: 115,
-    width: 930,
-    height: 1310,
 };
 /// Centre of the cast / bite / Tap & Hold button on the fishing screen.
 const ROD_BUTTON: Point = (541, 1449);
@@ -290,195 +283,17 @@ impl Driver<'_> {
             .map_err(ActionError::from)
     }
 
+    fn swipe(&self, size: Point, from: Point, to: Point) -> Result<(), ActionError> {
+        vision::ensure_not_cancelled(self.cancelled)?;
+        trace::note(&format!("swipe {from:?} -> {to:?}"));
+        adb::swipe_game_points(self.serial, from, to, size, route::SWIPE_MS)
+            .map_err(|e| e.to_string())?;
+        self.settle()
+    }
+
     fn settle(&self) -> Result<(), ActionError> {
         vision::settle_cancellable(self.cancelled)
     }
-}
-
-// Parked: map navigation is off until the minigame works reliably (2026-11-21).
-#[allow(dead_code)]
-fn is_map(frame: &Frame) -> Result<bool, ActionError> {
-    let top = image::imageops::crop_imm(&frame.gray, 0, 0, 425, 200).to_image();
-    Ok(ocr::recognize(&top)?
-        .iter()
-        .any(|l| ascii_key(&l.text).contains("explorationprogress")))
-}
-
-fn zero_attempts(label: &str) -> bool {
-    let compact: String = label.chars().filter(|c| !c.is_whitespace()).collect();
-    let Some((first, _)) = compact.split_once('/') else {
-        return false;
-    };
-    first.ends_with('0')
-        && !first
-            .chars()
-            .rev()
-            .nth(1)
-            .is_some_and(|c| c.is_ascii_digit())
-}
-
-// Parked: map navigation is off until the minigame works reliably (2026-11-21).
-#[allow(dead_code)]
-fn open_map(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Frame, ActionError> {
-    let frame = driver.read()?;
-    if is_map(&frame)? {
-        return Ok(frame);
-    }
-    let size = common::navigate_to_current_overview(driver.serial, driver.cancelled, log)?;
-    driver.tap(size, (903, 192))?;
-    for _ in 0..8 {
-        driver.settle()?;
-        let frame = driver.read()?;
-        if is_map(&frame)? {
-            return Ok(frame);
-        }
-    }
-    Err(tr!("fishing-could-not-verify-the-world-map").into())
-}
-
-// Parked: map navigation is off until the minigame works reliably (2026-11-21).
-#[allow(dead_code)]
-fn next_marker(frame: &Frame, rejected: &[Point]) -> Result<Option<Point>, ActionError> {
-    let mut masked;
-    let gray = if rejected.is_empty() {
-        &frame.gray
-    } else {
-        masked = frame.gray.clone();
-        for &(x, y) in rejected {
-            for py in y.saturating_sub(46)..(y + 46).min(masked.height()) {
-                for px in x.saturating_sub(46)..(x + 46).min(masked.width()) {
-                    masked.put_pixel(px, py, image::Luma([0]));
-                }
-            }
-        }
-        &masked
-    };
-    if let Some((_, full)) = vision::get_match(
-        gray,
-        &["fishing/map_marker.png", "fishing/map_marker_small.png"],
-        MAP_MARKERS,
-        0.83,
-    )? {
-        return Ok(Some(full.center()));
-    }
-    // The player's location arrow can cover the left half of an active spot.
-    Ok(vision::get_match(
-        gray,
-        &[
-            "fishing/map_marker_edge.png",
-            "fishing/map_marker_edge_small.png",
-        ],
-        MAP_MARKERS,
-        0.90,
-    )?
-    .map(|(_, edge)| edge.center()))
-}
-
-// Parked: map navigation is off until the minigame works reliably (2026-11-21).
-#[allow(dead_code)]
-fn walking_button(frame: &Frame, marker: Point) -> Result<Option<Point>, ActionError> {
-    let lines = ocr::recognize(&frame.gray)?;
-    let nearby = |line: &&ocr::TextLine| {
-        let (x, y) = line.center();
-        x.abs_diff(marker.0) <= 450 && y.abs_diff(marker.1) <= 700
-    };
-    let title = lines
-        .iter()
-        .filter(nearby)
-        .find(|l| ascii_key(&l.text).contains("ingspot"));
-    // The title can be clipped at the left map edge. The fish badge beside the
-    // counter also identifies the spot panel.
-    let mut counter = None;
-    for line in lines.iter().filter(nearby).filter(|l| l.text.contains('/')) {
-        let (x, y) = line.center();
-        if frame
-            .find(
-                &["fishing/map_counter.png"],
-                Rect {
-                    x: x.saturating_sub(150),
-                    y: y.saturating_sub(38),
-                    width: 155,
-                    height: 76,
-                },
-                0.79,
-            )?
-            .is_some()
-        {
-            counter = Some(line);
-            break;
-        }
-    }
-    if title.is_none() && counter.is_none() {
-        return Ok(None);
-    }
-    if counter.is_some_and(|l| zero_attempts(&l.text))
-        || title.is_some_and(|l| zero_attempts(&l.text))
-    {
-        return Ok(None);
-    }
-    let top = marker.1.saturating_sub(240);
-    let bottom = marker.1.saturating_sub(32);
-    frame.find(
-        &["fishing/map_walk.png"],
-        Rect {
-            x: marker.0.saturating_sub(200),
-            y: top,
-            width: 390,
-            height: bottom.saturating_sub(top),
-        },
-        0.83,
-    )
-}
-
-// Parked: map navigation is off until the minigame works reliably (2026-11-21).
-#[allow(dead_code)]
-fn approach_spot(
-    driver: &Driver<'_>,
-    mut map: Frame,
-    log: &mut impl FnMut(String),
-) -> Result<bool, ActionError> {
-    let mut rejected = Vec::new();
-    let mut zoom_steps = 0;
-    for _ in 0..22 {
-        let Some(marker) = next_marker(&map, &rejected)? else {
-            if zoom_steps == 4 {
-                return Ok(false);
-            }
-            // The zoom-minus button is part of the verified region map.
-            driver.tap(map.size, (1020, 1223))?;
-            driver.settle()?;
-            map = driver.read()?;
-            if !is_map(&map)? {
-                return Ok(false);
-            }
-            rejected.clear();
-            zoom_steps += 1;
-            continue;
-        };
-        trace::note(&format!("map marker {marker:?}"));
-        driver.tap(map.size, marker)?;
-        driver.settle()?;
-        let panel = driver.read()?;
-        if let Some(walk) = walking_button(&panel, marker)? {
-            log(tr!("fishing-walking-to-the-fishing-spot").into());
-            driver.tap(panel.size, walk)?;
-            driver.settle()?;
-            let deadline = Instant::now() + crate::timing::secs(65);
-            while Instant::now() < deadline {
-                let frame = driver.read()?;
-                if let Some(rod) = frame.find(RODS, ARRIVAL, 0.76)? {
-                    trace::note("arrived, rod visible");
-                    driver.tap(frame.size, rod)?;
-                    driver.settle()?;
-                    return Ok(true);
-                }
-                driver.settle()?;
-            }
-            return Err(tr!("fishing-the-character-did-not-reach-the").into());
-        }
-        rejected.push(marker);
-    }
-    Ok(false)
 }
 
 /// The pull bar of the minigame, read by colour like ADB AutoPlayer's
@@ -892,9 +707,9 @@ mod tests {
 
     #[test]
     fn remaining_count_distinguishes_zero_from_ten() {
-        assert!(zero_attempts("Remaining attempts: 0 / 10"));
-        assert!(!zero_attempts("Remaining attempts: 10/10"));
-        assert!(!zero_attempts("Remaining attempts: 1/10"));
+        assert!(map::zero_attempts("Remaining attempts: 0 / 10"));
+        assert!(!map::zero_attempts("Remaining attempts: 10/10"));
+        assert!(!map::zero_attempts("Remaining attempts: 1/10"));
     }
 
     #[test]
@@ -917,19 +732,11 @@ mod tests {
             }
         };
         let map = load("fishing-map");
-        assert!(is_map(&map).unwrap());
-        let marker = next_marker(&map, &[]).unwrap().expect("fishing marker");
-        assert!(marker.0.abs_diff(627) < 20 && marker.1.abs_diff(360) < 20);
-        let overlap = next_marker(&load("fishing-route-test-map"), &[])
-            .unwrap()
-            .expect("marker beneath location arrow");
-        assert!(
-            overlap.0.abs_diff(570) < 30 && overlap.1.abs_diff(956) < 26,
-            "{overlap:?}"
-        );
-        assert!(walking_button(&load("fishing-marker"), marker)
-            .unwrap()
-            .is_some());
+        assert!(map::is_map(&map).unwrap());
+        assert!(matches!(
+            map::read_panel(&load("fishing-marker"), (627, 360)).unwrap(),
+            map::PanelDecision::Walk(_)
+        ));
         assert!(load("fishing-arrived")
             .find(RODS, ARRIVAL, 0.76)
             .unwrap()
@@ -971,16 +778,20 @@ mod tests {
             Some(true)
         );
         assert!(load("fishing-before-optimized").book().unwrap());
-        let zoomed = next_marker(&load("fishing-live2-end"), &[])
-            .unwrap()
-            .expect("zoomed-out marker");
-        assert!(
-            zoomed.0.abs_diff(177) < 30 && zoomed.1.abs_diff(1125) < 30,
-            "{zoomed:?}"
-        );
-        assert!(walking_button(&load("fishing-second-panel"), zoomed)
-            .unwrap()
-            .is_some());
+        assert!(matches!(
+            map::read_panel(&load("fishing-second-panel"), (177, 1125)).unwrap(),
+            map::PanelDecision::Walk(_)
+        ));
+    }
+
+    #[test]
+    #[ignore = "prints the OCR lines of one image (ADBHELPER_OCR_IMAGE)"]
+    fn ocr_image_diagnostic() {
+        let path = std::env::var_os("ADBHELPER_OCR_IMAGE").expect("image path");
+        let image = image::open(path).unwrap().to_luma8();
+        for line in ocr::recognize(&image).unwrap() {
+            println!("OCR {:?} at {:?}", line.text, line.center());
+        }
     }
 
     #[test]
@@ -1003,16 +814,28 @@ mod tests {
         for line in ocr::recognize(&top).unwrap() {
             println!("map title OCR: {:?} at {:?}", line.text, line.center());
         }
-        println!("is_map: {:?}", is_map(&frame));
-        println!("next_marker: {:?}", next_marker(&frame, &[]));
-        for path in [
-            "fishing/map_marker.png",
-            "fishing/map_marker_small.png",
-            "fishing/map_marker_edge.png",
-            "fishing/map_marker_edge_small.png",
-        ] {
-            let best = vision::find_template(&frame.gray, path, MAP_MARKERS, 0.0).unwrap();
-            println!("{path}: {:?}", best.map(|m| (m.center(), m.confidence)));
+        println!("is_map: {:?}", map::is_map(&frame));
+        println!("empty view: {}", route::is_empty_view(&frame.gray));
+        println!("open sides: {:?}", route::open_sides(&frame.gray));
+        println!("arrow: {:?}", map::find_arrow(&frame));
+        println!("zoom knob: {:?}", map::slider_knob(&frame.gray));
+        println!("markers: {:?}", map::markers(&frame));
+        println!("tabs: {:?}", map::read_tabs(&frame));
+        if std::env::var_os("ADBHELPER_FISHING_OCR").is_some() {
+            for line in ocr::recognize(&frame.gray).unwrap() {
+                println!("OCR {:?} at {:?}", line.text, line.center());
+            }
+        }
+        // ADBHELPER_FISHING_MARKER=x,y reads the spot panel of that marker.
+        if let Some(marker) = std::env::var("ADBHELPER_FISHING_MARKER")
+            .ok()
+            .and_then(|v| {
+                v.split_once(',')
+                    .map(|(x, y)| (x.parse().ok(), y.parse().ok()))
+            })
+            .and_then(|p| Some((p.0?, p.1?)))
+        {
+            println!("panel: {:?}", map::read_panel(&frame, marker));
         }
         println!(
             "book: {:?}, remaining: {:?}",
@@ -1080,6 +903,69 @@ mod tests {
         trace::note(&format!("result: {result:?}"));
         println!("result: {result:?}");
         std::thread::sleep(Duration::from_secs(3));
+    }
+
+    #[test]
+    #[ignore = "searches every map tab for fishing spots and reads their panels, without walking"]
+    fn connected_emulator_map_survey() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let driver = Driver {
+            serial: &serial,
+            cancelled: &cancelled,
+            stream: None,
+            seen: std::cell::Cell::new(0),
+            input_busy: std::sync::Arc::new(AtomicBool::new(false)),
+        };
+        let mut log = |line: String| {
+            trace::note(&format!("log: {line}"));
+            println!("{line}");
+        };
+        let frame = map::open_map(&driver, &mut log).unwrap();
+        let tabs = map::read_tabs(&frame).unwrap();
+        println!("tabs: {tabs:?}");
+        for tab in &tabs {
+            let started = Instant::now();
+            let Some((view, arrow)) = map::anchor(&driver, &tab.name).unwrap() else {
+                println!("{}: no arrow", tab.name);
+                continue;
+            };
+            let spots = map::explore(&driver, view, map::origin((0, 0), arrow)).unwrap();
+            println!(
+                "{}: {} spots {spots:?} in {:.0} s",
+                tab.name,
+                spots.len(),
+                started.elapsed().as_secs_f32()
+            );
+            for spot in spots {
+                // Back to a known view: leave the map, open it, pick the tab.
+                let size = driver.read().unwrap().size;
+                map::close_map(&driver, size).unwrap();
+                map::open_map(&driver, &mut log).unwrap();
+                let (view, arrow) = map::anchor(&driver, &tab.name)
+                    .unwrap()
+                    .expect("arrow again");
+                match map::go_to(&driver, view, map::origin((0, 0), arrow), spot).unwrap() {
+                    Some((marker, frame)) => {
+                        driver.tap(frame.size, marker).unwrap();
+                        driver.settle().unwrap();
+                        let panel = driver.read().unwrap();
+                        let decision = map::read_panel(&panel, marker).unwrap();
+                        println!(
+                            "{}: spot {spot:?} marker {marker:?} -> {decision:?}",
+                            tab.name
+                        );
+                    }
+                    None => println!("{}: spot {spot:?} not found again", tab.name),
+                }
+            }
+            let size = driver.read().unwrap().size;
+            map::close_map(&driver, size).unwrap();
+            map::open_map(&driver, &mut log).unwrap();
+        }
+        let size = driver.read().unwrap().size;
+        map::close_map(&driver, size).unwrap();
+        std::thread::sleep(Duration::from_secs(2));
     }
 
     #[test]

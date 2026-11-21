@@ -164,6 +164,13 @@ fn visit_cap_stops_a_map() {
   - `pub(super) fn walk_to(driver: &Driver<'_>, walk: Point, log: &mut impl FnMut(String)) -> Result<Arrival, ActionError>` – tippt „Hinlaufen“, wartet bis `WALK_LIMIT_S` auf `RODS` in `ARRIVAL`, tippt ihn bei Ankunft; sonst bekannte Popups über `recovery` schließen und `Blocked`.
   - Jeder Kartenschritt (Reiter, Zoom, Wischen mit `moved`-Ergebnis, Marker, Zählertext, Entscheidung, Ankunft) schreibt eine Zeile über `trace::note`, Bilder über `trace::frame`.
 
+**Umgesetzt abweichend (nach Such-Testläufen 1–6):**
+- Statt `prepare`/`find_spot`: `anchor` (Reiter tippen, ganz herauszoomen, Ortspfeil `map_arrow.png` suchen) und `explore` (Flutfüllung über Ausschnitte, nur zu Seiten, an denen die Karte den Rand berührt; Wege über bekannte Kartenstücke). Stellen werden als Kartenpunkte relativ zum Ortspfeil gemerkt und mit `go_to` wieder angefahren (Treffer im Lauf 6: 68–83 px Abweichung).
+- Kartenrand: Manche Karten (Refinery) laufen nicht ins Dunkle aus, sondern bleiben stehen. `route::moved` (mittlere Helligkeitsänderung < 5) erkennt das; `Explorer::stuck` geht zurück, `go_to` korrigiert die erwartete Position.
+- „Return to World“ unten rechts zählt nicht als Kartenfläche. Nach dem Schließen einer fremden Karte tippt `close_map` „Return to World“ und bestätigt „Leave the current map and return to the entrance?“ (Haken 865,1270). `open_map` beantwortet vorher eine offene Beenden-Frage mit „Nein“.
+- Stellenfenster: Zähler ist herausgezoomt nicht lesbar; `PANEL_CLOSE` = Karte schließen und neu öffnen.
+- Ignorierter Test heißt `connected_emulator_map_survey`.
+
 - [ ] **Step 1: Failing test für die einzige reine Entscheidung schreiben** – die Fenster-Auswertung wird als `fn panel_decision(title: Option<&str>, counter: Option<&str>, walk: Option<Point>) -> PanelDecision` (`Walk(Point)`, `Empty`, `Unknown`) aus `walking_button` herausgelöst:
 
 ```rust
