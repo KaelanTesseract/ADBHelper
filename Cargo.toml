@@ -27,7 +27,7 @@ minisign-verify = "=0.3.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_Security_Credentials", "Win32_System_SystemInformation", "Win32_System_Threading"] }
-windows = { version = "0.62.2", features = ["Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_System_WinRT"] }
+windows = { version = "0.62.2", features = ["Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_WinRT"] }
 
 [dev-dependencies]
 # Parses the .ftl files in tests to compare ids and placeholders; MIT OR Apache-2.0.

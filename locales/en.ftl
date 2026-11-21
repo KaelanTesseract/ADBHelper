@@ -177,6 +177,9 @@ fishing-walking-to-the-fishing-spot = Walking to the fishing spot.
 fishing-the-character-did-not-reach-the = The character did not reach the fishing spot.
 fishing-fishing-did-not-return-to-a = Fishing did not return to a verified cast or catch screen.
 fishing-no-reachable-fishing-spot-with-attempts = No reachable fishing spot with attempts was found on the current map.
+fishing-open-the-fishing-screen-first = Open fishing at a fishing spot first, so the Cast button is visible, then start Fishing.
+fishing-fishing-at-the-open-spot = Fishing at the open fishing spot.
+fishing-no-live-stream = The live screen stream did not start; fishing continues with slower screenshots.
 
 ## legend-trial
 
@@ -346,7 +349,7 @@ app-action-settings-maximum-battles = Maximum battles
 app-action-settings-stops-when-your-available-attempts-run = Stops when your available attempts run out.
 app-action-settings-opponent-selection = Opponent selection
 app-action-settings-uses-your-three-in-game-teams = Uses your three in-game teams. Selects Next twice, then Battle.
-app-action-settings-uses-available-fishing-spots-on-the = Uses available fishing spots on the current region map.
+app-action-settings-uses-available-fishing-spots-on-the = Open fishing at a fishing spot in the game, then start this action. It plays the minigame until the spot has no attempts left.
 app-action-settings-import-the-completed-json-backup-in = Import the completed JSON backup in AFKJ Tracker.
 app-action-settings-past-dream-realm-days = Past Dream Realm days
 app-action-settings-guild-activeness = Guild activeness
@@ -416,7 +419,7 @@ app-dashboard-play-daily-arena-battles = Play daily Arena battles
 app-dashboard-play-daily-supreme-arena-battles = Play daily Supreme Arena battles
 app-dashboard-export-your-hero-roster-for-afkj = Export your hero roster for AFKJ Tracker
 app-dashboard-export-guild-activity-and-rankings = Export guild activity and rankings
-app-dashboard-walk-to-fishing-spots-and-fish = Walk to fishing spots and fish
+app-dashboard-walk-to-fishing-spots-and-fish = Plays the fishing minigame at the open spot
 app-dashboard-activity = Activity
 app-dashboard-current-game-mode = CURRENT GAME MODE
 app-dashboard-last-game-mode = LAST GAME MODE

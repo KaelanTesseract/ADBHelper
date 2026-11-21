@@ -3,11 +3,13 @@
 
 mod matching;
 mod screen;
+mod stream;
 mod templates;
 mod wait;
 
 pub(in crate::afk_journey) use matching::*;
 pub(in crate::afk_journey) use screen::*;
+pub(in crate::afk_journey) use stream::ScreenStream;
 pub(in crate::afk_journey) use templates::*;
 pub(crate) use wait::ensure_not_cancelled;
 pub(in crate::afk_journey) use wait::*;

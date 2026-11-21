@@ -177,6 +177,9 @@ fishing-walking-to-the-fishing-spot = Läuft zur Angelstelle.
 fishing-the-character-did-not-reach-the = Die Spielfigur hat die Angelstelle nicht erreicht.
 fishing-fishing-did-not-return-to-a = Beim Angeln wurde keine eindeutige Auswurf- oder Fangansicht mehr erkannt.
 fishing-no-reachable-fishing-spot-with-attempts = Auf der aktuellen Karte wurde keine erreichbare Angelstelle mit freien Versuchen gefunden.
+fishing-open-the-fishing-screen-first = Öffne zuerst das Angeln an einer Angelstelle, sodass der Cast-Knopf zu sehen ist, und starte dann Fishing.
+fishing-fishing-at-the-open-spot = Angeln an der geöffneten Angelstelle.
+fishing-no-live-stream = Der Live-Bildschirmstream ist nicht gestartet; das Angeln läuft mit langsameren Screenshots weiter.
 
 ## legend-trial
 
@@ -346,7 +349,7 @@ app-action-settings-maximum-battles = Maximale Kämpfe
 app-action-settings-stops-when-your-available-attempts-run = Endet vorher, wenn keine vorhandenen Versuche mehr verfügbar sind. Es werden keine Versuche gekauft.
 app-action-settings-opponent-selection = Gegnerauswahl
 app-action-settings-uses-your-three-in-game-teams = Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf.
-app-action-settings-uses-available-fishing-spots-on-the = Nutzt verfügbare Angelstellen auf der Karte der aktuellen Region.
+app-action-settings-uses-available-fishing-spots-on-the = Öffne im Spiel das Angeln an einer Angelstelle und starte dann diese Aktion. Sie spielt das Minispiel, bis die Stelle keine Versuche mehr hat.
 app-action-settings-import-the-completed-json-backup-in = Importiere die vollständige JSON-Sicherung in AFKJ Tracker.
 app-action-settings-past-dream-realm-days = Vergangene Dream-Realm-Tage
 app-action-settings-guild-activeness = Gildenaktivität
@@ -416,7 +419,7 @@ app-dashboard-play-daily-arena-battles = Tägliche Arena-Kämpfe spielen
 app-dashboard-play-daily-supreme-arena-battles = Tägliche Supreme-Arena-Kämpfe spielen
 app-dashboard-export-your-hero-roster-for-afkj = Heldenkader für AFKJ Tracker exportieren
 app-dashboard-export-guild-activity-and-rankings = Gildenaktivität und Ranglisten exportieren
-app-dashboard-walk-to-fishing-spots-and-fish = Angelstellen anlaufen und angeln
+app-dashboard-walk-to-fishing-spots-and-fish = Spielt das Angel-Minispiel an der geöffneten Stelle
 app-dashboard-activity = Aktivität
 app-dashboard-current-game-mode = AKTUELLER SPIELMODUS
 app-dashboard-last-game-mode = LETZTER SPIELMODUS
