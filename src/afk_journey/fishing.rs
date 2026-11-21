@@ -15,6 +15,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Used by the map navigation that follows in the next step.
+#[allow(dead_code)]
+mod route;
+
 type Point = (u32, u32);
 type Rect = vision::Rect;
 
