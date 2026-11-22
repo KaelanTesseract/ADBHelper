@@ -91,6 +91,7 @@ Verfügbare Events zuerst umsetzen. Titan Reaver und Synergy & CC benötigen die
 
 ## Release-Stand
 
+- 0.5.2 findet auch ältere MuMu Player (Nemu), erklärt im Log ADB-Pfad, Ports und nicht bereite Geräte; Download nur noch als Installer. 175 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.2)
 - 0.5.1 findet MuMu Player selbst (MuMu Player 12, andere Laufwerke, alle üblichen Ports). 170 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.1)
 - 0.5.0 mit Installer (pro Benutzer, ohne Adminrechte) und Umstiegshilfe, signierten Updates (minisign), automatischen Wartezeiten, Log-Dateien, sicher gespeichertem Guild-Manager-Zugang, Fishing-Vorschau mit Warnhinweis und Sprachdateien. 166 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.0)
 - 0.4.8 behebt Fehler in Daily, Dura’s Trials und der Ausrüstungserkennung. 130 automatisierte Tests sind bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.4.8)
