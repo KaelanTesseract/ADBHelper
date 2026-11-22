@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --glow: #47E3E0;
+    --glow-soft: rgba(71, 227, 224, 0.35);
+    --text: #F2F4F7;
+    --muted: #A9B4BE;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1536px; height: 1024px; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(ellipse 900px 520px at 50% -8%, rgba(71, 227, 224, 0.16), transparent 70%),
+      radial-gradient(ellipse 700px 420px at 50% 112%, rgba(71, 227, 224, 0.10), transparent 70%),
+      linear-gradient(#0b0d10, #07080a);
+    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    color: var(--text);
+    position: relative;
+  }
+  body::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse at center, black 40%, transparent 85%);
+  }
+  .page { position: relative; padding: 60px 56px 0; text-align: center; }
+  .brand { display: flex; align-items: center; justify-content: center; gap: 22px; }
+  .brand img { height: 70px; filter: drop-shadow(0 0 14px var(--glow-soft)); }
+  .brand .name { font-size: 46px; font-weight: 700; letter-spacing: 0.3px; }
+  .brand .bar { width: 2px; height: 46px; background: rgba(255,255,255,0.35); }
+  .pill {
+    border: 3px solid var(--glow); border-radius: 40px; padding: 6px 26px 8px;
+    font-size: 34px; font-weight: 800; letter-spacing: 1.5px; color: var(--glow);
+    box-shadow: 0 0 22px var(--glow-soft), inset 0 0 14px rgba(71,227,224,0.18);
+  }
+  h1 { margin-top: 26px; font-size: 84px; font-weight: 800; letter-spacing: -1px; line-height: 1.05; }
+  .sub { display: flex; align-items: center; justify-content: center; gap: 22px; margin-top: 18px; font-size: 32px; color: var(--muted); }
+  .sub .line { width: 230px; height: 2px; background: linear-gradient(90deg, transparent, var(--glow)); }
+  .sub .line.r { background: linear-gradient(90deg, var(--glow), transparent); }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-top: 48px; }
+  .card {
+    display: flex; align-items: center; gap: 20px; text-align: left;
+    height: 232px; padding: 0 26px;
+    border: 2px solid rgba(71, 227, 224, 0.55); border-radius: 22px;
+    background: linear-gradient(160deg, rgba(71,227,224,0.07), rgba(255,255,255,0.015));
+    box-shadow: 0 0 26px rgba(71,227,224,0.12), inset 0 0 22px rgba(71,227,224,0.05);
+  }
+  .card svg { width: 76px; height: 76px; flex: none; stroke: var(--glow); fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 8px var(--glow-soft)); }
+  .card .divider { width: 2px; align-self: stretch; margin: 46px 0; background: rgba(71,227,224,0.45); flex: none; }
+  .card h2 { font-size: 34px; font-weight: 700; line-height: 1.15; white-space: nowrap; }
+  .card p { margin-top: 10px; font-size: 25px; color: var(--muted); line-height: 1.25; }
+  .tag { display: inline-block; margin-left: 8px; padding: 1px 10px 3px; border-radius: 10px; font-size: 18px; font-weight: 700; vertical-align: 6px; color: #0b0d10; background: #F1F05C; }
+  .footer { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 52px; font-size: 34px; font-weight: 600; }
+  .footer svg { width: 36px; height: 36px; fill: var(--glow); }
+
+  .grid { grid-template-columns: repeat(2, 1fr); gap: 28px 30px; margin-top: 44px; }
+  .card { height: 214px; }
+  .num { position: absolute; }
+  .card { position: relative; }
+  .step { flex: none; width: 50px; height: 50px; border-radius: 50%; border: 2px solid var(--glow); color: var(--glow);
+          font-size: 28px; font-weight: 800; display: flex; align-items: center; justify-content: center;
+          box-shadow: 0 0 14px var(--glow-soft); }
+  .card p { font-size: 26px; }
+  .note { display: inline-flex; align-items: center; gap: 14px; margin-top: 36px; font-size: 29px; color: var(--muted); }
+  .note b { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="brand">
+    <img src="../../assets/adbhelper-logo-v2.png" alt="">
+    <span class="name">ADBHelper</span>
+    <span class="bar"></span>
+    <span class="pill">RELEASE 0.5.3</span>
+  </div>
+  <h1>Fishing, start to finish</h1>
+  <div class="sub"><span class="line"></span>What the Fishing action does<span class="line r"></span></div>
+
+  <div class="grid">
+    <div class="card">
+      <span class="step">1</span>
+      <svg viewBox="0 0 64 64"><path d="M6 14l16-6 20 6 16-6v42l-16 6-20-6-16 6z"/><path d="M22 8v42M42 14v42"/><circle cx="32" cy="30" r="5"/><path d="M36 34l6 6"/></svg>
+      <span class="divider"></span>
+      <div><h2>Searches the maps</h2><p>Every unlocked map tab, view by view</p></div>
+    </div>
+    <div class="card">
+      <span class="step">2</span>
+      <svg viewBox="0 0 64 64"><path d="M32 58s-16-15-16-28a16 16 0 0 1 32 0c0 13-16 28-16 28z"/><circle cx="32" cy="30" r="6"/><path d="M8 58h48" stroke-dasharray="4 6"/></svg>
+      <span class="divider"></span>
+      <div><h2>Walks to each spot</h2><p>Finds every fishing spot again and goes there</p></div>
+    </div>
+    <div class="card">
+      <span class="step">3</span>
+      <svg viewBox="0 0 64 64"><path d="M8 8c14 0 26 4 34 14"/><path d="M42 22v14a8 8 0 0 1-16 0v-3l-4 4"/><path d="M6 54c5-4 10-4 15 0s10 4 15 0 10-4 15 0 8 3 10 1"/></svg>
+      <span class="divider"></span>
+      <div><h2>Fishes</h2><p>Taps the bite bar in the middle and holds the line</p></div>
+    </div>
+    <div class="card">
+      <span class="step">4</span>
+      <svg viewBox="0 0 64 64"><path d="M14 58V8"/><path d="M14 10h34l-8 10 8 10H14"/></svg>
+      <span class="divider"></span>
+      <div><h2>Stops by itself</h2><p>When no spot has attempts left</p></div>
+    </div>
+  </div>
+
+  <div class="note"><b>Start anywhere in the game world.</b> Still a preview, so keep an eye on the emulator.</div>
+
+  <div class="footer">
+    <svg viewBox="0 0 24 24"><path d="M2 4.5l8.2-1.1v8H2zM11.2 3.2L22 1.7v9.7H11.2zM2 12.6h8.2v8L2 19.4zM11.2 12.6H22v9.7l-10.8-1.5z"/></svg>
+    Windows x64 installer
+  </div>
+</div>
+</body>
+</html>
+<!-- Rendered with: msedge --headless=new --window-size=1536,1024 --screenshot=ADBHelper-v0.5.3.png v0.5.3-graphic.html -->
