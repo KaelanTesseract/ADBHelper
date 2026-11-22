@@ -50,42 +50,168 @@ fn find_on_path() -> Option<PathBuf> {
     })
 }
 
+/// MuMu Player's adb, searched once per app start: the search asks the
+/// registry and looks through every drive, too slow for every ADB command.
 #[cfg(windows)]
 fn mumu_player_adb() -> Option<PathBuf> {
+    static FOUND: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    FOUND
+        .get_or_init(|| mumu_adb_candidates(&mumu_roots()).into_iter().next())
+        .clone()
+}
+
+/// Folders that may hold MuMu Player: the install folders Windows lists for
+/// uninstalling, and the usual Netease folders on every drive, so a MuMu
+/// version or drive we did not know of is still found. Searched on every
+/// start, so an update that moves MuMu is followed without a setting.
+#[cfg(windows)]
+fn mumu_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
+    for key in [
+        r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    ] {
+        let mut command = Command::new("reg");
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        if let Ok(output) = command.args(["query", key, "/s", "/f", "MuMu"]).output() {
+            roots.extend(mumu_install_dirs(&String::from_utf8_lossy(&output.stdout)));
+        }
+    }
     for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
         if let Some(root) = std::env::var_os(variable) {
-            roots.push(PathBuf::from(root).join("Netease").join("MuMuPlayer"));
+            roots.push(PathBuf::from(root).join("Netease"));
         }
     }
-    roots.push(PathBuf::from(r"C:\Program Files\Netease\MuMuPlayer"));
+    for drive in b'C'..=b'Z' {
+        let drive = PathBuf::from(format!("{}:\\", drive as char));
+        if !drive.is_dir() {
+            continue;
+        }
+        for folder in ["Program Files", "Program Files (x86)", ""] {
+            roots.push(drive.join(folder).join("Netease"));
+        }
+        roots.push(drive.clone());
+    }
+    roots
+}
 
+/// Every `adb.exe` of MuMu Player under `roots`, best first. A root is either
+/// a MuMu install folder itself or a folder holding them (such as Netease).
+/// Known layouts: `nx_device/<version>/shell` and `nx_main` (MuMu Player),
+/// `shell` (MuMu Player 12), `emulator/nemu/vmonitor/bin` (older MuMu).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn mumu_adb_candidates(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let is_mumu = |path: &std::path::Path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().contains("mumu"))
+    };
+    let mut found: Vec<PathBuf> = Vec::new();
     for root in roots {
-        let mut candidates = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(root.join("nx_device")) {
-            candidates.extend(
-                entries
-                    .filter_map(Result::ok)
-                    .map(|entry| entry.path().join("shell").join("adb.exe")),
+        let installs = if is_mumu(root) {
+            vec![root.clone()]
+        } else {
+            let mut installs: Vec<PathBuf> = std::fs::read_dir(root)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir() && is_mumu(path))
+                .collect();
+            installs.sort();
+            installs
+        };
+        for install in installs {
+            let mut devices: Vec<PathBuf> = std::fs::read_dir(install.join("nx_device"))
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path().join("shell").join("adb.exe"))
+                .collect();
+            let version = |path: &PathBuf| {
+                path.parent()
+                    .and_then(|shell| shell.parent())
+                    .and_then(|directory| directory.file_name())
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.parse::<f32>().ok())
+                    .unwrap_or_default()
+            };
+            devices.sort_by(|left, right| version(right).total_cmp(&version(left)));
+            devices.push(install.join("nx_main").join("adb.exe"));
+            devices.push(install.join("shell").join("adb.exe"));
+            devices.push(
+                install
+                    .join("emulator")
+                    .join("nemu")
+                    .join("vmonitor")
+                    .join("bin")
+                    .join("adb_server.exe"),
             );
-            candidates.sort_by(|left, right| {
-                let version = |path: &PathBuf| {
-                    path.parent()
-                        .and_then(|shell| shell.parent())
-                        .and_then(|directory| directory.file_name())
-                        .and_then(|name| name.to_str())
-                        .and_then(|name| name.parse::<f32>().ok())
-                        .unwrap_or_default()
-                };
-                version(right).total_cmp(&version(left))
-            });
-        }
-        candidates.push(root.join("nx_main").join("adb.exe"));
-        if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
-            return Some(path);
+            for path in devices {
+                if path.is_file() && !found.contains(&path) {
+                    found.push(path);
+                }
+            }
         }
     }
-    None
+    found
+}
+
+/// MuMu install folders from `reg query … /s /f MuMu` output: per key whose
+/// name or display name mentions MuMu, the install location or the folder of
+/// its uninstaller.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn mumu_install_dirs(output: &str) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for block in output.split("HKEY_").skip(1) {
+        if !block.to_ascii_lowercase().contains("mumu") {
+            continue;
+        }
+        let value = |name: &str| {
+            block.lines().find_map(|line| {
+                let line = line.trim();
+                let rest = line.strip_prefix(name)?.trim_start();
+                let rest = rest
+                    .strip_prefix("REG_SZ")
+                    .or_else(|| rest.strip_prefix("REG_EXPAND_SZ"))?;
+                let text = rest.trim();
+                // An uninstall command may carry arguments after the quoted path.
+                let path = match text.strip_prefix('"') {
+                    Some(quoted) => quoted.split('"').next()?,
+                    None => text,
+                };
+                (!path.is_empty()).then(|| PathBuf::from(path))
+            })
+        };
+        let dir = value("InstallLocation")
+            .or_else(|| value("UninstallString").and_then(|path| path.parent().map(PathBuf::from)));
+        if let Some(dir) = dir {
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+    }
+    dirs
+}
+
+/// Ports MuMu Player listens on: 7555 (older MuMu), 16384 and the next
+/// instances 32 apart (MuMu Player 12), 5555; a port set in `MUMU_ADB_PORT`
+/// comes first.
+fn mumu_ports(configured: Option<&str>) -> Vec<u16> {
+    let mut ports: Vec<u16> = configured
+        .and_then(|port| port.trim().parse().ok())
+        .into_iter()
+        .collect();
+    for port in [7555, 16384, 16416, 16448, 16480, 5555] {
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    ports
 }
 
 pub fn suggested_adb_path() -> String {
@@ -107,9 +233,11 @@ fn connect_mumu() {
     if !is_mumu_adb() && !mumu_installed {
         return;
     }
-    let port = std::env::var("MUMU_ADB_PORT").unwrap_or_else(|_| "7555".to_owned());
-    let address = format!("127.0.0.1:{port}");
-    let _ = adb_command().args(["connect", address.as_str()]).output();
+    let configured = std::env::var("MUMU_ADB_PORT").ok();
+    for port in mumu_ports(configured.as_deref()) {
+        let address = format!("127.0.0.1:{port}");
+        let _ = adb_command().args(["connect", address.as_str()]).output();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -537,5 +665,118 @@ mod process_tests {
         ] {
             assert!(parse_game_process(response).is_err(), "{response}");
         }
+    }
+
+    fn fake_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("adbhelper-emulator-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn touch(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn mumu_adb_is_found_in_every_known_layout() {
+        let netease = fake_dir("layouts");
+        // MuMu Player 12 and the newer MuMu Player keep adb in different places.
+        touch(
+            &netease
+                .join("MuMuPlayer-12.0")
+                .join("shell")
+                .join("adb.exe"),
+        );
+        touch(&netease.join("MuMuPlayer").join("nx_main").join("adb.exe"));
+        touch(
+            &netease
+                .join("MuMuPlayer")
+                .join("nx_device")
+                .join("12.0")
+                .join("shell")
+                .join("adb.exe"),
+        );
+        touch(&netease.join("Other").join("shell").join("adb.exe"));
+        let found = mumu_adb_candidates(std::slice::from_ref(&netease));
+        assert_eq!(
+            found,
+            [
+                netease
+                    .join("MuMuPlayer")
+                    .join("nx_device")
+                    .join("12.0")
+                    .join("shell")
+                    .join("adb.exe"),
+                netease.join("MuMuPlayer").join("nx_main").join("adb.exe"),
+                netease
+                    .join("MuMuPlayer-12.0")
+                    .join("shell")
+                    .join("adb.exe"),
+            ]
+        );
+        std::fs::remove_dir_all(&netease).unwrap();
+    }
+
+    #[test]
+    fn an_install_folder_counts_as_well_as_its_parent() {
+        let install = fake_dir("install").join("MuMu Player 12");
+        touch(&install.join("shell").join("adb.exe"));
+        assert_eq!(
+            mumu_adb_candidates(std::slice::from_ref(&install)),
+            [install.join("shell").join("adb.exe")]
+        );
+        std::fs::remove_dir_all(install.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn mumu_install_folders_are_read_from_the_uninstall_entries() {
+        let output = r#"
+HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\MuMuPlayer-12.0
+    DisplayName    REG_SZ    MuMu Player 12
+    UninstallString    REG_SZ    "D:\Games\Netease\MuMuPlayer-12.0\uninstall.exe"
+    DisplayIcon    REG_SZ    D:\Games\Netease\MuMuPlayer-12.0\shell\MuMuPlayer.exe
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam
+    UninstallString    REG_SZ    "C:\Program Files (x86)\Steam\uninstall.exe"
+"#;
+        assert_eq!(
+            mumu_install_dirs(output),
+            [std::path::PathBuf::from(
+                r"D:\Games\Netease\MuMuPlayer-12.0"
+            )]
+        );
+        // The newer MuMu Player names its install folder directly.
+        let output = r#"
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MuMuPlayerGlobal
+    DisplayName    REG_SZ    MuMuPlayer
+    InstallLocation    REG_SZ    C:\Program Files\Netease\MuMuPlayer
+    UninstallString    REG_SZ    "C:\Program Files\Netease\MuMuPlayer\uninstall.exe"
+
+End of search: 4 match(es) found.
+"#;
+        assert_eq!(
+            mumu_install_dirs(output),
+            [std::path::PathBuf::from(
+                r"C:\Program Files\Netease\MuMuPlayer"
+            )]
+        );
+    }
+
+    #[test]
+    fn every_usual_mumu_port_is_tried_and_a_set_port_first() {
+        assert_eq!(mumu_ports(None), [7555, 16384, 16416, 16448, 16480, 5555]);
+        assert_eq!(
+            mumu_ports(Some("16512")),
+            [16512, 7555, 16384, 16416, 16448, 16480, 5555]
+        );
+        assert_eq!(
+            mumu_ports(Some("7555")),
+            [7555, 16384, 16416, 16448, 16480, 5555]
+        );
+        assert_eq!(
+            mumu_ports(Some("kein Port")),
+            [7555, 16384, 16416, 16448, 16480, 5555]
+        );
     }
 }
