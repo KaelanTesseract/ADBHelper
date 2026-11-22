@@ -178,7 +178,9 @@ fishing-fishing-did-not-return-to-a = Fishing did not return to a verified cast 
 fishing-fishing-at-the-open-spot = Fishing at the open fishing spot.
 fishing-searching-map = Searching { $map } for fishing spots.
 fishing-no-spots-with-attempts-left = No fishing spots with attempts are left.
-fishing-spot-skipped = A fishing spot could not be reached and is skipped for this run.
+fishing-spot-skipped = A fishing spot could not be reached, so the rest of this map is skipped for this run.
+fishing-map-skipped = { $map } could not be searched completely and is skipped for this run.
+fishing-done-some-skipped = Fishing finished. Some spots or maps were skipped; see the messages above.
 fishing-no-live-stream = The live screen stream did not start; fishing continues with slower screenshots.
 
 ## legend-trial

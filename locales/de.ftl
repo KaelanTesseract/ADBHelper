@@ -178,7 +178,9 @@ fishing-fishing-did-not-return-to-a = Beim Angeln wurde keine eindeutige Auswurf
 fishing-fishing-at-the-open-spot = Angeln an der geöffneten Angelstelle.
 fishing-searching-map = Suche Angelstellen auf { $map }.
 fishing-no-spots-with-attempts-left = Keine Angelstellen mit Versuchen mehr übrig.
-fishing-spot-skipped = Eine Angelstelle war nicht erreichbar und wird in diesem Lauf übersprungen.
+fishing-spot-skipped = Eine Angelstelle war nicht erreichbar, deshalb wird der Rest dieser Karte in diesem Lauf übersprungen.
+fishing-map-skipped = { $map } konnte nicht vollständig abgesucht werden und wird in diesem Lauf übersprungen.
+fishing-done-some-skipped = Angeln beendet. Einige Stellen oder Karten wurden übersprungen, siehe die Meldungen oben.
 fishing-no-live-stream = Der Live-Bildschirmstream ist nicht gestartet; das Angeln läuft mit langsameren Screenshots weiter.
 
 ## legend-trial

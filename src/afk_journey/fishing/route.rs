@@ -169,6 +169,10 @@ pub(super) struct Explorer {
     land: HashSet<Cell>,
     queue: Vec<Cell>,
     queued: HashSet<Cell>,
+    /// Steps (from, to) that did not move the map.
+    walls: HashSet<(Cell, Cell)>,
+    /// Swipes so far.
+    moves: usize,
 }
 
 impl Explorer {
@@ -181,6 +185,8 @@ impl Explorer {
             land: HashSet::new(),
             queue: Vec::new(),
             queued: HashSet::new(),
+            walls: HashSet::new(),
+            moves: 0,
         }
     }
 
@@ -211,16 +217,25 @@ impl Explorer {
     /// The next grid step towards the nearest view still to visit; `None` when
     /// every reachable view was seen or the view limit is reached.
     pub(super) fn next_move(&mut self) -> Option<Heading> {
-        self.queue.retain(|c| !self.seen.contains(c));
-        if self.seen.len() >= self.max_views {
+        // Every swipe counts, also those that did not move the map, so the
+        // search ends even when the game keeps ignoring swipes.
+        if self.seen.len() >= self.max_views || self.moves >= self.max_views * 4 {
             return None;
         }
         let at = self.at;
-        let target = *self
-            .queue
-            .iter()
-            .min_by_key(|c| ((c.0 - at.0).abs() + (c.1 - at.1).abs(), c.1, c.0))?;
-        let heading = self.first_step(target);
+        let heading = loop {
+            self.queue.retain(|c| !self.seen.contains(c));
+            let target = *self
+                .queue
+                .iter()
+                .min_by_key(|c| ((c.0 - at.0).abs() + (c.1 - at.1).abs(), c.1, c.0))?;
+            match self.first_step(target) {
+                Some(heading) => break heading,
+                // Only a step that did not move leads there: give it up.
+                None => self.queue.retain(|&c| c != target),
+            }
+        };
+        self.moves += 1;
         self.from = at;
         self.at = match heading {
             Heading::Right => (at.0 + 1, at.1),
@@ -234,24 +249,27 @@ impl Explorer {
     /// The last step did not move the map: the view is still where it was.
     /// The cell it aimed at lies beyond the clamped edge and is given up.
     pub(super) fn stuck(&mut self) {
+        self.walls.insert((self.from, self.at));
         self.seen.insert(self.at);
         self.at = self.from;
     }
 
     /// First step of the shortest way to `target` across views that show map,
     /// so no empty views are crossed on the way; straight when there is none.
-    fn first_step(&self, target: Cell) -> Heading {
+    /// `None` when the only way is a step that did not move the map before.
+    fn first_step(&self, target: Cell) -> Option<Heading> {
         let headings = [Heading::Right, Heading::Left, Heading::Down, Heading::Up];
         let mut first: HashMap<Cell, Heading> = HashMap::new();
         let mut frontier = std::collections::VecDeque::from([self.at]);
         while let Some(cell) = frontier.pop_front() {
             if cell == target {
                 if let Some(&heading) = first.get(&cell) {
-                    return heading;
+                    return Some(heading);
                 }
             }
             for (next, heading) in self.neighbours(cell).into_iter().zip(headings) {
-                let passable = next == target || self.land.contains(&next);
+                let passable = (next == target || self.land.contains(&next))
+                    && !self.walls.contains(&(cell, next));
                 if passable && next != self.at && !first.contains_key(&next) {
                     first.insert(next, *first.get(&cell).unwrap_or(&heading));
                     frontier.push_back(next);
@@ -259,15 +277,16 @@ impl Explorer {
             }
         }
         let at = self.at;
-        if target.0 > at.0 {
-            Heading::Right
+        let (heading, next) = if target.0 > at.0 {
+            (Heading::Right, (at.0 + 1, at.1))
         } else if target.0 < at.0 {
-            Heading::Left
+            (Heading::Left, (at.0 - 1, at.1))
         } else if target.1 > at.1 {
-            Heading::Down
+            (Heading::Down, (at.0, at.1 + 1))
         } else {
-            Heading::Up
-        }
+            (Heading::Up, (at.0, at.1 - 1))
+        };
+        (!self.walls.contains(&(at, next))).then_some(heading)
     }
 
     fn neighbours(&self, (x, y): Cell) -> [Cell; 4] {
@@ -533,5 +552,23 @@ mod tests {
     fn the_return_to_world_button_is_not_map() {
         assert!(on_button(850, 1440));
         assert!(!on_button(850, 1300));
+    }
+
+    #[test]
+    fn an_explorer_that_keeps_getting_stuck_still_ends() {
+        // Map in a row; every step to the right "does not move" although the
+        // target was seen before, which once planned the same step forever.
+        let mut explorer = Explorer::new(80);
+        explorer.record(false, [true, false, false, false]);
+        explorer.next_move();
+        explorer.record(false, [true, true, false, false]);
+        // Back at the start, with (1, 0) seen and (2, 0) still to visit.
+        explorer.at = (0, 0);
+        let mut steps = 0;
+        while explorer.next_move().is_some() {
+            explorer.stuck();
+            steps += 1;
+            assert!(steps < 1000, "explorer does not end");
+        }
     }
 }

@@ -783,15 +783,22 @@ pub fn run(
     let tabs = map::read_tabs(&frame)?;
     trace::note(&format!("tabs {tabs:?}"));
     let mut visits = route::Visits::new(route::MAX_VISITS_PER_MAP);
+    let mut complete = true;
     for tab in &tabs {
-        count += fish_map(&mut driver, &tab.name, &mut visits, log, report)?;
+        let (caught, searched_all) = fish_map(&mut driver, &tab.name, &mut visits, log, report)?;
+        count += caught;
+        complete &= searched_all;
     }
     if let Ok(frame) = driver.read() {
         if map::is_map(&frame)? {
             map::close_map(&driver, frame.size)?;
         }
     }
-    log(tr!("fishing-no-spots-with-attempts-left").into());
+    if complete {
+        log(tr!("fishing-no-spots-with-attempts-left").into());
+    } else {
+        log(tr!("fishing-done-some-skipped").into());
+    }
     Ok(count)
 }
 
@@ -816,31 +823,37 @@ fn fish_streamed(
 /// Searches one map tab, then walks to each spot found there and fishes until
 /// it has no attempts left. Spots are map points with the location arrow at
 /// (0, 0) when the search began; after walking, the arrow is the character at
-/// the spot it walked to.
+/// the spot it walked to. Returns the catches and whether every spot found
+/// was reached.
 fn fish_map(
     driver: &mut Driver<'_>,
     name: &str,
     visits: &mut route::Visits,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
-) -> Result<u32, ActionError> {
+) -> Result<(u32, bool), ActionError> {
     log(tr!("fishing-searching-map", map = name.to_owned()));
     let Some((view, arrow)) = map::anchor(driver, name)? else {
         trace::note(&format!("{name}: no arrow, skipped"));
-        return Ok(0);
+        log(tr!("fishing-map-skipped", map = name.to_owned()));
+        return Ok((0, false));
     };
     let spots = map::explore(driver, view, map::origin((0, 0), arrow))?;
     trace::note(&format!("{name}: spots {spots:?}"));
     let mut arrow_at = (0, 0);
     let mut count = 0;
+    let mut complete = true;
     for spot in spots {
         // A marker tap zooms in, so every spot starts from a fresh map view.
         reopen_map(driver, log)?;
         let Some((view, arrow)) = map::anchor(driver, name)? else {
+            log(tr!("fishing-map-skipped", map = name.to_owned()));
+            complete = false;
             break;
         };
         let Some((marker, frame)) = map::go_to(driver, view, map::origin(arrow_at, arrow), spot)?
         else {
+            complete = false;
             continue;
         };
         driver.tap(frame.size, marker)?;
@@ -851,6 +864,8 @@ fn fish_map(
         };
         if !visits.visit(name) {
             trace::note(&format!("{name}: visit limit"));
+            log(tr!("fishing-map-skipped", map = name.to_owned()));
+            complete = false;
             break;
         }
         match map::walk_to(driver, panel.size, walk, log)? {
@@ -862,12 +877,13 @@ fn fish_map(
                 // Where the character stopped is unknown, so the map's
                 // remaining spots cannot be found again from the arrow.
                 log(tr!("fishing-spot-skipped").into());
+                complete = false;
                 break;
             }
         }
     }
     reopen_map(driver, log)?;
-    Ok(count)
+    Ok((count, complete))
 }
 
 /// Closes the map if it is open (the back arrow is only tapped on the map),

@@ -22,10 +22,17 @@ pub(in crate::afk_journey) struct Nv12 {
 impl Nv12 {
     /// RGBA using BT.601 limited range, the default of ffmpeg that ADB
     /// AutoPlayer's colour thresholds were tuned with.
-    pub fn to_rgba(&self, width: u32, height: u32) -> RgbaImage {
-        let (width, height) = (width.min(self.width), height.min(self.height));
+    pub fn to_rgba(&self, width: u32, height: u32) -> Option<RgbaImage> {
         let stride = self.stride as usize;
+        let (width, height) = (
+            width.min(self.width).min(self.stride),
+            height.min(self.height),
+        );
         let uv_start = stride * self.height as usize;
+        // A decoder buffer shorter than the frame is skipped, not read past.
+        if self.data.len() < uv_start + stride * height.div_ceil(2) as usize {
+            return None;
+        }
         let mut image = RgbaImage::new(width, height);
         for (x, y, pixel) in image.enumerate_pixels_mut() {
             let luma = f32::from(self.data[y as usize * stride + x as usize]);
@@ -43,7 +50,7 @@ impl Nv12 {
                 255,
             ];
         }
-        image
+        Some(image)
     }
 }
 
@@ -102,22 +109,29 @@ pub(in crate::afk_journey) struct ScreenStream {
     latest: Arc<(Mutex<Latest>, Condvar)>,
     running: Arc<AtomicBool>,
     size: (u32, u32),
+    /// The running `screenrecord`, killed on drop: its reader blocks while the
+    /// screen is still and would otherwise keep it alive for minutes.
+    child: Recorder,
 }
+
+type Recorder = Arc<Mutex<Option<std::process::Child>>>;
 
 impl ScreenStream {
     /// Starts streaming and waits up to `first_frame` for a picture.
     pub fn start(serial: &str, size: (u32, u32), first_frame: Duration) -> Option<Self> {
         let latest = Arc::new((Mutex::new(Latest { frame: None }), Condvar::new()));
         let running = Arc::new(AtomicBool::new(true));
+        let child: Recorder = Arc::new(Mutex::new(None));
         let stream = Self {
             latest: latest.clone(),
             running: running.clone(),
             size,
+            child: child.clone(),
         };
         let serial = serial.to_owned();
         std::thread::Builder::new()
             .name("adbhelper-stream".into())
-            .spawn(move || platform::run(&serial, size, &running, &latest))
+            .spawn(move || platform::run(&serial, size, &running, &latest, &child))
             .ok()?;
         stream.next_after(0, first_frame).map(|_| stream)
     }
@@ -132,7 +146,9 @@ impl ScreenStream {
             if let Some((number, frame)) = latest.frame.as_ref().filter(|(n, _)| *n > seen) {
                 let (number, frame) = (*number, frame.clone());
                 drop(latest);
-                return Some((number, frame.to_rgba(self.size.0, self.size.1)));
+                return frame
+                    .to_rgba(self.size.0, self.size.1)
+                    .map(|image| (number, image));
             }
             let left = deadline.checked_duration_since(Instant::now())?;
             latest = ready.wait_timeout(latest, left).ok()?.0;
@@ -143,6 +159,11 @@ impl ScreenStream {
 impl Drop for ScreenStream {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
+        if let Ok(mut child) = self.child.lock() {
+            if let Some(child) = child.as_mut() {
+                let _ = child.kill();
+            }
+        }
     }
 }
 
@@ -319,6 +340,7 @@ mod platform {
         size: (u32, u32),
         running: &AtomicBool,
         latest: &(Mutex<Latest>, Condvar),
+        recorder: &super::Recorder,
     ) {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -335,6 +357,15 @@ mod platform {
             let Some(mut output) = child.stdout.take() else {
                 return;
             };
+            match recorder.lock() {
+                // Dropped meanwhile: do not start reading.
+                Ok(mut slot) if running.load(Ordering::Relaxed) => *slot = Some(child),
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+            }
             let mut splitter = NalSplitter::default();
             let mut buffer = vec![0_u8; 64 * 1024];
             while running.load(Ordering::Relaxed) {
@@ -354,8 +385,10 @@ mod platform {
                     break;
                 }
             }
-            let _ = child.kill();
-            let _ = child.wait();
+            if let Some(mut child) = recorder.lock().ok().and_then(|mut slot| slot.take()) {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
     }
@@ -368,7 +401,14 @@ mod platform {
     use std::sync::{Condvar, Mutex};
 
     /// No decoder outside Windows; callers fall back to screenshots.
-    pub(super) fn run(_: &str, _: (u32, u32), _: &AtomicBool, _: &(Mutex<Latest>, Condvar)) {}
+    pub(super) fn run(
+        _: &str,
+        _: (u32, u32),
+        _: &AtomicBool,
+        _: &(Mutex<Latest>, Condvar),
+        _: &super::Recorder,
+    ) {
+    }
 }
 
 #[cfg(test)]
@@ -431,10 +471,21 @@ mod tests {
             stride: 2,
             data: vec![16, 235, 81, 145, 128, 128],
         };
-        let image = frame.to_rgba(2, 2);
+        let image = frame.to_rgba(2, 2).expect("whole frame");
         assert_eq!(image.get_pixel(0, 0).0, [0, 0, 0, 255]);
         assert_eq!(image.get_pixel(1, 0).0, [255, 255, 255, 255]);
         let grey = image.get_pixel(0, 1).0;
         assert!(grey[0] == grey[1] && grey[1] == grey[2], "{grey:?}");
+    }
+
+    #[test]
+    fn a_frame_shorter_than_its_size_is_skipped_not_read_past() {
+        let frame = Nv12 {
+            width: 2,
+            height: 2,
+            stride: 2,
+            data: vec![16, 235, 81],
+        };
+        assert_eq!(frame.to_rgba(2, 2), None);
     }
 }
