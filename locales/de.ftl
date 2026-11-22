@@ -450,6 +450,15 @@ app-dashboard-steps-steps-your-daily-routine = { $steps } Schritte · Deine täg
 
 app-afk-journey-app-started-connect-an = AFK Journey · App gestartet. Verbinde ein Android-Gerät mit aktiviertem ADB-Debugging.
 app-no-authorized-adb-devices-found = Keine autorisierten ADB-Geräte gefunden.
+app-adb-using-setting = ADB: nutze { $path } (Einstellung ADB-Pfad).
+app-adb-using-path = ADB: nutze { $path } aus PATH.
+app-adb-using-mumu = ADB: nutze { $path } von MuMu Player.
+app-adb-not-found = ADB: kein adb gefunden. Starte MuMu Player einmal oder trage unter ADB-Pfad den Pfad zur adb.exe (im Ordner von MuMu Player) ein.
+app-adb-mumu-ports = ADB: MuMu Player antwortet auf Port { $ports }.
+app-adb-no-mumu-port = ADB: kein MuMu-Player-Port antwortet (versucht: { $ports }). Läuft MuMu Player?
+app-adb-device-offline = ADB: { $serial } ist offline. Starte MuMu Player neu; bringt ein anderes Programm ein eigenes adb mit, schließe es.
+app-adb-device-unauthorized = ADB: { $serial } ist nicht autorisiert. Erlaube USB-Debugging im Emulator.
+app-adb-device-state = ADB: { $serial } ist { $state }.
 app-settings = Einstellungen
 app-downloading-update = Update wird geladen
 app-automation-running = Automation läuft

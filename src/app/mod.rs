@@ -42,7 +42,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 enum Event {
-    Devices(Result<Vec<Device>, String>),
+    Devices(Result<adb::Scan, String>),
     Log(String),
     Busy(bool),
     Activity(ActivityEvent),
@@ -342,7 +342,7 @@ impl PlayerApp {
     fn refresh_devices(&self) {
         let sender = self.sender.clone();
         thread::spawn(move || {
-            let result = adb::devices().map_err(|error| error.to_string());
+            let result = adb::scan().map_err(|error| error.to_string());
             let _ = sender.send(Event::Devices(result));
         });
     }
@@ -356,7 +356,11 @@ impl PlayerApp {
             match event {
                 Event::DailyStep(index) => self.daily_step = Some(index),
                 Event::ScanExport(action, path) => self.scan_exports.push((action, path)),
-                Event::Devices(Ok(devices)) => {
+                Event::Devices(Ok(scan)) => {
+                    for line in adb_report(&scan) {
+                        self.log(line);
+                    }
+                    let devices = scan.devices;
                     if self
                         .selected_serial
                         .as_ref()
@@ -611,4 +615,89 @@ enum WindowButton {
     Minimize,
     Maximize { maximized: bool },
     Close,
+}
+
+/// Log lines that explain a device search: which adb, which MuMu Player
+/// ports answered, and devices that adb lists but that are not ready.
+fn adb_report(scan: &adb::Scan) -> Vec<String> {
+    let mut lines = vec![match &scan.adb {
+        adb::AdbSource::Setting(path) => {
+            tr!("app-adb-using-setting", path = path.display().to_string())
+        }
+        adb::AdbSource::Path(path) => {
+            tr!("app-adb-using-path", path = path.display().to_string())
+        }
+        adb::AdbSource::MuMu(path) => {
+            tr!("app-adb-using-mumu", path = path.display().to_string())
+        }
+        adb::AdbSource::NotFound => tr!("app-adb-not-found").into(),
+    }];
+    let (tried, answered) = &scan.ports;
+    let list = |ports: &[u16]| {
+        ports
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if answered.is_empty() {
+        lines.push(tr!("app-adb-no-mumu-port", ports = list(tried)));
+    } else {
+        lines.push(tr!("app-adb-mumu-ports", ports = list(answered)));
+    }
+    for (serial, state) in &scan.waiting {
+        lines.push(match state.as_str() {
+            "offline" => tr!("app-adb-device-offline", serial = serial.clone()),
+            "unauthorized" => tr!("app-adb-device-unauthorized", serial = serial.clone()),
+            _ => tr!(
+                "app-adb-device-state",
+                serial = serial.clone(),
+                state = state.clone()
+            ),
+        });
+    }
+    lines
+}
+
+#[cfg(test)]
+mod adb_report_tests {
+    use super::*;
+
+    #[test]
+    fn the_report_names_a_missing_adb_closed_ports_and_offline_devices() {
+        let scan = adb::Scan {
+            adb: adb::AdbSource::NotFound,
+            ports: (vec![7555, 16384], Vec::new()),
+            devices: Vec::new(),
+            waiting: vec![("127.0.0.1:7555".into(), "offline".into())],
+        };
+        let report = adb_report(&scan);
+        assert_eq!(report.len(), 3, "{report:?}");
+        assert_eq!(report[0], String::from(tr!("app-adb-not-found")));
+        assert!(report[1].contains("7555, 16384"), "{report:?}");
+        assert!(report[2].contains("127.0.0.1:7555"), "{report:?}");
+        assert_eq!(
+            report[2],
+            tr!(
+                "app-adb-device-offline",
+                serial = "127.0.0.1:7555".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn the_report_names_the_adb_and_the_ports_that_answered() {
+        let scan = adb::Scan {
+            adb: adb::AdbSource::MuMu("C:/MuMu/shell/adb.exe".into()),
+            ports: (vec![7555, 16384], vec![16384]),
+            devices: Vec::new(),
+            waiting: Vec::new(),
+        };
+        let report = adb_report(&scan);
+        assert!(report[0].contains("C:/MuMu/shell/adb.exe"), "{report:?}");
+        assert!(
+            report[1].contains("16384") && !report[1].contains("7555"),
+            "{report:?}"
+        );
+    }
 }

@@ -450,6 +450,15 @@ app-dashboard-steps-steps-your-daily-routine = { $steps } steps · Your daily ro
 
 app-afk-journey-app-started-connect-an = AFK Journey · App started. Connect an Android device with ADB debugging enabled.
 app-no-authorized-adb-devices-found = No authorized ADB devices found.
+app-adb-using-setting = ADB: using { $path } (ADB path setting).
+app-adb-using-path = ADB: using { $path } from PATH.
+app-adb-using-mumu = ADB: using MuMu Player's { $path }.
+app-adb-not-found = ADB: no adb found. Start MuMu Player once, or enter the path to adb.exe (in MuMu Player's folder) under ADB path.
+app-adb-mumu-ports = ADB: MuMu Player answered on port { $ports }.
+app-adb-no-mumu-port = ADB: no MuMu Player port answered (tried { $ports }). Is MuMu Player running?
+app-adb-device-offline = ADB: { $serial } is offline. Restart MuMu Player; if another program brings its own adb, close it.
+app-adb-device-unauthorized = ADB: { $serial } is not authorized. Allow USB debugging in the emulator.
+app-adb-device-state = ADB: { $serial } is { $state }.
 app-settings = Settings
 app-downloading-update = Downloading update
 app-automation-running = Automation running

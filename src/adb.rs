@@ -15,25 +15,45 @@ fn adb_command() -> Command {
 }
 
 fn executable() -> PathBuf {
+    match adb_source() {
+        AdbSource::Setting(path) | AdbSource::Path(path) | AdbSource::MuMu(path) => path,
+        AdbSource::NotFound => PathBuf::from("adb"),
+    }
+}
+
+/// Which adb ADBHelper uses and where it came from, for the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdbSource {
+    /// The ADB path setting (or `ADB_PATH`).
+    Setting(PathBuf),
+    /// Found in `PATH`.
+    Path(PathBuf),
+    /// MuMu Player's own adb.
+    MuMu(PathBuf),
+    /// Nothing found; plain `adb` is tried.
+    NotFound,
+}
+
+pub fn adb_source() -> AdbSource {
     for variable in ["ADB_PATH", "ADBUTILS_ADB_PATH"] {
         if let Some(path) = std::env::var_os(variable).filter(|path| !path.is_empty()) {
             let path = PathBuf::from(path);
             if path.is_file() {
-                return path;
+                return AdbSource::Setting(path);
             }
         }
     }
 
     if let Some(path) = find_on_path() {
-        return path;
+        return AdbSource::Path(path);
     }
 
     #[cfg(windows)]
     if let Some(path) = mumu_player_adb() {
-        return path;
+        return AdbSource::MuMu(path);
     }
 
-    PathBuf::from("adb")
+    AdbSource::NotFound
 }
 
 fn find_on_path() -> Option<PathBuf> {
@@ -72,13 +92,15 @@ fn mumu_roots() -> Vec<PathBuf> {
         r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
     ] {
-        let mut command = Command::new("reg");
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000);
-        }
-        if let Ok(output) = command.args(["query", key, "/s", "/f", "MuMu"]).output() {
-            roots.extend(mumu_install_dirs(&String::from_utf8_lossy(&output.stdout)));
+        for name in ["MuMu", "Nemu"] {
+            let mut command = Command::new("reg");
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x0800_0000);
+            }
+            if let Ok(output) = command.args(["query", key, "/s", "/f", name]).output() {
+                roots.extend(mumu_install_dirs(&String::from_utf8_lossy(&output.stdout)));
+            }
         }
     }
     for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
@@ -93,8 +115,9 @@ fn mumu_roots() -> Vec<PathBuf> {
         }
         for folder in ["Program Files", "Program Files (x86)", ""] {
             roots.push(drive.join(folder).join("Netease"));
+            // Older MuMu Player installs straight into Program Files as "Nemu".
+            roots.push(drive.join(folder));
         }
-        roots.push(drive.clone());
     }
     roots
 }
@@ -102,13 +125,17 @@ fn mumu_roots() -> Vec<PathBuf> {
 /// Every `adb.exe` of MuMu Player under `roots`, best first. A root is either
 /// a MuMu install folder itself or a folder holding them (such as Netease).
 /// Known layouts: `nx_device/<version>/shell` and `nx_main` (MuMu Player),
-/// `shell` (MuMu Player 12), `emulator/nemu/vmonitor/bin` (older MuMu).
+/// `shell` (MuMu Player 12), `vmonitor/bin` in a `Nemu` folder and
+/// `emulator/nemu/vmonitor/bin` (older MuMu Player, `adb_server.exe`).
 #[cfg_attr(not(windows), allow(dead_code))]
 fn mumu_adb_candidates(roots: &[PathBuf]) -> Vec<PathBuf> {
     let is_mumu = |path: &std::path::Path| {
         path.file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.to_ascii_lowercase().contains("mumu"))
+            .is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                name.contains("mumu") || name.contains("nemu")
+            })
     };
     let mut found: Vec<PathBuf> = Vec::new();
     for root in roots {
@@ -143,6 +170,7 @@ fn mumu_adb_candidates(roots: &[PathBuf]) -> Vec<PathBuf> {
             devices.sort_by(|left, right| version(right).total_cmp(&version(left)));
             devices.push(install.join("nx_main").join("adb.exe"));
             devices.push(install.join("shell").join("adb.exe"));
+            devices.push(install.join("vmonitor").join("bin").join("adb_server.exe"));
             devices.push(
                 install
                     .join("emulator")
@@ -168,7 +196,8 @@ fn mumu_adb_candidates(roots: &[PathBuf]) -> Vec<PathBuf> {
 fn mumu_install_dirs(output: &str) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     for block in output.split("HKEY_").skip(1) {
-        if !block.to_ascii_lowercase().contains("mumu") {
+        let lower = block.to_ascii_lowercase();
+        if !lower.contains("mumu") && !lower.contains("nemu") {
             continue;
         }
         let value = |name: &str| {
@@ -218,26 +247,31 @@ pub fn suggested_adb_path() -> String {
     executable().display().to_string()
 }
 
-fn is_mumu_adb() -> bool {
-    executable()
-        .to_string_lossy()
-        .to_ascii_lowercase()
-        .contains("mumuplayer")
+/// Connects to every usual MuMu Player port, whichever adb is used: a port
+/// that is closed answers at once. Returns the ports tried and those that
+/// answered.
+fn connect_mumu() -> (Vec<u16>, Vec<u16>) {
+    let configured = std::env::var("MUMU_ADB_PORT").ok();
+    let ports = mumu_ports(configured.as_deref());
+    let answered = ports
+        .iter()
+        .copied()
+        .filter(|port| {
+            let address = format!("127.0.0.1:{port}");
+            adb_command()
+                .args(["connect", address.as_str()])
+                .output()
+                .is_ok_and(|output| connected(&String::from_utf8_lossy(&output.stdout)))
+        })
+        .collect();
+    (ports, answered)
 }
 
-fn connect_mumu() {
-    #[cfg(windows)]
-    let mumu_installed = mumu_player_adb().is_some();
-    #[cfg(not(windows))]
-    let mumu_installed = false;
-    if !is_mumu_adb() && !mumu_installed {
-        return;
-    }
-    let configured = std::env::var("MUMU_ADB_PORT").ok();
-    for port in mumu_ports(configured.as_deref()) {
-        let address = format!("127.0.0.1:{port}");
-        let _ = adb_command().args(["connect", address.as_str()]).output();
-    }
+/// `adb connect` printed that the address answered.
+fn connected(output: &str) -> bool {
+    output
+        .lines()
+        .any(|line| line.starts_with("connected to") || line.starts_with("already connected to"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,24 +307,56 @@ impl std::fmt::Display for AdbError {
 impl std::error::Error for AdbError {}
 
 pub fn devices() -> Result<Vec<Device>, AdbError> {
-    connect_mumu();
+    scan().map(|scan| scan.devices)
+}
+
+/// What a device search found, with what the log needs to explain it.
+#[derive(Debug, Clone)]
+pub struct Scan {
+    pub adb: AdbSource,
+    /// MuMu Player ports tried and those that answered.
+    pub ports: (Vec<u16>, Vec<u16>),
+    /// Devices ready to use.
+    pub devices: Vec<Device>,
+    /// Devices adb lists in another state, such as `offline` or
+    /// `unauthorized`, as (serial, state).
+    pub waiting: Vec<(String, String)>,
+}
+
+pub fn scan() -> Result<Scan, AdbError> {
+    let adb = adb_source();
+    let ports = connect_mumu();
     let output = run(&["devices", "-l"])?;
     let stdout = String::from_utf8(output.stdout)
         .map_err(|error| AdbError::InvalidOutput(error.to_string()))?;
+    let (devices, waiting) = parse_devices(&stdout);
+    Ok(Scan {
+        adb,
+        ports,
+        devices,
+        waiting,
+    })
+}
 
-    Ok(stdout
-        .lines()
-        .skip(1)
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let serial = fields.next()?;
-            let state = fields.next()?;
-            (state == "device").then(|| Device {
+/// `adb devices -l` output as ready devices and the others with their state.
+fn parse_devices(stdout: &str) -> (Vec<Device>, Vec<(String, String)>) {
+    let mut ready = Vec::new();
+    let mut waiting = Vec::new();
+    for line in stdout.lines().skip(1) {
+        let mut fields = line.split_whitespace();
+        let (Some(serial), Some(state)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if state == "device" {
+            ready.push(Device {
                 serial: serial.to_owned(),
                 details: fields.collect::<Vec<_>>().join(" "),
-            })
-        })
-        .collect())
+            });
+        } else {
+            waiting.push((serial.to_owned(), state.to_owned()));
+        }
+    }
+    (ready, waiting)
 }
 
 pub fn shell(serial: &str, args: &[&str]) -> Result<Output, AdbError> {
@@ -778,5 +844,58 @@ End of search: 4 match(es) found.
             mumu_ports(Some("kein Port")),
             [7555, 16384, 16416, 16448, 16480, 5555]
         );
+    }
+
+    #[test]
+    fn the_old_mumu_player_in_a_nemu_folder_is_found() {
+        // MuMuPlayer 6 installs as "Nemu" with adb_server.exe (MuMu's developer manual).
+        let program_files = fake_dir("old-layout");
+        let adb = program_files
+            .join("Nemu")
+            .join("vmonitor")
+            .join("bin")
+            .join("adb_server.exe");
+        touch(&adb);
+        touch(&program_files.join("Steam").join("adb.exe"));
+        assert_eq!(
+            mumu_adb_candidates(std::slice::from_ref(&program_files)),
+            [adb]
+        );
+        std::fs::remove_dir_all(&program_files).unwrap();
+    }
+
+    #[test]
+    fn every_device_state_is_read_not_only_ready_ones() {
+        let stdout = "List of devices attached\n\
+            127.0.0.1:16384        device product:V1923A model:V1923A transport_id:3\n\
+            127.0.0.1:7555         offline transport_id:1\n\
+            emulator-5554          unauthorized transport_id:2\n\n";
+        let (ready, waiting) = parse_devices(stdout);
+        assert_eq!(
+            ready,
+            [Device {
+                serial: "127.0.0.1:16384".into(),
+                details: "product:V1923A model:V1923A transport_id:3".into(),
+            }]
+        );
+        assert_eq!(
+            waiting,
+            [
+                ("127.0.0.1:7555".to_owned(), "offline".to_owned()),
+                ("emulator-5554".to_owned(), "unauthorized".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_connect_answer_tells_whether_the_port_answered() {
+        assert!(connected("connected to 127.0.0.1:16384\n"));
+        assert!(connected("already connected to 127.0.0.1:7555\n"));
+        assert!(!connected(
+            "cannot connect to 127.0.0.1:5555: No connection could be made (10061)\n"
+        ));
+        assert!(!connected(
+            "failed to connect to '127.0.0.1:16416': Connection refused\n"
+        ));
     }
 }
