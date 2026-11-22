@@ -174,9 +174,14 @@ error-afk-journey-exited-unexpectedly = AFK Journey wurde unerwartet beendet.
 fishing-fishing-requires-a-portrait-9-16 = Angeln benötigt einen Emulator im Hochformat 9:16.
 fishing-could-not-verify-the-world-map = Die Weltkarte konnte nicht erkannt werden.
 fishing-walking-to-the-fishing-spot = Läuft zur Angelstelle.
-fishing-the-character-did-not-reach-the = Die Spielfigur hat die Angelstelle nicht erreicht.
 fishing-fishing-did-not-return-to-a = Beim Angeln wurde keine eindeutige Auswurf- oder Fangansicht mehr erkannt.
-fishing-no-reachable-fishing-spot-with-attempts = Auf der aktuellen Karte wurde keine erreichbare Angelstelle mit freien Versuchen gefunden.
+fishing-fishing-at-the-open-spot = Angeln an der geöffneten Angelstelle.
+fishing-searching-map = Suche Angelstellen auf { $map }.
+fishing-no-spots-with-attempts-left = Keine Angelstellen mit Versuchen mehr übrig.
+fishing-spot-skipped = Eine Angelstelle war nicht erreichbar, deshalb wird der Rest dieser Karte in diesem Lauf übersprungen.
+fishing-map-skipped = { $map } konnte nicht vollständig abgesucht werden und wird in diesem Lauf übersprungen.
+fishing-done-some-skipped = Angeln beendet. Einige Stellen oder Karten wurden übersprungen, siehe die Meldungen oben.
+fishing-no-live-stream = Der Live-Bildschirmstream ist nicht gestartet; das Angeln läuft mit langsameren Screenshots weiter.
 
 ## legend-trial
 
@@ -346,7 +351,7 @@ app-action-settings-maximum-battles = Maximale Kämpfe
 app-action-settings-stops-when-your-available-attempts-run = Endet vorher, wenn keine vorhandenen Versuche mehr verfügbar sind. Es werden keine Versuche gekauft.
 app-action-settings-opponent-selection = Gegnerauswahl
 app-action-settings-uses-your-three-in-game-teams = Verwendet deine drei im Spiel eingestellten Teams. Kampfablauf: zweimal Weiter, dann Kampf.
-app-action-settings-uses-available-fishing-spots-on-the = Nutzt verfügbare Angelstellen auf der Karte der aktuellen Region.
+app-action-settings-uses-available-fishing-spots-on-the = Sucht alle Angelstellen auf den Karten der Kartenleiste, läuft hin und spielt das Minispiel, bis keine Stelle mehr Versuche hat. Starte sie irgendwo in der Spielwelt.
 app-action-settings-import-the-completed-json-backup-in = Importiere die vollständige JSON-Sicherung in AFKJ Tracker.
 app-action-settings-past-dream-realm-days = Vergangene Dream-Realm-Tage
 app-action-settings-guild-activeness = Gildenaktivität
@@ -416,7 +421,7 @@ app-dashboard-play-daily-arena-battles = Tägliche Arena-Kämpfe spielen
 app-dashboard-play-daily-supreme-arena-battles = Tägliche Supreme-Arena-Kämpfe spielen
 app-dashboard-export-your-hero-roster-for-afkj = Heldenkader für AFKJ Tracker exportieren
 app-dashboard-export-guild-activity-and-rankings = Gildenaktivität und Ranglisten exportieren
-app-dashboard-walk-to-fishing-spots-and-fish = Angelstellen anlaufen und angeln
+app-dashboard-walk-to-fishing-spots-and-fish = Sucht Angelstellen auf den Karten und angelt dort
 app-dashboard-activity = Aktivität
 app-dashboard-current-game-mode = AKTUELLER SPIELMODUS
 app-dashboard-last-game-mode = LETZTER SPIELMODUS

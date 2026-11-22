@@ -1,0 +1,8 @@
+# Text files use LF in the repository and in every working copy, on every OS.
+# This overrides core.autocrlf, so Windows checkouts do not convert or warn.
+* text=auto eol=lf
+
+# Binary files stay byte for byte.
+*.png binary
+*.ico binary
+*.exe binary

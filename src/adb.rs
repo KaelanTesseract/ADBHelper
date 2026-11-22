@@ -588,6 +588,28 @@ fn parse_game_process(stdout: &str) -> Result<bool, AdbError> {
     }
 }
 
+/// Starts `screenrecord` as a raw H.264 stream on stdout, as ADB AutoPlayer does
+/// for its device streaming. Android ends a recording after at most three minutes.
+pub fn screen_stream(serial: &str, size: (u32, u32)) -> std::io::Result<std::process::Child> {
+    adb_command()
+        .args([
+            "-s",
+            serial,
+            "exec-out",
+            "screenrecord",
+            "--output-format=h264",
+            "--size",
+            &format!("{}x{}", size.0, size.1),
+            "--bit-rate",
+            "8000000",
+            "-",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+}
+
 pub fn display_size(serial: &str) -> Result<(u32, u32), AdbError> {
     let output = shell(serial, &["wm", "size"])?;
     let stdout = String::from_utf8(output.stdout)
