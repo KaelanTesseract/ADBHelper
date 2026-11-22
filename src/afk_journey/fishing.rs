@@ -338,16 +338,96 @@ fn pull_duration(image: &RgbaImage) -> Option<u32> {
 
 /// Hold time for the hook's distance to the target: ADB AutoPlayer's
 /// _handle_hold_for_distance steps (600/450/300/200/100 ms), held 50 % longer
-/// so fewer fish escape.
+/// and then another 25 % (about 1.875 times) so fewer fish escape.
 fn hold_for_distance(distance: usize) -> Option<u32> {
     match distance {
-        601.. => Some(900),
-        401.. => Some(675),
-        201.. => Some(450),
-        101.. => Some(300),
-        51.. => Some(150),
+        601.. => Some(1125),
+        401.. => Some(845),
+        201.. => Some(565),
+        101.. => Some(375),
+        51.. => Some(190),
         _ => None,
     }
+}
+
+/// The timing bar shown when a fish bites: an orange centre between two green
+/// parts, and a white pointer swinging from end to end above it (one swing
+/// about 2.6 s, up to 600 px/s in the middle; measured at Novaris).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BiteBar {
+    /// First and last x of the orange centre.
+    orange: (u32, u32),
+    /// x of the pointer.
+    pointer: u32,
+}
+
+const BITE_BAR_X: (u32, u32) = (250, 800);
+/// Rows through the bar's colours (measured 1028–1045).
+const BITE_BAR_ROWS: (u32, u32) = (1026, 1046);
+/// Rows of the pointer above the bar (measured 1005–1040, the tip overlaps).
+const BITE_POINTER_ROWS: (u32, u32) = (1000, 1024);
+/// Time from deciding to tap until the game sees it (input 100–170 ms).
+const BITE_TAP_DELAY_S: f32 = 0.15;
+
+fn bite_bar(image: &RgbaImage) -> Option<BiteBar> {
+    let green = |[r, g, b, _]: [u8; 4]| g > 150 && r < 170 && b < 130 && g > r.saturating_add(20);
+    let orange = |[r, g, b, _]: [u8; 4]| r > 200 && (100..200).contains(&g) && b < 110;
+    let (left, right) = BITE_BAR_X;
+    // The pointer's tip covers a few rows and the borders between the colours
+    // are dark, so every row is read and the widest centre is kept.
+    let orange = (BITE_BAR_ROWS.0..BITE_BAR_ROWS.1)
+        .step_by(3)
+        .filter_map(|y| {
+            let pixel = |x: u32| image.get_pixel(x, y).0;
+            let mut x = left;
+            while x < right {
+                if !orange(pixel(x)) {
+                    x += 1;
+                    continue;
+                }
+                let start = x;
+                let mut end = x;
+                // The pointer's tip may cross the centre: short gaps of other
+                // colours do not end it, green does.
+                while x < right && !green(pixel(x)) && x - end <= 25 {
+                    if orange(pixel(x)) {
+                        end = x;
+                    }
+                    x += 1;
+                }
+                // The centre has green on both sides, past a dark border.
+                let green_left = (start.saturating_sub(20)..start).any(|x| green(pixel(x)));
+                let green_right = (end + 1..(end + 21).min(right)).any(|x| green(pixel(x)));
+                if green_left && green_right && end - start >= 40 {
+                    return Some((start, end));
+                }
+            }
+            None
+        })
+        .max_by_key(|(start, end)| end - start)?;
+    let (mut sum, mut count) = (0u64, 0u64);
+    for y in BITE_POINTER_ROWS.0..BITE_POINTER_ROWS.1 {
+        for x in left..right {
+            let [r, g, b, _] = image.get_pixel(x, y).0;
+            if r > 220 && g > 220 && b > 220 {
+                sum += u64::from(x);
+                count += 1;
+            }
+        }
+    }
+    (count > 15).then(|| BiteBar {
+        orange,
+        pointer: (sum / count) as u32,
+    })
+}
+
+/// True when a tap now lands with the pointer in the middle of the orange
+/// centre, given the pointer's speed in px/s (positive = moving right).
+fn aim_bite(bar: BiteBar, speed: f32) -> bool {
+    let middle = (bar.orange.0 + bar.orange.1) as f32 / 2.0;
+    let tolerance = ((bar.orange.1 - bar.orange.0) as f32 / 8.0).max(15.0);
+    let landing = bar.pointer as f32 + speed * BITE_TAP_DELAY_S;
+    (landing - middle).abs() <= tolerance
 }
 
 /// How long to hold when the hook is far from the target (`ms` of 450 or
@@ -484,6 +564,7 @@ fn fish_spot(
     let mut hooked = false;
     let mut pull_frames = 0;
     let mut last_pull_frame = None::<Instant>;
+    let mut bite_pointer = None::<(u32, Instant)>;
     let mut bite_visible_since = None::<Instant>;
     let mut last_action = Instant::now();
     let mut next_check = last_action;
@@ -517,11 +598,32 @@ fn fish_spot(
         if let Some(bite) = frame.find(BITES, HOOK, 0.77)? {
             trace::note(&format!("bite visible at {bite:?}, hooked={hooked}"));
             cast_visible_since = None;
-            let bite_since = bite_visible_since.get_or_insert_with(Instant::now);
-            // Give the hook timing bar a moment to enter its active range.
-            if (!hooked || last_action.elapsed() >= Duration::from_secs(1))
-                && bite_since.elapsed() >= Duration::from_millis(500)
-            {
+            let bite_since = *bite_visible_since.get_or_insert_with(Instant::now);
+            // Tap when the timing bar's pointer will be in the middle of the
+            // orange centre, where the bigger fish are.
+            let bar = bite_bar(&frame.pixels);
+            let speed = match (bar, bite_pointer) {
+                (Some(bar), Some((x, at))) if at.elapsed() < Duration::from_millis(300) => {
+                    (bar.pointer as f32 - x as f32) / at.elapsed().as_secs_f32().max(0.001)
+                }
+                _ => 0.0,
+            };
+            bite_pointer = bar.map(|bar| (bar.pointer, Instant::now()));
+            let timed = match bar {
+                Some(bar) => {
+                    let aimed = aim_bite(bar, speed);
+                    trace::note(&format!(
+                        "bite bar {bar:?}, speed {speed:.0}, aimed {aimed}"
+                    ));
+                    // Never let the fish go: late, any orange will do.
+                    aimed
+                        || (bite_since.elapsed() >= Duration::from_secs(3)
+                            && (bar.orange.0..=bar.orange.1).contains(&bar.pointer))
+                }
+                // Without a readable bar, as before.
+                None => bite_since.elapsed() >= Duration::from_millis(1500),
+            };
+            if (!hooked || last_action.elapsed() >= Duration::from_secs(1)) && timed {
                 driver.tap(frame.size, bite)?;
                 hooked = true;
                 round.hooked = true;
@@ -814,13 +916,64 @@ mod tests {
     }
 
     #[test]
-    fn pull_holds_are_half_as_long_again_as_adb_autoplayer() {
-        assert_eq!(hold_for_distance(700), Some(900));
-        assert_eq!(hold_for_distance(450), Some(675));
-        assert_eq!(hold_for_distance(250), Some(450));
-        assert_eq!(hold_for_distance(150), Some(300));
-        assert_eq!(hold_for_distance(60), Some(150));
+    fn pull_holds_are_longer_than_adb_autoplayers() {
+        assert_eq!(hold_for_distance(700), Some(1125));
+        assert_eq!(hold_for_distance(450), Some(845));
+        assert_eq!(hold_for_distance(250), Some(565));
+        assert_eq!(hold_for_distance(150), Some(375));
+        assert_eq!(hold_for_distance(60), Some(190));
         assert_eq!(hold_for_distance(50), None);
+    }
+
+    /// A bite bar as measured at a Novaris spot: green, orange centre, green,
+    /// with the white pointer above it at `pointer`.
+    fn bite_bar_image(pointer: u32) -> RgbaImage {
+        let mut image = RgbaImage::from_pixel(1080, 1920, image::Rgba([40, 60, 90, 255]));
+        for y in 1028..1045 {
+            for x in 295..774 {
+                let colour = if (435..627).contains(&x) {
+                    [235, 150, 50, 255]
+                } else {
+                    [110, 190, 90, 255]
+                };
+                image.put_pixel(x, y, image::Rgba(colour));
+            }
+        }
+        for y in 1005..1022 {
+            for x in pointer - 8..pointer + 8 {
+                image.put_pixel(x, y, image::Rgba([250, 250, 250, 255]));
+            }
+        }
+        image
+    }
+
+    #[test]
+    fn the_bite_bar_gives_the_orange_centre_and_the_pointer() {
+        let bar = bite_bar(&bite_bar_image(624)).expect("bar");
+        assert!(
+            bar.orange.0.abs_diff(435) <= 2 && bar.orange.1.abs_diff(626) <= 2,
+            "{bar:?}"
+        );
+        assert!(bar.pointer.abs_diff(624) <= 2, "{bar:?}");
+        let plain = RgbaImage::from_pixel(1080, 1920, image::Rgba([40, 60, 90, 255]));
+        assert_eq!(bite_bar(&plain), None);
+    }
+
+    #[test]
+    fn the_bite_is_tapped_so_the_pointer_lands_in_the_middle() {
+        let bar = |pointer| BiteBar {
+            orange: (435, 626),
+            pointer,
+        };
+        // Moving right at 600 px/s, 150 ms tap delay: it lands 90 px further.
+        assert!(aim_bite(bar(440), 600.0));
+        assert!(!aim_bite(bar(300), 600.0), "would land left of the middle");
+        assert!(!aim_bite(bar(530), 600.0), "would land right of the middle");
+        // Moving left.
+        assert!(aim_bite(bar(620), -600.0));
+        // Slow near the turn: no lead needed.
+        assert!(aim_bite(bar(535), 0.0));
+        assert!(!aim_bite(bar(700), 0.0));
     }
 
     #[test]
@@ -933,7 +1086,7 @@ mod tests {
             "pull control"
         );
         assert!(
-            matches!(pull_duration(&pulling.pixels), Some(675)),
+            matches!(pull_duration(&pulling.pixels), Some(845)),
             "pull duration"
         );
         assert_eq!(
@@ -1035,6 +1188,7 @@ mod tests {
             pull_bar(&frame.pixels),
             pull_duration(&frame.pixels)
         );
+        println!("bite bar: {:?}", bite_bar(&frame.pixels));
     }
 
     #[test]
@@ -1129,6 +1283,41 @@ mod tests {
         let size = driver.read().unwrap().size;
         map::close_map(&driver, size).unwrap();
         std::thread::sleep(Duration::from_secs(2));
+    }
+
+    #[test]
+    #[ignore = "casts once at the open fishing screen and records the bite bar without tapping"]
+    fn connected_emulator_bite_bar_recording() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut driver = Driver {
+            serial: &serial,
+            cancelled: &cancelled,
+            stream: None,
+            seen: std::cell::Cell::new(0),
+            input_busy: std::sync::Arc::new(AtomicBool::new(false)),
+        };
+        let frame = driver.read().unwrap();
+        assert!(on_fishing_screen(&frame).unwrap(), "open fishing first");
+        let cast = frame.cast_button().unwrap().expect("cast button");
+        let size = adb::display_size(&serial).unwrap();
+        driver.stream = vision::ScreenStream::start(&serial, size, Duration::from_secs(4));
+        assert!(driver.stream.is_some(), "live stream");
+        driver.tap(frame.size, cast).unwrap();
+        let started = Instant::now();
+        let mut bite_at = None::<Instant>;
+        // Every frame is saved by the trace; nothing is tapped after the cast.
+        while started.elapsed() < Duration::from_secs(40) {
+            let frame = driver.read().unwrap();
+            if let Some(bite) = frame.find(BITES, HOOK, 0.77).unwrap() {
+                trace::note(&format!("bite visible at {bite:?}"));
+                bite_at.get_or_insert_with(Instant::now);
+            }
+            if bite_at.is_some_and(|at| at.elapsed() > Duration::from_secs(6)) {
+                break;
+            }
+        }
+        println!("bite seen: {}", bite_at.is_some());
     }
 
     #[test]

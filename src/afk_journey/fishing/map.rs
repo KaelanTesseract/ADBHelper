@@ -365,9 +365,47 @@ pub(super) fn open_tab(driver: &Driver<'_>, name: &str) -> Result<Option<Frame>,
     Err(tr!("fishing-could-not-verify-the-world-map").into())
 }
 
-/// The location arrow on screen.
+/// The location arrow on screen. The arrow turns with the character, so the
+/// template only fits while it points right; otherwise the coordinate label
+/// below it ("182 ; 299") is read and the arrow is `LABEL_BELOW_ARROW` above.
 pub(super) fn find_arrow(frame: &Frame) -> Result<Option<Point>, ActionError> {
-    frame.find(ARROW, MAP_VIEW, 0.80)
+    if let Some(arrow) = frame.find(ARROW, MAP_VIEW, 0.80)? {
+        return Ok(Some(arrow));
+    }
+    let view = image::imageops::crop_imm(
+        &frame.gray,
+        MAP_VIEW.x,
+        MAP_VIEW.y,
+        MAP_VIEW.width,
+        MAP_VIEW.height,
+    )
+    .to_image();
+    let arrow =
+        arrow_from_label(&ocr::recognize(&view)?).map(|(x, y)| (x + MAP_VIEW.x, y + MAP_VIEW.y));
+    trace::note(&format!("arrow from label {arrow:?}"));
+    Ok(arrow)
+}
+
+/// Pixels from the arrow's centre down to its coordinate label's centre
+/// (measured 958 and 1003).
+const LABEL_BELOW_ARROW: u32 = 45;
+
+/// The arrow above a coordinate label such as "182 ; 299" or "182; 299".
+fn arrow_from_label(lines: &[ocr::TextLine]) -> Option<Point> {
+    lines
+        .iter()
+        .find(|line| {
+            let text: String = line.text.chars().filter(|c| !c.is_whitespace()).collect();
+            let Some((x, y)) = text.split_once(';') else {
+                return false;
+            };
+            let number = |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit());
+            number(x) && number(y)
+        })
+        .map(|line| {
+            let (x, y) = line.center();
+            (x, y.saturating_sub(LABEL_BELOW_ARROW))
+        })
 }
 
 /// Shows the map tab `name` zoomed out and returns the view with the arrow's
@@ -690,6 +728,29 @@ mod tests {
             PanelDecision::Unknown,
             "without a walking button nothing is tapped"
         );
+    }
+
+    #[test]
+    fn the_arrow_is_found_above_its_coordinate_label() {
+        let line = |text: &str, y: f32| ocr::TextLine {
+            text: text.into(),
+            x: 440.0,
+            y,
+            width: 120.0,
+            height: 40.0,
+        };
+        assert_eq!(
+            arrow_from_label(&[
+                line("Exploration Progress 45%", 10.0),
+                line("182; 299", 868.0)
+            ]),
+            Some((500, 843))
+        );
+        assert_eq!(
+            arrow_from_label(&[line("126 ; 107", 100.0)]),
+            Some((500, 75))
+        );
+        assert_eq!(arrow_from_label(&[line("Lvl. 306", 100.0)]), None);
     }
 
     #[test]
