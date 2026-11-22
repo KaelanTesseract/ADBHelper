@@ -37,7 +37,7 @@ ADBHelper runs AFK Journey actions on an Android device or emulator through ADB.
 
 ### First run
 
-1. Download and run **[ADBHelper-Setup-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Setup-x64.exe)**. It installs ADBHelper for your Windows user under `%LOCALAPPDATA%\Programs\ADBHelper` without administrator rights and adds a Start menu entry. Prefer no installation? Download **[ADBHelper-Windows-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Windows-x64.exe)** and run it from any folder you can write to. A standalone copy can switch to the installed version later with **Settings → Install ADBHelper → Install now**; settings and the Daily routine stay, and the installed app offers to delete the old file.
+1. Download and run **[ADBHelper-Setup-x64.exe](https://github.com/KaelanTesseract/ADBHelper/releases/latest/download/ADBHelper-Setup-x64.exe)**. It installs ADBHelper for your Windows user under `%LOCALAPPDATA%\Programs\ADBHelper` without administrator rights and adds a Start menu entry. ADBHelper is only offered as this installer. The file `ADBHelper-Windows-x64.exe` in each release is used by the built-in updater; please do not download it by hand. Still using an older standalone copy? Switch with **Settings → Install ADBHelper → Install now**; settings and the Daily routine stay, and the installed app offers to delete the old file.
 2. Start your emulator or connect your Android device, then open AFK Journey.
 3. Launch ADBHelper. In **Settings**, find and select your authorized device. Accept the Android USB debugging prompt if shown.
 4. Open an action's **gear button** to configure it, then click **Start**.
@@ -137,7 +137,7 @@ All interface texts live in [`locales/en.ftl`](locales/en.ftl) and [`locales/de.
 
 ## Updates
 
-ADBHelper checks for updates at startup and every **six hours**, including while minimized. **Settings → App updates** can check right away. A **green update icon beside Settings** opens the new release's patch notes. Choose **Download and install** to download, verify, replace, and restart the app. Installed and standalone copies update the same way; an installed copy also shows the new version under **Windows Settings → Apps**. Every release is signed with the maintainer's [minisign](https://jedisct1.github.io/minisign/) key, and the app installs an update only when its signature matches the public key in [`minisign.pub`](minisign.pub) and the offered version. To check a manual download: `minisign -Vm ADBHelper-Setup-x64.exe -p minisign.pub`.
+ADBHelper checks for updates at startup and every **six hours**, including while minimized. **Settings → App updates** can check right away. A **green update icon beside Settings** opens the new release's patch notes. Choose **Download and install** to download, verify, replace, and restart the app. An installed copy also shows the new version under **Windows Settings → Apps**. Older standalone copies keep updating the same way until they switch to the installer. Every release is signed with the maintainer's [minisign](https://jedisct1.github.io/minisign/) key, and the app installs an update only when its signature matches the public key in [`minisign.pub`](minisign.pub) and the offered version. To check a manual download: `minisign -Vm ADBHelper-Setup-x64.exe -p minisign.pub`.
 
 Updates need write access to the EXE's folder. No GitHub login is required.
 
