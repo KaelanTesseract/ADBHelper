@@ -109,7 +109,7 @@ Start either scanner from the dashboard with AFK Journey set to English. ADBHelp
 
 ## Fishing
 
-Start **Fishing** from the dashboard while in an unlocked region with fishing spots. ADBHelper reads the current region map, selects a spot and uses the game's walking command. The action then casts, hooks fish and controls the reel. It checks the map again when a spot runs out of attempts. You can also start from an open standard fishing screen. Fishing is in preview while catch reliability is being tested.
+Start **Fishing** anywhere in the game world. ADBHelper opens the world map, goes through every unlocked tab in the map strip (locked maps are skipped), zooms out and looks for fishing spots view by view. It walks to each spot that still has attempts, casts, taps the bite when the pointer reaches the middle of the timing bar, and holds the line during the pull. It stops by itself when no spot has attempts left. If you start at a spot or with the fishing screen open, that spot is fished first. A spot where nothing bites for a long time is left after a while; if a spot cannot be reached, the rest of that map is skipped for this run. Fishing is still a preview and asks for confirmation before it starts.
 
 ## Settings
 
