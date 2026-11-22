@@ -33,7 +33,7 @@ ADBHelper runs AFK Journey actions on an Android device or emulator through ADB.
 - Windows x64 with local Windows OCR support.
 - An Android device or emulator with ADB debugging enabled and authorized.
 - AFK Journey in **portrait 9:16**. Use the game's **English UI** for the supported recognition templates.
-- ADB available on your computer. Standard MuMuPlayer installations are detected automatically.
+- ADB available on your computer. MuMu Player is found automatically, in any version and install folder.
 
 ### First run
 
@@ -105,7 +105,7 @@ For Dura's Trials, the selected stage's button determines the action. ADBHelper 
 Start either scanner from the dashboard with AFK Journey set to English. ADBHelper saves JSON exports in a new run folder under `%APPDATA%\ADBHelper\scans`. Use **Copy export path** on the action card after the scan.
 
 - **AFKJ Tracker Scan** reads hero ascension and exclusive weapon levels from the roster. Import the completed `afkj_tracker_backup.json` in [AFKJ Tracker](https://afkj-tracker.vercel.app/). Review any file marked `partial` before importing.
-- **Guild Manager Scan** exports the selected Dream Realm days, Supreme Arena, the active Season AFK phase, and guild activeness. The optional `guild_states` API URL from [AFKJ Guild Manager](https://afkj-guildmanager.vercel.app/) lets ADBHelper read the roster from Supabase for matching names and IDs. The URL is kept for the current session. Import the local JSON files in Guild Manager.
+- **Guild Manager Scan** exports the selected Dream Realm days, Supreme Arena, the active Season AFK phase, and guild activeness. The optional `guild_states` API URL from [AFKJ Guild Manager](https://afkj-guildmanager.vercel.app/) lets ADBHelper read the roster from Supabase for matching names and IDs. URL and key are saved in the Windows Credential Manager, and the key is only sent as a request header. **Forget saved access** removes them. Import the local JSON files in Guild Manager.
 
 ## Fishing
 
@@ -150,9 +150,9 @@ If no device appears, check that the emulator is running, ADB debugging is enabl
 <details>
 <summary>ADB detection and custom ports</summary>
 
-ADBHelper supports `ADB_PATH` and `ADBUTILS_ADB_PATH`, searches `PATH`, and checks standard MuMuPlayer installation folders.
+ADBHelper supports `ADB_PATH` and `ADBUTILS_ADB_PATH`, searches `PATH`, and finds MuMu Player through its Windows install entry and the Netease folders on every drive.
 
-MuMuPlayer's default connection is `127.0.0.1:7555`. Set `MUMU_ADB_PORT` if your instance uses another port.
+For MuMu Player, ADBHelper tries the ports 7555, 16384, 16416, 16448, 16480 and 5555 on `127.0.0.1`. Set `MUMU_ADB_PORT` to try your own port first.
 
 Other portrait 9:16 resolutions are normalized internally to the game's 1080 × 1920 coordinate space. Screenshots are used for recognition and are not displayed in the dashboard. Windows OCR runs locally.
 
