@@ -91,6 +91,7 @@ Verfügbare Events zuerst umsetzen. Titan Reaver und Synergy & CC benötigen die
 
 ## Release-Stand
 
+- 0.5.4: Fishing startet auch im Homestead (tippt erst „World“). 209 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.4)
 - 0.5.3 mit Fishing von Anfang bis Ende: Karten absuchen, zu jeder Stelle laufen, Biss in der Balkenmitte, Ende von selbst. 209 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.3)
 - 0.5.2 findet auch ältere MuMu Player (Nemu), erklärt im Log ADB-Pfad, Ports und nicht bereite Geräte; Download nur noch als Installer. 175 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.2)
 - 0.5.1 findet MuMu Player selbst (MuMu Player 12, andere Laufwerke, alle üblichen Ports). 170 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.1)
