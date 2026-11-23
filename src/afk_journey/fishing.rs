@@ -1096,6 +1096,13 @@ mod tests {
             close.0.abs_diff(540) < 120 && close.1.abs_diff(1812) < 40,
             "{close:?}"
         );
+        // Homestead has no minimap; its World button leads back to the world.
+        assert!(map::homestead_world(&load("fishing-homestead"))
+            .unwrap()
+            .is_some());
+        assert!(map::homestead_world(&load("fishing-world"))
+            .unwrap()
+            .is_none());
         let pulling = load("fishing-live3-current");
         assert!(
             pulling.find(PULL, HOOK, 0.70).unwrap().is_some(),

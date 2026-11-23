@@ -79,6 +79,7 @@ pub(super) fn open_map(
     }
     leave_area(driver, &frame)?;
     let size = common::navigate_to_current_overview(driver.serial, driver.cancelled, log)?;
+    leave_homestead(driver)?;
     driver.tap(size, MINIMAP)?;
     for _ in 0..8 {
         driver.settle()?;
@@ -89,6 +90,40 @@ pub(super) fn open_map(
         }
     }
     Err(tr!("fishing-could-not-verify-the-world-map").into())
+}
+
+/// Homestead's "World" button, bottom right. Homestead counts as the main
+/// screen but has no minimap, so the world map cannot be opened from there.
+const HOMESTEAD_WORLD: &[&str] = &["navigation/homestead/world.png"];
+const HOMESTEAD_WORLD_AREA: Rect = Rect {
+    x: 700,
+    y: 1300,
+    width: 380,
+    height: 600,
+};
+
+/// Where Homestead's "World" button is, if Homestead is shown.
+pub(super) fn homestead_world(frame: &Frame) -> Result<Option<Point>, ActionError> {
+    frame.find(HOMESTEAD_WORLD, HOMESTEAD_WORLD_AREA, 0.8)
+}
+
+/// In Homestead, taps "World" and waits until the world is back.
+fn leave_homestead(driver: &Driver<'_>) -> Result<(), ActionError> {
+    let frame = driver.read()?;
+    let Some(world) = homestead_world(&frame)? else {
+        return Ok(());
+    };
+    trace::note(&format!("homestead, tap world {world:?}"));
+    driver.tap(frame.size, world)?;
+    for _ in 0..10 {
+        driver.settle()?;
+        if homestead_world(&driver.read()?)?.is_none() {
+            break;
+        }
+    }
+    // The world loads after the button is gone.
+    driver.settle()?;
+    driver.settle()
 }
 
 /// Leaves the map (and an open spot panel) back to the game.
