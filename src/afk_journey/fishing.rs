@@ -197,6 +197,24 @@ fn on_fishing_screen(frame: &Frame) -> Result<bool, ActionError> {
     Ok(remaining_status(frame)?.is_some())
 }
 
+/// The fishing screen right after the rod was tapped in the world: the game
+/// casts at once and hides the book, and the "Remaining attempts" badge is
+/// often unreadable then. A bite or pull control, or "Waiting for the fish to
+/// bite...", shows that fishing is open.
+fn fishing_opened(frame: &Frame) -> Result<bool, ActionError> {
+    if on_fishing_screen(frame)? {
+        return Ok(true);
+    }
+    let controls: Vec<&str> = BITES.iter().chain(PULL).copied().collect();
+    if frame.find(&controls, HOOK, 0.80)?.is_some() {
+        return Ok(true);
+    }
+    let crop = image::imageops::crop_imm(&frame.gray, 0, 1040, 1080, 160).to_image();
+    Ok(ocr::recognize(&crop)?
+        .iter()
+        .any(|line| ascii_key(&line.text).contains("tobite")))
+}
+
 struct Driver<'a> {
     serial: &'a str,
     cancelled: &'a AtomicBool,
@@ -209,6 +227,13 @@ struct Driver<'a> {
 }
 
 impl Driver<'_> {
+    /// Every stream numbers its frames from 1, so the count of the last seen
+    /// frame starts again with it.
+    fn use_stream(&mut self, stream: Option<vision::ScreenStream>) {
+        self.stream = stream;
+        self.seen.set(0);
+    }
+
     fn read(&self) -> Result<Frame, ActionError> {
         vision::ensure_not_cancelled(self.cancelled)?;
         let streamed = self.stream.as_ref().and_then(|stream| {
@@ -810,13 +835,17 @@ fn fish_streamed(
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, ActionError> {
     let size = adb::display_size(driver.serial).map_err(|e| e.to_string())?;
-    driver.stream = vision::ScreenStream::start(driver.serial, size, Duration::from_secs(4));
+    driver.use_stream(vision::ScreenStream::start(
+        driver.serial,
+        size,
+        Duration::from_secs(4),
+    ));
     trace::note(&format!("live stream: {}", driver.stream.is_some()));
     if driver.stream.is_none() {
         log(tr!("fishing-no-live-stream").into());
     }
     let caught = fish_spot(driver, report);
-    driver.stream = None;
+    driver.use_stream(None);
     caught
 }
 
@@ -833,7 +862,7 @@ fn fish_map(
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<(u32, bool), ActionError> {
     log(tr!("fishing-searching-map", map = name.to_owned()));
-    let Some((view, arrow)) = map::anchor(driver, name)? else {
+    let Some((view, arrow)) = anchor(driver, name, log)? else {
         trace::note(&format!("{name}: no arrow, skipped"));
         log(tr!("fishing-map-skipped", map = name.to_owned()));
         return Ok((0, false));
@@ -846,7 +875,7 @@ fn fish_map(
     for spot in spots {
         // A marker tap zooms in, so every spot starts from a fresh map view.
         reopen_map(driver, log)?;
-        let Some((view, arrow)) = map::anchor(driver, name)? else {
+        let Some((view, arrow)) = anchor(driver, name, log)? else {
             log(tr!("fishing-map-skipped", map = name.to_owned()));
             complete = false;
             break;
@@ -886,6 +915,21 @@ fn fish_map(
     Ok((count, complete))
 }
 
+/// The map tab with the arrow; when the arrow is not found, the map is opened
+/// once more before the tab is given up, because reading its label can fail.
+fn anchor(
+    driver: &Driver<'_>,
+    name: &str,
+    log: &mut impl FnMut(String),
+) -> Result<Option<(Frame, Point)>, ActionError> {
+    if let Some(found) = map::anchor(driver, name)? {
+        return Ok(Some(found));
+    }
+    trace::note(&format!("{name}: no arrow, map opened again"));
+    reopen_map(driver, log)?;
+    map::anchor(driver, name)
+}
+
 /// Closes the map if it is open (the back arrow is only tapped on the map),
 /// then opens it again at the character.
 fn reopen_map(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<(), ActionError> {
@@ -900,6 +944,22 @@ fn reopen_map(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<(), A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_stream_starts_counting_frames_again() {
+        // Every stream numbers its frames from 1; a count kept from the last
+        // spot's stream would reject the new frames for minutes.
+        let cancelled = AtomicBool::new(false);
+        let mut driver = Driver {
+            serial: "",
+            cancelled: &cancelled,
+            stream: None,
+            seen: std::cell::Cell::new(4000),
+            input_busy: std::sync::Arc::new(AtomicBool::new(false)),
+        };
+        driver.use_stream(None);
+        assert_eq!(driver.seen.get(), 0);
+    }
 
     #[test]
     fn a_hit_bite_without_card_or_escape_is_a_silent_small_catch() {
@@ -1077,6 +1137,12 @@ mod tests {
         // The minigame starts only on the open fishing screen, never on the map.
         assert!(on_fishing_screen(&load("fishing-after")).unwrap());
         assert!(!on_fishing_screen(&map).unwrap());
+        // After the rod tap the game casts at once and hides the book; the
+        // "Remaining attempts" badge is often unreadable then.
+        assert!(fishing_opened(&load("fishing-shoal-waiting")).unwrap());
+        assert!(fishing_opened(&load("fishing-shoal-bite")).unwrap());
+        assert!(!fishing_opened(&load("fishing-arrived")).unwrap());
+        assert!(!fishing_opened(&map).unwrap());
         // In the live stream the Tap & Hold button is smaller than the template;
         // the pull bar colours still identify the pull phase.
         assert!(pull_bar(&load("fishing-stream-pull").pixels).is_some());

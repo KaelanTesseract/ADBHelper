@@ -8,7 +8,10 @@
 //! from where the arrow is on screen (`anchor`), whatever the zoom did.
 
 use super::route::{self, Cell, Explorer, Heading, Tab, MAP_VIEW, TAB_STRIP};
-use super::{common, ocr, on_fishing_screen, trace, Driver, Frame, Point, Rect, ARRIVAL, RODS};
+use super::{
+    common, fishing_opened, ocr, on_fishing_screen, trace, Driver, Frame, Point, Rect, ARRIVAL,
+    RODS,
+};
 use crate::afk_journey::{error::ActionError, text_match::ascii_key, vision};
 use crate::localization::tr;
 use image::GrayImage;
@@ -418,6 +421,26 @@ pub(super) fn find_arrow(frame: &Frame) -> Result<Option<Point>, ActionError> {
     let arrow =
         arrow_from_label(&ocr::recognize(&view)?).map(|(x, y)| (x + MAP_VIEW.x, y + MAP_VIEW.y));
     trace::note(&format!("arrow from label {arrow:?}"));
+    if arrow.is_some() {
+        return Ok(arrow);
+    }
+    // OCR over the whole view sometimes misses the small label.
+    let middle = image::imageops::crop_imm(
+        &frame.gray,
+        LABEL_AREA.x,
+        LABEL_AREA.y,
+        LABEL_AREA.width,
+        LABEL_AREA.height,
+    )
+    .to_image();
+    let middle = image::imageops::resize(
+        &middle,
+        LABEL_AREA.width * 2,
+        LABEL_AREA.height * 2,
+        image::imageops::FilterType::CatmullRom,
+    );
+    let arrow = arrow_from_close_label(&ocr::recognize(&middle)?);
+    trace::note(&format!("arrow from enlarged label {arrow:?}"));
     Ok(arrow)
 }
 
@@ -427,6 +450,31 @@ const LABEL_BELOW_ARROW: u32 = 45;
 
 /// The arrow above a coordinate label such as "182 ; 299" or "182; 299".
 fn arrow_from_label(lines: &[ocr::TextLine]) -> Option<Point> {
+    label_center(lines).map(|(x, y)| (x, y.saturating_sub(LABEL_BELOW_ARROW)))
+}
+
+/// Middle of the map view, where tapping a tab puts the arrow. Its label is
+/// read here at twice the size when the whole view's OCR misses it.
+const LABEL_AREA: Rect = Rect {
+    x: 240,
+    y: 760,
+    width: 600,
+    height: 480,
+};
+
+/// The arrow above a coordinate label among OCR lines of `LABEL_AREA` read at
+/// twice the size, in screen points.
+fn arrow_from_close_label(lines: &[ocr::TextLine]) -> Option<Point> {
+    label_center(lines).map(|(x, y)| {
+        (
+            x / 2 + LABEL_AREA.x,
+            (y / 2 + LABEL_AREA.y).saturating_sub(LABEL_BELOW_ARROW),
+        )
+    })
+}
+
+/// Centre of a coordinate label such as "182 ; 299".
+fn label_center(lines: &[ocr::TextLine]) -> Option<Point> {
     lines
         .iter()
         .find(|line| {
@@ -437,10 +485,7 @@ fn arrow_from_label(lines: &[ocr::TextLine]) -> Option<Point> {
             let number = |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit());
             number(x) && number(y)
         })
-        .map(|line| {
-            let (x, y) = line.center();
-            (x, y.saturating_sub(LABEL_BELOW_ARROW))
-        })
+        .map(ocr::TextLine::center)
 }
 
 /// Shows the map tab `name` zoomed out and returns the view with the arrow's
@@ -729,7 +774,7 @@ pub(super) fn walk_to(
         driver.tap(frame.size, rod)?;
         for _ in 0..6 {
             driver.settle()?;
-            if on_fishing_screen(&driver.read()?)? {
+            if fishing_opened(&driver.read()?)? {
                 return Ok(Arrival::Arrived);
             }
         }
@@ -786,6 +831,13 @@ mod tests {
             Some((500, 75))
         );
         assert_eq!(arrow_from_label(&[line("Lvl. 306", 100.0)]), None);
+        // Read at twice the size in LABEL_AREA: the label centre (500, 420)
+        // there is (490, 970) on screen, and the arrow 45 px above it.
+        assert_eq!(
+            arrow_from_close_label(&[line("348 ; 233", 400.0)]),
+            Some((490, 925))
+        );
+        assert_eq!(arrow_from_close_label(&[line("Novaris", 400.0)]), None);
     }
 
     #[test]
