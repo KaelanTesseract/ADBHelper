@@ -107,7 +107,7 @@ fn screen_rows(screen: &Screen) -> Result<BTreeMap<String, f64>, ActionError> {
         .iter()
         .filter(|line| {
             let (lx, ly) = line.center();
-            lx < VALUE_X && ly > y && ly < LAST_ROW_Y
+            lx < VALUE_X && ly > FIRST_ROW_Y && ly < LAST_ROW_Y
         })
         .cloned()
         .collect();
@@ -134,6 +134,9 @@ fn screen_rows(screen: &Screen) -> Result<BTreeMap<String, f64>, ActionError> {
         with_point(text, digits_after_point(&screen.gray, row))
     }))
 }
+
+/// Rows above this are cut off at the top after scrolling ("…ency").
+const FIRST_ROW_Y: u32 = 1000;
 
 /// Rows below this are partly hidden by the back button ("…ation").
 const LAST_ROW_Y: u32 = 1735;
