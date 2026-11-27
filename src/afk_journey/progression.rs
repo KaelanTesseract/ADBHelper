@@ -2,6 +2,7 @@
 use crate::afk_journey::error::ActionError;
 use crate::afk_journey::text_match::ascii_key;
 mod hall;
+mod hero_card;
 pub mod hero_db;
 mod hero_facts;
 mod hero_skills;

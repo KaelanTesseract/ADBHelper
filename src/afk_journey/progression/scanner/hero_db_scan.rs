@@ -4,8 +4,9 @@
 use super::hero::{ascension, exclusive_level, reference};
 use super::{tr, ActivityEvent, Driver, GameMode};
 use crate::afk_journey::error::ActionError;
+use crate::afk_journey::progression::hero_db::portrait_folder;
 use crate::afk_journey::progression::hero_db::{today, HeroDatabase, HeroRecord, Progress, Skill};
-use crate::afk_journey::progression::{hall, hero_facts, hero_skills, hero_stats};
+use crate::afk_journey::progression::{hall, hero_card, hero_facts, hero_skills, hero_stats};
 use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
 use std::collections::BTreeMap;
@@ -156,6 +157,30 @@ pub(super) fn merge_tracker_roster(db: &mut HeroDatabase, log: &mut impl FnMut(S
     }
 }
 
+/// Saves the portrait cut from the profile; returns its file name.
+fn save_portrait(
+    name: &str,
+    profile: &image::RgbImage,
+    log: &mut impl FnMut(String),
+) -> Option<String> {
+    let file = format!("{}.png", ascii_key(name));
+    let result = portrait_folder()
+        .map_err(|error| error.to_string())
+        .and_then(|folder| {
+            std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+            hero_card::portrait(profile)
+                .save(folder.join(&file))
+                .map_err(|error| error.to_string())
+        });
+    match result {
+        Ok(()) => Some(file),
+        Err(error) => {
+            log(tr!("hero-db-not-saved", error = error));
+            None
+        }
+    }
+}
+
 /// The hero profile again after Hero Stats or the skill tab closed.
 fn back_on_profile(driver: &Driver<'_>) -> Result<super::Screen, ActionError> {
     driver
@@ -205,9 +230,15 @@ pub(super) fn scan(
                 Some(read) if has_weapon(read) => exclusive_level(&profile)?,
                 _ => None,
             };
+            let weapon = ascension.as_deref().is_some_and(has_weapon);
+            let stars = hero_card::count_stars(&profile.color);
             let fresh = {
                 let record = record_for_alias(&mut db, &name, &aliases);
                 record.owned = true;
+                record.stars = if weapon { stars.or(record.stars) } else { None };
+                if record.portrait.is_none() || needs_scan(record, &day, max_age_days) {
+                    record.portrait = save_portrait(&record.name, &profile.color, log);
+                }
                 record.progress = Some(merged_progress(
                     record.progress.as_ref(),
                     ascension,
