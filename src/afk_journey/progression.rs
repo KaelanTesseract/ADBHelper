@@ -6,6 +6,7 @@ mod hall_cards;
 mod hero_card;
 pub mod hero_db;
 mod hero_facts;
+pub mod hero_portraits;
 mod hero_skills;
 mod hero_stats;
 pub mod scanner;

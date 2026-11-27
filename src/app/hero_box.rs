@@ -6,6 +6,7 @@ use super::*;
 use crate::afk_journey::progression::hero_db::{
     is_supreme_plus, portrait_folder, tier_badge, HeroDatabase, HeroRecord,
 };
+use crate::afk_journey::progression::hero_portraits;
 use crate::hero_box_image;
 use std::collections::HashMap;
 
@@ -22,6 +23,8 @@ pub(super) struct HeroBox {
     textures: HashMap<String, egui::TextureHandle>,
     message: Option<String>,
     filter: HeroFilter,
+    /// Result of a portrait download running in the background.
+    download: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
 }
 
 /// Faction and class shown in the Hero Box; `None` shows all.
@@ -101,8 +104,10 @@ fn sorted(db: HeroDatabase) -> Vec<HeroRecord> {
     heroes
 }
 
+/// The downloaded portrait, else the hall card or profile cut from the scan.
 fn portrait_image(hero: &HeroRecord) -> Option<image::RgbaImage> {
-    let file = portrait_folder().ok()?.join(hero.portrait.as_ref()?);
+    let file = hero_portraits::web_portrait(&hero.name)
+        .or_else(|| Some(portrait_folder().ok()?.join(hero.portrait.as_ref()?)))?;
     image::open(file).ok().map(|image| image.to_rgba8())
 }
 
@@ -164,7 +169,42 @@ impl PlayerApp {
         });
     }
 
+    /// Downloads missing portraits on a background thread.
+    fn load_portraits(&mut self, context: &egui::Context) {
+        let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+        self.hero_box.download = Some(result.clone());
+        let context = context.clone();
+        thread::spawn(move || {
+            let mut lines = Vec::new();
+            let added = hero_portraits::fetch_missing(
+                &mut |line| lines.push(line),
+                &AtomicBool::new(false),
+            );
+            let message = match added {
+                Ok(added) if lines.is_empty() => {
+                    tr!("hero-db-portraits-added", count = added).to_owned()
+                }
+                Ok(_) => lines.join(" "),
+                Err(error) => error.to_string(),
+            };
+            if let Ok(mut slot) = result.lock() {
+                *slot = Some(message);
+            }
+            context.request_repaint();
+        });
+    }
+
     pub(super) fn show_hero_box(&mut self, ui: &mut egui::Ui) {
+        let finished = self
+            .hero_box
+            .download
+            .as_ref()
+            .and_then(|slot| slot.lock().ok().and_then(|mut slot| slot.take()));
+        if let Some(message) = finished {
+            self.hero_box.download = None;
+            self.hero_box.message = Some(message);
+            self.hero_box.reload();
+        }
         if !self.hero_box.loaded {
             self.load_hero_box(ui.ctx());
         }
@@ -182,6 +222,19 @@ impl PlayerApp {
                     .clicked()
                 {
                     self.make_hero_picture();
+                }
+                let downloading = self.hero_box.download.is_some();
+                if ui
+                    .add_enabled(
+                        !downloading,
+                        egui::Button::new(tr!("app-hero-box-load-portraits")),
+                    )
+                    .clicked()
+                {
+                    self.load_portraits(ui.ctx());
+                }
+                if downloading {
+                    ui.spinner();
                 }
                 if let Some(message) = &self.hero_box.message {
                     ui.label(message.as_str());

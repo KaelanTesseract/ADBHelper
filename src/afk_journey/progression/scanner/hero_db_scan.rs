@@ -7,7 +7,7 @@ use crate::afk_journey::error::ActionError;
 use crate::afk_journey::progression::hero_db::portrait_folder;
 use crate::afk_journey::progression::hero_db::{today, HeroDatabase, HeroRecord, Progress, Skill};
 use crate::afk_journey::progression::{
-    hall, hall_cards, hero_card, hero_facts, hero_skills, hero_stats,
+    hall, hall_cards, hero_card, hero_facts, hero_portraits, hero_skills, hero_stats,
 };
 use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
@@ -208,6 +208,10 @@ pub(super) fn scan(
     }
     merge_tracker_roster(&mut db, log);
     db.merge_facts(&hero_facts::fetch_facts(log, driver.cancelled)?);
+    let added = hero_portraits::fetch_missing(log, driver.cancelled)?;
+    if added > 0 {
+        log(tr!("hero-db-portraits-added", count = added));
+    }
     save(&mut db)?;
     let aliases = alias_keys();
     let roster_size = db.heroes.len().max(1);

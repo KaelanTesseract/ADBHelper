@@ -685,3 +685,6 @@ app-hero-box-faction = Fraktion
 app-hero-box-class = Klasse
 hero-db-cards-unavailable = Die Heldenkarten der Resonating Hall konnten nicht gelesen werden, daher werden Profilbilder verwendet: { $error }
 hero-db-cards-mismatch = Es wurden { $cards } Heldenkarten gelesen, aber { $heroes } Helden gescannt; einzelne Bilder könnten zum falschen Helden gehören. Ein neuer Scan behebt das.
+hero-db-portraits-unavailable = Heldenporträts konnten nicht geladen werden, gespeicherte und die Karten der Resonating Hall werden verwendet: { $error }
+hero-db-portraits-added = { $count } Heldenporträts geladen.
+app-hero-box-load-portraits = Porträts laden
