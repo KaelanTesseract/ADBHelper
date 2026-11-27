@@ -44,14 +44,40 @@ fn ascension_label(label: &str) -> Option<&'static str> {
     })
 }
 
-pub(super) fn ascension(screen: &Screen) -> Result<Option<&'static str>, ActionError> {
+/// Area of the ascension badge's crown, beside "Paragon".
+const CROWN: vision::Rect = vision::Rect {
+    x: 89,
+    y: 18,
+    width: 41,
+    height: 43,
+};
+
+/// The numbered Paragon crowns look alike apart from the digit, so the best
+/// matching one wins instead of the first that passes.
+fn numbered_crown(screen: &Screen) -> Result<Option<&'static str>, ActionError> {
+    let mut best: Option<(f32, &'static str)> = None;
     for (asset, label) in [
-        ("progression/scan_crown.png", "Paragon 4"),
+        ("progression/scan_paragon_one.png", "Paragon 1"),
         ("progression/scan_paragon_three.png", "Paragon 3"),
     ] {
-        if screen.template(asset, 89..130, 18..61, 0.88)?.is_some() {
-            return Ok(Some(label));
+        if let Some(found) = vision::find_template(&screen.gray, asset, CROWN, 0.88)? {
+            if best.is_none_or(|(score, _)| found.confidence > score) {
+                best = Some((found.confidence, label));
+            }
         }
+    }
+    Ok(best.map(|(_, label)| label))
+}
+
+pub(super) fn ascension(screen: &Screen) -> Result<Option<&'static str>, ActionError> {
+    if screen
+        .template("progression/scan_crown.png", 89..130, 18..61, 0.88)?
+        .is_some()
+    {
+        return Ok(Some("Paragon 4"));
+    }
+    if let Some(label) = numbered_crown(screen)? {
+        return Ok(Some(label));
     }
     // A numbered Paragon badge can still be upgraded. The blue gem badge
     // on a maxed profile replaces the number when Ascend is unavailable.
@@ -110,6 +136,13 @@ pub(super) fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionErro
         }))
     {
         values.extend(weapon_level(&line.text));
+    }
+    if values.is_empty() {
+        // Heroes below Supreme+ show "Reach Supreme+" under the badges, which
+        // pushes the EX weapon badge about 70 px up.
+        for line in crop(screen, 0, 1380, 240, 140)? {
+            values.extend(weapon_level(&line.text));
+        }
     }
     Ok((values.len() == 1).then(|| *values.first().unwrap()))
 }
@@ -226,6 +259,29 @@ pub(super) fn scan(
 mod tests {
     use super::*;
     use crate::afk_journey::progression::captured;
+
+    fn hero_db_capture(name: &str) -> Screen {
+        let folder = std::env::var_os("ADBHELPER_TEST_HERO_DB").expect("capture folder");
+        let bytes = std::fs::read(std::path::Path::new(&folder).join(name)).unwrap();
+        Screen::decode(&bytes).unwrap()
+    }
+
+    #[test]
+    #[ignore = "needs private profile captures (ADBHELPER_TEST_HERO_DB)"]
+    fn paragon_one_and_a_raised_ex_badge_are_read() {
+        // The crown shows a small "1"; the "3" crown must not match it.
+        let phraesto = hero_db_capture("profile-phraesto-paragon1.png");
+        assert_eq!(ascension(&phraesto).unwrap(), Some("Paragon 1"));
+        assert_eq!(exclusive_level(&phraesto).unwrap(), Some(25));
+        // "Reach Supreme+" pushes the EX weapon badge up.
+        let aneva = hero_db_capture("profile-aneva-supreme-ex13.png");
+        assert_eq!(ascension(&aneva).unwrap(), Some("Supreme"));
+        assert_eq!(exclusive_level(&aneva).unwrap(), Some(13));
+        // Earlier captures keep their values.
+        let alna = hero_db_capture("profile-6-stars.png");
+        assert_eq!(ascension(&alna).unwrap(), Some("Supreme+"));
+        assert_eq!(exclusive_level(&alna).unwrap(), Some(25));
+    }
 
     #[test]
     #[ignore = "uses an English hero profile capture"]
