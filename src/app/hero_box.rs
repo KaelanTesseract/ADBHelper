@@ -166,6 +166,8 @@ impl PlayerApp {
             .iter()
             .filter(|hero| hero.owned && self.hero_box.filter.matches(hero))
             .map(|hero| hero_box_image::BoxHero {
+                name: hero.name.clone(),
+                stars: hero.stars,
                 portrait: portrait_image(hero),
                 supreme_plus: is_s_plus(hero),
                 badge: badge_of(hero),
@@ -394,14 +396,12 @@ impl PlayerApp {
                 );
             }
         }
-        if is_s_plus(hero) {
-            painter.rect_stroke(
-                portrait.shrink(1.5),
-                6.0,
-                egui::Stroke::new(3.0, GOLD),
-                egui::StrokeKind::Inside,
-            );
-        }
+        painter.rect_stroke(
+            portrait.shrink(0.5),
+            6.0,
+            egui::Stroke::new(1.5, egui::Color32::from_rgb(92, 98, 112)),
+            egui::StrokeKind::Inside,
+        );
         // One line under the picture: ascension | name | EX weapon stars.
         let line_y = portrait.bottom() + 10.0;
         let small = egui::FontId::proportional(11.0);

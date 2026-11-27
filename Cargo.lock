@@ -17,6 +17,7 @@ version = "0.5.6"
 dependencies = [
  "eframe",
  "embed-resource",
+ "epaint_default_fonts",
  "fluent-bundle",
  "fluent-syntax",
  "image",
@@ -26,6 +27,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "skrifa",
  "unic-langid",
  "ureq",
  "windows",

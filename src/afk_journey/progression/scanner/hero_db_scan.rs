@@ -57,10 +57,15 @@ pub(super) fn record_for_alias<'a>(
             .values()
             .any(|record| ascii_key(&record.name) == key)
     };
-    match aliases.get(key) {
-        Some(real) if !known(db, key) && known(db, real) => record_for(db, real),
-        _ => record_for(db, key),
+    if !known(db, key) {
+        if let Some(real) = aliases.get(key).filter(|real| known(db, real)) {
+            return record_for(db, real);
+        }
+        if let Some(id) = closest_hero(db, key) {
+            return db.heroes.get_mut(&id).expect("closest hero exists");
+        }
     }
+    record_for(db, key)
 }
 
 /// The tracker's aliases as alias key → name key; empty when unavailable.
@@ -106,6 +111,90 @@ pub(super) fn replace_game_skills(record: &mut HeroRecord, skills: Vec<Skill>) {
             }
         }
         record.skills.push(skill);
+    }
+}
+
+/// Edit distance between two name keys.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut previous = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let current = row[j + 1];
+            row[j + 1] = (row[j + 1] + 1)
+                .min(row[j] + 1)
+                .min(previous + usize::from(ca != *cb));
+            previous = current;
+        }
+    }
+    row[b.len()]
+}
+
+/// The roster hero whose name is closest to a misread profile name key
+/// ("lvca" → Lyca, "natsu" → Natsu Dragneel). Only a clear single best match
+/// counts; a name that fits no hero gives `None`.
+pub(super) fn closest_hero(db: &HeroDatabase, key: &str) -> Option<String> {
+    if key.len() < 3 {
+        return None;
+    }
+    let mut scored: Vec<(usize, &String)> = db
+        .heroes
+        .iter()
+        .filter(|(_, record)| record.sources.contains_key("list"))
+        .map(|(id, record)| {
+            let name = ascii_key(&record.name);
+            let score = if key.len() >= 4 && name.starts_with(key) {
+                1
+            } else {
+                distance(key, &name)
+            };
+            let allowed = (name.len().max(key.len()) / 3).max(1);
+            (if score <= allowed { score } else { usize::MAX }, id)
+        })
+        .filter(|(score, _)| *score != usize::MAX)
+        .collect();
+    scored.sort();
+    match scored.as_slice() {
+        [(best, id), rest @ ..] if rest.first().is_none_or(|(next, _)| next > best) => {
+            Some((*id).clone())
+        }
+        _ => None,
+    }
+}
+
+/// Moves what was stored under a misread name to the hero it belongs to,
+/// when that hero has no scanned data of its own.
+pub(super) fn merge_strays(db: &mut HeroDatabase) {
+    let strays: Vec<String> = db
+        .heroes
+        .iter()
+        .filter(|(_, record)| record.owned && !record.sources.contains_key("list"))
+        .map(|(id, _)| id.clone())
+        .collect();
+    for stray in strays {
+        let key = ascii_key(&db.heroes[&stray].name);
+        let Some(target) = closest_hero(db, &key) else {
+            continue;
+        };
+        if db.heroes[&target].owned {
+            continue;
+        }
+        let Some(record) = db.heroes.remove(&stray) else {
+            continue;
+        };
+        let hero = db.heroes.get_mut(&target).expect("target exists");
+        hero.owned = true;
+        hero.progress = record.progress.or(hero.progress.take());
+        hero.stars = record.stars.or(hero.stars);
+        hero.stats = record.stats.or(hero.stats.take());
+        if record.skills.iter().any(|skill| skill.source == "game") {
+            replace_game_skills(hero, record.skills);
+        }
+        for (part, source) in record.sources {
+            hero.sources.entry(part).or_insert(source);
+        }
     }
 }
 
@@ -216,6 +305,7 @@ pub(super) fn scan(
         log(tr!("hero-db-broken-file-kept", file = warning));
     }
     merge_tracker_roster(&mut db, log);
+    merge_strays(&mut db);
     if matches!(depth, Depth::Full { .. }) {
         db.merge_facts(&hero_facts::fetch_facts(log, driver.cancelled)?);
     }
@@ -412,6 +502,84 @@ mod tests {
         assert!(has_weapon("Mythic+"));
         assert!(has_weapon("Supreme"));
         assert!(has_weapon("Paragon 2"));
+    }
+
+    fn roster(names: &[&str]) -> HeroDatabase {
+        let heroes: Vec<serde_json::Value> = names
+            .iter()
+            .map(|name| serde_json::json!({"name": name}))
+            .collect();
+        let mut db = HeroDatabase::default();
+        db.merge_roster(&serde_json::json!({ "heroes": heroes }));
+        db
+    }
+
+    #[test]
+    fn misread_names_find_the_closest_hero() {
+        let db = roster(&[
+            "Berial",
+            "Odie",
+            "Estrilda",
+            "Fay",
+            "Florabelle",
+            "Hepler",
+            "Lily May",
+            "Lorsan",
+            "Lyca",
+            "Natsu Dragneel",
+            "Smokey and Meerky",
+            "Solise",
+            "Faramor",
+        ]);
+        for (read, hero) in [
+            ("beria", "berial"),
+            ("die", "odie"),
+            ("estrida", "estrilda"),
+            ("fav", "fay"),
+            ("florabee", "florabelle"),
+            ("heper", "hepler"),
+            ("lilvmav", "lily-may"),
+            ("lorsana", "lorsan"),
+            ("lvca", "lyca"),
+            ("natsu", "natsu-dragneel"),
+            ("smokeymeerky", "smokey-and-meerky"),
+            ("soise", "solise"),
+        ] {
+            assert_eq!(closest_hero(&db, read).as_deref(), Some(hero), "{read}");
+        }
+        assert_eq!(closest_hero(&db, "zzzzzz"), None);
+    }
+
+    #[test]
+    #[ignore = "prints how the stored misread names would be matched"]
+    fn stored_strays_match() {
+        let db = HeroDatabase::load_quietly();
+        for (id, record) in &db.heroes {
+            if record.owned && !record.sources.contains_key("list") {
+                println!("{id} -> {:?}", closest_hero(&db, &ascii_key(&record.name)));
+            }
+        }
+    }
+
+    #[test]
+    fn stray_records_from_misread_names_are_merged() {
+        let mut db = roster(&["Lyca", "Odie"]);
+        let stray = db.record("lvca");
+        stray.owned = true;
+        stray.progress = Some(Progress {
+            ascension: Some("Paragon 4".into()),
+            ..Progress::default()
+        });
+        stray.stars = Some(3);
+        merge_strays(&mut db);
+        assert!(!db.heroes.contains_key("lvca"));
+        let lyca = &db.heroes["lyca"];
+        assert!(lyca.owned);
+        assert_eq!(lyca.stars, Some(3));
+        assert_eq!(
+            lyca.progress.as_ref().unwrap().ascension.as_deref(),
+            Some("Paragon 4")
+        );
     }
 
     #[test]

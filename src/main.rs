@@ -14,6 +14,7 @@ mod logfile;
 mod release_signature;
 mod routine;
 mod settings;
+mod text_raster;
 mod timing;
 mod updater;
 
