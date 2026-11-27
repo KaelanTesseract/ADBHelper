@@ -184,20 +184,50 @@ pub fn draw_text(
     }
 }
 
-/// A filled five-pointed star centred at (`x`, `y`).
-pub fn draw_star(image: &mut RgbaImage, x: f32, y: f32, radius: f32, color: Rgba<u8>) {
-    let star: Vec<(f32, f32)> = (0..10)
-        .map(|index| {
-            let r = if index % 2 == 0 {
-                radius
-            } else {
-                radius * 0.45
-            };
-            let angle = std::f32::consts::PI * (index as f32 / 5.0) - std::f32::consts::FRAC_PI_2;
-            (x + r * angle.cos(), y + r * angle.sin())
-        })
-        .collect();
-    fill(image, &[star], color);
+/// A small sword pointing up and to the right, `size` pixels tall, with its
+/// lower left corner at (`x`, `y`): blade, cross guard and grip.
+pub fn draw_sword(
+    image: &mut RgbaImage,
+    x: f32,
+    y: f32,
+    size: f32,
+    blade: Rgba<u8>,
+    grip: Rgba<u8>,
+) {
+    let along = |t: f32, side: f32| {
+        // Point `t` along the diagonal (0 = pommel, 1 = tip), `side` across it.
+        let (dx, dy) = (
+            size * std::f32::consts::FRAC_1_SQRT_2,
+            -size * std::f32::consts::FRAC_1_SQRT_2,
+        );
+        let (nx, ny) = (
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+        );
+        (x + dx * t + nx * side, y + dy * t + ny * side)
+    };
+    let width = (size * 0.09).max(1.0);
+    let blade_shape = vec![
+        along(0.32, -width),
+        along(0.88, -width),
+        along(1.0, 0.0),
+        along(0.88, width),
+        along(0.32, width),
+    ];
+    let guard = vec![
+        along(0.27, -width * 3.2),
+        along(0.33, -width * 3.2),
+        along(0.33, width * 3.2),
+        along(0.27, width * 3.2),
+    ];
+    let handle = vec![
+        along(0.02, -width * 0.9),
+        along(0.27, -width * 0.9),
+        along(0.27, width * 0.9),
+        along(0.02, width * 0.9),
+    ];
+    fill(image, &[blade_shape], blade);
+    fill(image, &[guard, handle], grip);
 }
 
 #[cfg(test)]
@@ -225,10 +255,12 @@ mod tests {
     }
 
     #[test]
-    fn a_star_is_filled() {
+    fn a_sword_has_blade_and_grip() {
         let mut image = RgbaImage::from_pixel(40, 40, Rgba([0, 0, 0, 255]));
-        draw_star(&mut image, 20.0, 20.0, 15.0, Rgba([255, 255, 255, 255]));
-        assert_eq!(*image.get_pixel(20, 20), Rgba([255, 255, 255, 255]));
-        assert_eq!(*image.get_pixel(2, 38), Rgba([0, 0, 0, 255]));
+        let (blade, grip) = (Rgba([220, 220, 230, 255]), Rgba([160, 110, 60, 255]));
+        draw_sword(&mut image, 4.0, 36.0, 40.0, blade, grip);
+        assert!(image.pixels().any(|pixel| *pixel == blade));
+        assert!(image.pixels().any(|pixel| *pixel == grip));
+        assert_eq!(*image.get_pixel(38, 38), Rgba([0, 0, 0, 255]));
     }
 }

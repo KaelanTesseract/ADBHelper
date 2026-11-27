@@ -1,14 +1,14 @@
 //! The Hero Box picture for Discord: every scanned hero with portrait in a
-//! uniform frame, and below it ascension | name | EX weapon stars.
+//! uniform frame, and below it ascension | name | EX weapon level.
 
-use crate::text_raster::{draw_star, draw_text, text_width};
+use crate::text_raster::{draw_sword, draw_text, text_width};
 use image::{imageops, Rgba, RgbaImage};
 
 pub const COLUMNS: u32 = 8;
 pub const TILE: u32 = 128;
 /// Portraits are about 1.4 times as tall as wide (180×248).
 pub const TILE_HEIGHT: u32 = 176;
-/// The line with ascension, name and stars under each portrait.
+/// The line with ascension, name and EX weapon level under each portrait.
 pub const LABEL: u32 = 24;
 pub const GAP: u32 = 10;
 pub const MARGIN: u32 = 16;
@@ -18,7 +18,8 @@ const PLACEHOLDER: Rgba<u8> = Rgba([58, 62, 70, 255]);
 pub const FRAME_COLOR: Rgba<u8> = Rgba([92, 98, 112, 255]);
 const GOLD: Rgba<u8> = Rgba([212, 175, 55, 255]);
 const LIGHT: Rgba<u8> = Rgba([225, 225, 225, 255]);
-const STAR: Rgba<u8> = Rgba([255, 214, 90, 255]);
+const BLADE: Rgba<u8> = Rgba([215, 222, 235, 255]);
+const GRIP: Rgba<u8> = Rgba([196, 140, 70, 255]);
 const TEXT_SIZE: f32 = 14.0;
 
 /// One hero on the picture.
@@ -29,8 +30,8 @@ pub struct BoxHero {
     pub supreme_plus: bool,
     /// Ascension such as "S+", "P3", "M+".
     pub badge: Option<&'static str>,
-    /// Stars under the EX weapon.
-    pub stars: Option<u32>,
+    /// EX weapon level ("+25").
+    pub ex_level: Option<u32>,
 }
 
 fn fill(image: &mut RgbaImage, x: u32, y: u32, width: u32, height: u32, color: Rgba<u8>) {
@@ -58,7 +59,7 @@ fn fitted(name: &str, room: f32) -> String {
 }
 
 /// Every hero in rows of `COLUMNS`: portrait (or a grey tile) in a uniform
-/// frame, then ascension, name and stars on one line.
+/// frame, then ascension, name and EX weapon level on one line.
 pub fn compose(heroes: &[BoxHero]) -> RgbaImage {
     let rows = (heroes.len() as u32).div_ceil(COLUMNS).max(1);
     let columns = (heroes.len() as u32).clamp(1, COLUMNS);
@@ -101,13 +102,13 @@ pub fn compose(heroes: &[BoxHero]) -> RgbaImage {
             left += text_width(text, TEXT_SIZE) + 5.0;
         }
         let mut right = (x + TILE) as f32;
-        if let Some(stars) = hero.stars.filter(|&stars| stars > 0) {
-            let count = stars.to_string();
-            right -= text_width(&count, TEXT_SIZE);
-            draw_text(&mut image, right, baseline, TEXT_SIZE, &count, STAR);
-            right -= 8.0;
-            draw_star(&mut image, right, baseline - 5.0, 6.0, STAR);
-            right -= 9.0;
+        if let Some(level) = hero.ex_level.filter(|&level| level > 0) {
+            let text = format!("+{level}");
+            right -= text_width(&text, TEXT_SIZE);
+            draw_text(&mut image, right, baseline, TEXT_SIZE, &text, LIGHT);
+            right -= 14.0;
+            draw_sword(&mut image, right, baseline + 1.0, 13.0, BLADE, GRIP);
+            right -= 3.0;
         }
         let name = fitted(&hero.name, (right - left).max(0.0));
         let name_x = left + ((right - left) - text_width(&name, TEXT_SIZE)).max(0.0) / 2.0;
@@ -188,13 +189,13 @@ pub fn copy_to_clipboard(_: &RgbaImage) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn hero(name: &str, badge: Option<&'static str>, stars: Option<u32>) -> BoxHero {
+    fn hero(name: &str, badge: Option<&'static str>, ex_level: Option<u32>) -> BoxHero {
         BoxHero {
             name: name.into(),
             portrait: Some(RgbaImage::from_pixel(180, 248, Rgba([10, 120, 200, 255]))),
             supreme_plus: badge == Some("P4"),
             badge,
-            stars,
+            ex_level,
         }
     }
 
@@ -234,18 +235,32 @@ mod tests {
     }
 
     #[test]
-    fn the_label_shows_ascension_name_and_stars() {
+    fn the_label_shows_ascension_name_and_ex_level() {
         let plain = label_area(&compose(&[hero("Lyca", None, None)]));
         let with_badge = label_area(&compose(&[hero("Lyca", Some("P4"), None)]));
-        let with_stars = label_area(&compose(&[hero("Lyca", None, Some(4))]));
+        let with_level = label_area(&compose(&[hero("Lyca", None, Some(25))]));
+        let other_level = label_area(&compose(&[hero("Lyca", None, Some(10))]));
         let other_name = label_area(&compose(&[hero("Odie", None, None)]));
         assert_ne!(plain, with_badge);
-        assert_ne!(plain, with_stars);
+        assert_ne!(plain, with_level);
+        assert_ne!(with_level, other_level);
         assert_ne!(plain, other_name);
         assert!(
             plain.iter().any(|pixel| *pixel != BACKGROUND),
             "the name is drawn"
         );
+    }
+
+    #[test]
+    #[ignore = "writes a sample picture to ADBHELPER_SAMPLE_PICTURE"]
+    fn sample_picture() {
+        let path = std::env::var_os("ADBHELPER_SAMPLE_PICTURE").expect("output path");
+        let heroes = [
+            hero("Elijah & Lailah", Some("P4"), Some(25)),
+            hero("Odie", Some("M+"), Some(10)),
+            hero("Smokey and Meerky", Some("S+"), Some(5)),
+        ];
+        compose(&heroes).save(path).unwrap();
     }
 
     #[test]

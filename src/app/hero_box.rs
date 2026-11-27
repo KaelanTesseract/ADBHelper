@@ -13,7 +13,8 @@ use std::collections::HashMap;
 const TILE: f32 = 112.0;
 /// Portraits are about 1.4 times as tall as wide (180×248).
 const TILE_HEIGHT: f32 = 154.0;
-const STAR: egui::Color32 = egui::Color32::from_rgb(255, 214, 90);
+const BLADE: egui::Color32 = egui::Color32::from_rgb(215, 222, 235);
+const GRIP: egui::Color32 = egui::Color32::from_rgb(196, 140, 70);
 const GOLD: egui::Color32 = egui::Color32::from_rgb(212, 175, 55);
 
 /// What the Hero Box page shows; loaded when the page opens and after a scan.
@@ -83,39 +84,32 @@ impl HeroBox {
     }
 }
 
-/// A small filled star: five spike triangles around a pentagon.
-fn paint_star(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
-    let point = |index: usize, r: f32| {
-        let angle = std::f32::consts::PI * (index as f32 / 5.0) - std::f32::consts::FRAC_PI_2;
-        center + egui::vec2(r * angle.cos(), r * angle.sin())
-    };
-    let inner = radius * 0.45;
-    let pentagon: Vec<egui::Pos2> = (0..5).map(|i| point(i * 2 + 1, inner)).collect();
-    painter.add(egui::Shape::convex_polygon(
-        pentagon,
-        STAR,
-        egui::Stroke::NONE,
-    ));
-    for i in 0..5 {
-        let tip = point(i * 2, radius);
-        let left = point((i * 2 + 9) % 10, inner);
-        let right = point(i * 2 + 1, inner);
-        painter.add(egui::Shape::convex_polygon(
-            vec![tip, right, left],
-            STAR,
-            egui::Stroke::NONE,
-        ));
-    }
+/// A small sword pointing up and to the right, `size` points tall, with its
+/// lower left end at `start`.
+fn paint_sword(painter: &egui::Painter, start: egui::Pos2, size: f32) {
+    let direction = egui::vec2(
+        std::f32::consts::FRAC_1_SQRT_2,
+        -std::f32::consts::FRAC_1_SQRT_2,
+    ) * size;
+    let across = egui::vec2(
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+    );
+    let at = |t: f32| start + direction * t;
+    painter.line_segment([at(0.3), at(1.0)], egui::Stroke::new(2.0, BLADE));
+    painter.line_segment(
+        [at(0.3) - across * 3.0, at(0.3) + across * 3.0],
+        egui::Stroke::new(2.0, GRIP),
+    );
+    painter.line_segment([at(0.0), at(0.3)], egui::Stroke::new(2.0, GRIP));
 }
 
-/// EX weapon stars: from the stored EX level when there is one (reliable),
-/// else as counted by the scan.
-fn stars_of(hero: &HeroRecord) -> Option<u32> {
+/// The stored EX weapon level.
+fn ex_level_of(hero: &HeroRecord) -> Option<u32> {
     hero.progress
         .as_ref()
         .and_then(|progress| progress.ex_weapon)
-        .and_then(crate::afk_journey::progression::hero_card::stars_for_ex_level)
-        .or(hero.stars)
+        .filter(|&level| level > 0)
 }
 
 /// "S+", "P4", ... for the hero's ascension.
@@ -177,7 +171,7 @@ impl PlayerApp {
             .filter(|hero| hero.owned && self.hero_box.filter.matches(hero))
             .map(|hero| hero_box_image::BoxHero {
                 name: hero.name.clone(),
-                stars: stars_of(hero),
+                ex_level: ex_level_of(hero),
                 portrait: portrait_image(hero),
                 supreme_plus: is_s_plus(hero),
                 badge: badge_of(hero),
@@ -431,17 +425,18 @@ impl PlayerApp {
             left += galley.size().x + 4.0;
         }
         let mut right = rect.right();
-        if let Some(stars) = stars_of(hero).filter(|&stars| stars > 0) {
-            let galley = painter.layout_no_wrap(stars.to_string(), small.clone(), STAR);
+        if let Some(level) = ex_level_of(hero) {
+            let text_color = egui::Color32::from_gray(225);
+            let galley = painter.layout_no_wrap(format!("+{level}"), small.clone(), text_color);
             right -= galley.size().x;
             painter.galley(
                 egui::pos2(right, line_y - galley.size().y / 2.0),
                 galley,
-                STAR,
+                text_color,
             );
-            right -= 7.0;
-            paint_star(&painter, egui::pos2(right, line_y), 5.5);
-            right -= 8.0;
+            right -= 11.0;
+            paint_sword(&painter, egui::pos2(right, line_y + 4.0), 10.0);
+            right -= 3.0;
         }
         let name_color = egui::Color32::from_gray(if hero.owned { 200 } else { 130 });
         let name = painter.layout_no_wrap(hero.name.clone(), small.clone(), name_color);
