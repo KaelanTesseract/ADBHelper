@@ -22,12 +22,70 @@ pub fn web_folder() -> std::io::Result<PathBuf> {
     portrait_folder().map(|folder| folder.join("web"))
 }
 
+/// Portrait files whose names are not the hero's name in the collection.
+const OTHER_NAMES: [(&str, &str); 1] = [("twins", "elijahlailah")];
+
+/// Edit distance between two name keys.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut previous = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let current = row[j + 1];
+            row[j + 1] = (row[j + 1] + 1)
+                .min(row[j] + 1)
+                .min(previous + usize::from(ca != *cb));
+            previous = current;
+        }
+    }
+    row[b.len()]
+}
+
+/// The portrait file of a hero among `files`: its own name, a known other
+/// name ("twins"), a short form ("lucy" for Lucy Heartfilia) or a near spelling
+/// ("smokeymeerky" for Smokey and Meerky).
+fn portrait_file_for(hero_name: &str, files: &[String]) -> Option<String> {
+    let key = ascii_key(hero_name);
+    let stem = |file: &String| file.trim_end_matches(".png").to_owned();
+    if let Some(file) = files.iter().find(|file| stem(file) == key) {
+        return Some(file.clone());
+    }
+    if let Some((other, _)) = OTHER_NAMES.iter().find(|(_, hero)| *hero == key) {
+        if let Some(file) = files.iter().find(|file| stem(file) == *other) {
+            return Some(file.clone());
+        }
+    }
+    let mut close: Vec<(usize, &String)> = files
+        .iter()
+        .filter_map(|file| {
+            let stem = stem(file);
+            let score = if stem.len() >= 4 && key.starts_with(&stem) {
+                1
+            } else {
+                distance(&stem, &key)
+            };
+            (score <= (key.len().max(stem.len()) / 4).max(1)).then_some((score, file))
+        })
+        .collect();
+    close.sort();
+    match close.as_slice() {
+        [(best, file), rest @ ..] if rest.first().is_none_or(|(next, _)| next > best) => {
+            Some((*file).clone())
+        }
+        _ => None,
+    }
+}
+
 /// The downloaded portrait of a hero, if there is one.
 pub fn web_portrait(hero_name: &str) -> Option<PathBuf> {
-    let file = web_folder()
+    let folder = web_folder().ok()?;
+    let files: Vec<String> = std::fs::read_dir(&folder)
         .ok()?
-        .join(format!("{}.png", ascii_key(hero_name)));
-    file.exists().then_some(file)
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .collect();
+    portrait_file_for(hero_name, &files).map(|file| folder.join(file))
 }
 
 /// File names of the PNG portraits in the GitHub folder listing.
@@ -178,6 +236,24 @@ mod tests {
         let stored = std::fs::read_dir(web_folder().unwrap()).unwrap().count();
         println!("added {added}, stored {stored}");
         assert!(stored >= 130);
+    }
+
+    #[test]
+    fn portrait_files_with_short_names_find_their_hero() {
+        let files: Vec<String> = ["lucy", "natsu", "smokeymeerky", "twins", "lyca", "chippy"]
+            .iter()
+            .map(|stem| format!("{stem}.png"))
+            .collect();
+        let find = |hero: &str| portrait_file_for(hero, &files);
+        assert_eq!(find("Lucy Heartfilia").as_deref(), Some("lucy.png"));
+        assert_eq!(find("Natsu Dragneel").as_deref(), Some("natsu.png"));
+        assert_eq!(
+            find("Smokey and Meerky").as_deref(),
+            Some("smokeymeerky.png")
+        );
+        assert_eq!(find("Elijah & Lailah").as_deref(), Some("twins.png"));
+        assert_eq!(find("Lyca").as_deref(), Some("lyca.png"));
+        assert_eq!(find("Tephesia"), None);
     }
 
     #[test]

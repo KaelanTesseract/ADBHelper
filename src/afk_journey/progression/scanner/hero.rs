@@ -137,14 +137,17 @@ pub(super) fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionErro
     {
         values.extend(weapon_level(&line.text));
     }
-    if values.is_empty() {
-        // Heroes below Supreme+ show "Reach Supreme+" under the badges, which
-        // pushes the EX weapon badge about 70 px up.
-        for line in crop(screen, 0, 1380, 240, 140)? {
-            values.extend(weapon_level(&line.text));
-        }
+    if values.len() == 1 {
+        return Ok(values.first().copied());
     }
-    Ok((values.len() == 1).then(|| *values.first().unwrap()))
+    // Heroes below Supreme+ show "Reach Supreme+" under the badges, which
+    // pushes the EX weapon badge about 70 px up; the usual spot then holds at
+    // most a cut-off part of the level.
+    let mut raised = BTreeSet::new();
+    for line in crop(screen, 0, 1380, 240, 140)? {
+        raised.extend(weapon_level(&line.text));
+    }
+    Ok((raised.len() == 1).then(|| *raised.first().unwrap()))
 }
 
 pub(super) fn scan(
