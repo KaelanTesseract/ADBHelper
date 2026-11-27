@@ -680,3 +680,6 @@ app-hero-box-picture-saved = Bild gespeichert: { $path }
 app-hero-box-picture-failed = Das Bild konnte nicht erstellt werden: { $error }
 app-hero-box-count = { $owned } von { $total } Helden im Besitz
 app-hero-box-empty = Noch keine Helden. Starte den Scan der Heldendatenbank, um die Hero Box zu füllen.
+app-hero-box-all = Alle
+app-hero-box-faction = Fraktion
+app-hero-box-class = Klasse

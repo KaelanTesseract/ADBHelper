@@ -20,6 +20,55 @@ pub(super) struct HeroBox {
     heroes: Vec<HeroRecord>,
     textures: HashMap<String, egui::TextureHandle>,
     message: Option<String>,
+    filter: HeroFilter,
+}
+
+/// Faction and class shown in the Hero Box; `None` shows all.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct HeroFilter {
+    pub faction: Option<String>,
+    pub class: Option<String>,
+}
+
+impl HeroFilter {
+    pub(super) fn matches(&self, hero: &HeroRecord) -> bool {
+        self.faction
+            .as_ref()
+            .is_none_or(|faction| &hero.faction == faction)
+            && self.class.as_ref().is_none_or(|class| &hero.class == class)
+    }
+}
+
+/// The distinct non-empty values of one field, sorted.
+fn choices(heroes: &[HeroRecord], field: impl Fn(&HeroRecord) -> &String) -> Vec<String> {
+    let mut values: Vec<String> = heroes
+        .iter()
+        .map(|hero| field(hero).clone())
+        .filter(|value| !value.is_empty())
+        .collect();
+    values.sort();
+    values.dedup();
+    values
+}
+
+/// A drop-down with "All" and the given values.
+fn filter_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    label: &str,
+    all: &str,
+    values: &[String],
+    selected: &mut Option<String>,
+) {
+    ui.label(label);
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected.as_deref().unwrap_or(all))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(selected, None, all);
+            for value in values {
+                ui.selectable_value(selected, Some(value.clone()), value);
+            }
+        });
 }
 
 impl HeroBox {
@@ -100,7 +149,7 @@ impl PlayerApp {
             .hero_box
             .heroes
             .iter()
-            .filter(|hero| hero.owned)
+            .filter(|hero| hero.owned && self.hero_box.filter.matches(hero))
             .map(|hero| hero_box_image::BoxHero {
                 portrait: portrait_image(hero),
                 supreme_plus: is_s_plus(hero),
@@ -171,13 +220,42 @@ impl PlayerApp {
             ui.label(tr!("app-hero-box-empty"));
             return;
         }
+        let factions = choices(&self.hero_box.heroes, |hero| &hero.faction);
+        let classes = choices(&self.hero_box.heroes, |hero| &hero.class);
+        let all = tr!("app-hero-box-all");
+        ui.horizontal(|ui| {
+            filter_combo(
+                ui,
+                "hero-box-faction",
+                tr!("app-hero-box-faction"),
+                all,
+                &factions,
+                &mut self.hero_box.filter.faction,
+            );
+            ui.add_space(SpaceTokens::MD);
+            filter_combo(
+                ui,
+                "hero-box-class",
+                tr!("app-hero-box-class"),
+                all,
+                &classes,
+                &mut self.hero_box.filter.class,
+            );
+        });
+        ui.add_space(SpaceTokens::SM);
+        let shown: Vec<&HeroRecord> = self
+            .hero_box
+            .heroes
+            .iter()
+            .filter(|hero| self.hero_box.filter.matches(hero))
+            .collect();
         let columns = ((ui.available_width() + 8.0) / (TILE + 8.0))
             .floor()
             .max(1.0) as usize;
         egui::Grid::new("hero-box-grid")
             .spacing(egui::vec2(8.0, 8.0))
             .show(ui, |ui| {
-                for (index, hero) in self.hero_box.heroes.iter().enumerate() {
+                for (index, hero) in shown.iter().enumerate() {
                     self.hero_tile(ui, hero);
                     if (index + 1) % columns == 0 {
                         ui.end_row();
@@ -258,5 +336,63 @@ impl PlayerApp {
             egui::Color32::from_gray(170),
         );
         response.on_hover_text(&hero.name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hero(name: &str, faction: &str, class: &str) -> HeroRecord {
+        HeroRecord {
+            name: name.into(),
+            faction: faction.into(),
+            class: class.into(),
+            ..HeroRecord::default()
+        }
+    }
+
+    #[test]
+    fn heroes_are_filtered_by_faction_and_class() {
+        let heroes = [
+            hero("Thoran", "Graveborn", "Tank"),
+            hero("Frieren", "Celestial", "Mage"),
+            hero("Odie", "Lightbearer", "Marksman"),
+            hero("Vala", "Wilder", "Rogue"),
+        ];
+        let names = |filter: &HeroFilter| -> Vec<&str> {
+            heroes
+                .iter()
+                .filter(|hero| filter.matches(hero))
+                .map(|hero| hero.name.as_str())
+                .collect()
+        };
+        assert_eq!(names(&HeroFilter::default()).len(), 4);
+        let celestial = HeroFilter {
+            faction: Some("Celestial".into()),
+            class: None,
+        };
+        assert_eq!(names(&celestial), ["Frieren"]);
+        let tank = HeroFilter {
+            faction: None,
+            class: Some("Tank".into()),
+        };
+        assert_eq!(names(&tank), ["Thoran"]);
+        let none = HeroFilter {
+            faction: Some("Celestial".into()),
+            class: Some("Tank".into()),
+        };
+        assert!(names(&none).is_empty());
+    }
+
+    #[test]
+    fn filter_choices_come_from_the_heroes() {
+        let heroes = [
+            hero("Thoran", "Graveborn", "Tank"),
+            hero("Smokey", "Graveborn", "Support"),
+            hero("Unknown", "", ""),
+        ];
+        assert_eq!(choices(&heroes, |hero| &hero.faction), ["Graveborn"]);
+        assert_eq!(choices(&heroes, |hero| &hero.class), ["Support", "Tank"]);
     }
 }

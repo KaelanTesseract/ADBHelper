@@ -680,3 +680,6 @@ app-hero-box-picture-saved = Picture saved: { $path }
 app-hero-box-picture-failed = The picture could not be created: { $error }
 app-hero-box-count = { $owned } of { $total } heroes owned
 app-hero-box-empty = No heroes yet. Start the hero database scan to fill the Hero Box.
+app-hero-box-all = All
+app-hero-box-faction = Faction
+app-hero-box-class = Class
