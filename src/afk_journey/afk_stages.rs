@@ -1188,6 +1188,7 @@ fn stage_entry_point(
             | GameMode::HeroScan
             | GameMode::GuildScan
             | GameMode::HeroDatabase
+            | GameMode::HeroBoxScan
             | GameMode::Fishing => return Err(tr!("afk-stages-this-is-not-an-afk-stages").into()),
         }));
     }

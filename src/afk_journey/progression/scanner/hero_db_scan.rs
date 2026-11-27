@@ -7,7 +7,7 @@ use crate::afk_journey::error::ActionError;
 use crate::afk_journey::progression::hero_db::portrait_folder;
 use crate::afk_journey::progression::hero_db::{today, HeroDatabase, HeroRecord, Progress, Skill};
 use crate::afk_journey::progression::{
-    hall, hall_cards, hero_card, hero_facts, hero_portraits, hero_skills, hero_stats,
+    hall, hero_card, hero_facts, hero_portraits, hero_skills, hero_stats,
 };
 use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
@@ -196,9 +196,18 @@ fn save(db: &mut HeroDatabase) -> Result<(), ActionError> {
         .map_err(|error| ActionError::from(tr!("hero-db-not-saved", error = error)))
 }
 
+/// How much the hero database scan reads per hero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Depth {
+    /// Ascension, EX weapon, stars, current stats and skills (Settings).
+    Full { max_age_days: Option<u32> },
+    /// Only ascension, EX weapon and its stars (Hero Box).
+    Quick,
+}
+
 pub(super) fn scan(
     driver: &Driver<'_>,
-    max_age_days: Option<u32>,
+    depth: Depth,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
 ) -> Result<u32, ActionError> {
@@ -207,7 +216,9 @@ pub(super) fn scan(
         log(tr!("hero-db-broken-file-kept", file = warning));
     }
     merge_tracker_roster(&mut db, log);
-    db.merge_facts(&hero_facts::fetch_facts(log, driver.cancelled)?);
+    if matches!(depth, Depth::Full { .. }) {
+        db.merge_facts(&hero_facts::fetch_facts(log, driver.cancelled)?);
+    }
     let added = hero_portraits::fetch_missing(log, driver.cancelled)?;
     if added > 0 {
         log(tr!("hero-db-portraits-added", count = added));
@@ -217,13 +228,6 @@ pub(super) fn scan(
     let roster_size = db.heroes.len().max(1);
     let day = today();
     let mut count = 0;
-    let cards = match hall_cards::collect_cards(driver, log) {
-        Ok(cards) => cards,
-        Err(error) => {
-            log(tr!("hero-db-cards-unavailable", error = error.to_string()));
-            Vec::new()
-        }
-    };
     hall::open_first_hero(driver, log)?;
     let (mut profile, mut nameplate) = hall::wait_for_affinity_profile(driver, None)?;
     let first = nameplate.clone();
@@ -236,14 +240,6 @@ pub(super) fn scan(
                 .is_some()
             || (position > 0 && first.matches(&nameplate))
         {
-            // Every profile before this one had its place in the card list.
-            if position != cards.len() {
-                log(tr!(
-                    "hero-db-cards-mismatch",
-                    cards = cards.len(),
-                    heroes = position
-                ));
-            }
             break;
         }
         if !name.is_empty() {
@@ -252,14 +248,15 @@ pub(super) fn scan(
                 Some(read) if has_weapon(read) => exclusive_level(&profile)?,
                 _ => None,
             };
+            let weapon = ascension.as_deref().is_some_and(has_weapon);
+            let stars = hero_card::count_ex_stars(&profile.color);
             let fresh = {
                 let record = record_for_alias(&mut db, &name, &aliases);
                 record.owned = true;
-                // The card shows the stars; they are not counted.
-                record.stars = None;
-                if let Some(card) = cards.get(position) {
-                    record.portrait = save_portrait(&record.name, card, log);
-                } else if record.portrait.is_none() {
+                // Stars under the EX weapon; none before Mythic+.
+                record.stars = if weapon { stars.or(record.stars) } else { None };
+                if record.portrait.is_none() && hero_portraits::web_portrait(&record.name).is_none()
+                {
                     record.portrait =
                         save_portrait(&record.name, &hero_card::portrait(&profile.color), log);
                 }
@@ -269,7 +266,10 @@ pub(super) fn scan(
                     ex_weapon,
                     &day,
                 ));
-                needs_scan(record, &day, max_age_days)
+                match depth {
+                    Depth::Full { max_age_days } => needs_scan(record, &day, max_age_days),
+                    Depth::Quick => false,
+                }
             };
             if fresh {
                 let stats = hero_stats::read_stats(driver, &profile)?;

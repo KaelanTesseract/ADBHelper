@@ -10,9 +10,10 @@ use crate::afk_journey::progression::hero_portraits;
 use crate::hero_box_image;
 use std::collections::HashMap;
 
-const TILE: f32 = 96.0;
-/// Hall cards are half again as tall as wide.
-const TILE_HEIGHT: f32 = 144.0;
+const TILE: f32 = 112.0;
+/// Portraits are about 1.4 times as tall as wide (180×248).
+const TILE_HEIGHT: f32 = 154.0;
+const STAR: egui::Color32 = egui::Color32::from_rgb(255, 214, 90);
 const GOLD: egui::Color32 = egui::Color32::from_rgb(212, 175, 55);
 
 /// What the Hero Box page shows; loaded when the page opens and after a scan.
@@ -79,6 +80,31 @@ impl HeroBox {
     /// Loads heroes.json again on the next frame of the page.
     pub(super) fn reload(&mut self) {
         self.loaded = false;
+    }
+}
+
+/// A small filled star: five spike triangles around a pentagon.
+fn paint_star(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
+    let point = |index: usize, r: f32| {
+        let angle = std::f32::consts::PI * (index as f32 / 5.0) - std::f32::consts::FRAC_PI_2;
+        center + egui::vec2(r * angle.cos(), r * angle.sin())
+    };
+    let inner = radius * 0.45;
+    let pentagon: Vec<egui::Pos2> = (0..5).map(|i| point(i * 2 + 1, inner)).collect();
+    painter.add(egui::Shape::convex_polygon(
+        pentagon,
+        STAR,
+        egui::Stroke::NONE,
+    ));
+    for i in 0..5 {
+        let tip = point(i * 2, radius);
+        let left = point((i * 2 + 9) % 10, inner);
+        let right = point(i * 2 + 1, inner);
+        painter.add(egui::Shape::convex_polygon(
+            vec![tip, right, left],
+            STAR,
+            egui::Stroke::NONE,
+        ));
     }
 }
 
@@ -169,6 +195,40 @@ impl PlayerApp {
         });
     }
 
+    /// Start and stop of the quick scan (ascension and EX weapon stars).
+    fn hero_box_scan_controls(&mut self, ui: &mut egui::Ui) {
+        ui.small(tr!("app-hero-box-scan-hint"));
+        ui.horizontal(|ui| {
+            let can_start = !self.busy && self.selected_serial.is_some();
+            if ui
+                .add_enabled(can_start, egui::Button::new(tr!("app-hero-box-scan")))
+                .clicked()
+            {
+                self.start_action(StageAction::HeroBoxScan);
+            }
+            if self.busy && self.active_action == Some(StageAction::HeroBoxScan) {
+                if let Some(cancel) = &self.stage_cancel {
+                    if ui.button(tr!("app-settings-hero-db-stop")).clicked() {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+            match &self.hero_db_updated {
+                Some(updated) => ui.small(tr!(
+                    "app-settings-hero-db-last-scan",
+                    updated = updated.clone()
+                )),
+                None => ui.small(tr!("app-settings-hero-db-never")),
+            };
+        });
+        if let Some((StageAction::HeroBoxScan, error)) = &self.action_error {
+            ui.add(
+                egui::Label::new(egui::RichText::new(error).color(ColorTokens::DANGER_HOVER))
+                    .wrap(),
+            );
+        }
+    }
+
     /// Downloads missing portraits on a background thread.
     fn load_portraits(&mut self, context: &egui::Context) {
         let result = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -212,7 +272,7 @@ impl PlayerApp {
         ui.label(tr!("app-hero-box-explain"));
         ui.add_space(SpaceTokens::MD);
         card(ui, |ui| {
-            self.hero_database_controls(ui);
+            self.hero_box_scan_controls(ui);
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
@@ -342,33 +402,61 @@ impl PlayerApp {
                 egui::StrokeKind::Inside,
             );
         }
+        // One line under the picture: ascension | name | EX weapon stars.
+        let line_y = portrait.bottom() + 10.0;
+        let small = egui::FontId::proportional(11.0);
+        let mut left = rect.left();
         if let Some(text) = badge_of(hero) {
-            let anchor = portrait.min + egui::vec2(6.0, 5.0);
-            let galley = painter.layout_no_wrap(
-                text.to_owned(),
-                egui::FontId::proportional(13.0),
-                if is_s_plus(hero) {
-                    GOLD
-                } else {
-                    egui::Color32::from_gray(235)
-                },
+            let color = if is_s_plus(hero) {
+                GOLD
+            } else {
+                egui::Color32::from_gray(235)
+            };
+            let galley = painter.layout_no_wrap(text.to_owned(), small.clone(), color);
+            painter.galley(
+                egui::pos2(left, line_y - galley.size().y / 2.0),
+                galley.clone(),
+                color,
             );
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    anchor - egui::vec2(3.0, 1.0),
-                    galley.size() + egui::vec2(6.0, 2.0),
-                ),
-                3.0,
-                egui::Color32::from_black_alpha(200),
-            );
-            painter.galley(anchor, galley, egui::Color32::WHITE);
+            left += galley.size().x + 4.0;
         }
-        painter.text(
-            egui::pos2(rect.center().x, rect.bottom() - 9.0),
-            egui::Align2::CENTER_CENTER,
-            &hero.name,
-            egui::FontId::proportional(11.0),
-            egui::Color32::from_gray(170),
+        let mut right = rect.right();
+        if let Some(stars) = hero.stars.filter(|&stars| stars > 0) {
+            let galley = painter.layout_no_wrap(stars.to_string(), small.clone(), STAR);
+            right -= galley.size().x;
+            painter.galley(
+                egui::pos2(right, line_y - galley.size().y / 2.0),
+                galley,
+                STAR,
+            );
+            right -= 7.0;
+            paint_star(&painter, egui::pos2(right, line_y), 5.5);
+            right -= 8.0;
+        }
+        let name_color = egui::Color32::from_gray(if hero.owned { 200 } else { 130 });
+        let name = painter.layout_no_wrap(hero.name.clone(), small.clone(), name_color);
+        let room = (right - left).max(0.0);
+        let shown = if name.size().x <= room {
+            name
+        } else {
+            let mut text: String = hero.name.clone();
+            loop {
+                text.pop();
+                let candidate = painter.layout_no_wrap(
+                    format!("{}…", text.trim_end()),
+                    small.clone(),
+                    name_color,
+                );
+                if candidate.size().x <= room || text.is_empty() {
+                    break candidate;
+                }
+            }
+        };
+        let x = left + (room - shown.size().x).max(0.0) / 2.0;
+        painter.galley(
+            egui::pos2(x, line_y - shown.size().y / 2.0),
+            shown,
+            name_color,
         );
         response.on_hover_text(&hero.name);
     }

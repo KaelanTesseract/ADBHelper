@@ -688,3 +688,6 @@ hero-db-cards-mismatch = Es wurden { $cards } Heldenkarten gelesen, aber { $hero
 hero-db-portraits-unavailable = Heldenporträts konnten nicht geladen werden, gespeicherte und die Karten der Resonating Hall werden verwendet: { $error }
 hero-db-portraits-added = { $count } Heldenporträts geladen.
 app-hero-box-load-portraits = Porträts laden
+activity-hero-box-scan = Hero-Box-Scan
+app-hero-box-scan = Aufstieg und Sterne scannen
+app-hero-box-scan-hint = Liest nur Aufstieg und EX-Waffen-Sterne aller eigenen Helden. Den vollen Scan der Heldendatenbank mit Werten und Fertigkeiten gibt es in den Einstellungen.

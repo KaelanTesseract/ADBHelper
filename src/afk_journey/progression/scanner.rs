@@ -124,9 +124,17 @@ pub fn run(
     match mode {
         GameMode::HeroScan => hero::scan(&driver, log, report, &mut save),
         GameMode::GuildScan => guild::scan(&driver, options.guild, log, report, &mut save),
-        GameMode::HeroDatabase => {
-            hero_db_scan::scan(&driver, options.hero_db_max_age_days, log, report)
+        GameMode::HeroBoxScan => {
+            hero_db_scan::scan(&driver, hero_db_scan::Depth::Quick, log, report)
         }
+        GameMode::HeroDatabase => hero_db_scan::scan(
+            &driver,
+            hero_db_scan::Depth::Full {
+                max_age_days: options.hero_db_max_age_days,
+            },
+            log,
+            report,
+        ),
         _ => Err("Invalid scanner action".into()),
     }
 }

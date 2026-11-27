@@ -31,6 +31,7 @@ pub enum GameMode {
     HeroScan,
     GuildScan,
     HeroDatabase,
+    HeroBoxScan,
     Fishing,
 }
 
@@ -119,6 +120,7 @@ impl GameMode {
             Self::HeroScan => "AFKJ Tracker Scan",
             Self::GuildScan => "Guild Manager Scan",
             Self::HeroDatabase => tr!("activity-hero-database"),
+            Self::HeroBoxScan => tr!("activity-hero-box-scan"),
             Self::Fishing => tr!("activity-fishing"),
             Self::SeasonRankingRewards(RankingScope::District) => {
                 tr!("activity-season-rewards-district")
@@ -162,6 +164,7 @@ impl GameMode {
                 | Self::HeroScan
                 | Self::GuildScan
                 | Self::HeroDatabase
+                | Self::HeroBoxScan
                 | Self::Fishing
         )
     }

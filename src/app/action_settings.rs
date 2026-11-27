@@ -191,7 +191,7 @@ impl PlayerApp {
                                         ));
                                     }
                                     // Started and set up on the Settings page.
-                                    StageAction::HeroDatabase => {}
+                                    StageAction::HeroDatabase | StageAction::HeroBoxScan => {}
                                     StageAction::Fishing => {
                                         ui.label(tr!(
                                     "app-action-settings-uses-available-fishing-spots-on-the"

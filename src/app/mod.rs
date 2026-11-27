@@ -153,6 +153,7 @@ impl RunSettings {
             StageAction::HeroScan => Some(GameMode::HeroScan),
             StageAction::GuildScan => Some(GameMode::GuildScan),
             StageAction::HeroDatabase => Some(GameMode::HeroDatabase),
+            StageAction::HeroBoxScan => Some(GameMode::HeroBoxScan),
             StageAction::Fishing => Some(GameMode::Fishing),
             StageAction::AfkRewards => Some(GameMode::AfkRewards),
             StageAction::FreeHourglasses => Some(GameMode::FreeHourglasses),
@@ -459,7 +460,12 @@ impl PlayerApp {
                     self.activity.apply(event);
                 }
                 Event::StagesFinished(action, error) => {
-                    if action == StageAction::HeroDatabase || action == StageAction::HeroScan {
+                    if matches!(
+                        action,
+                        StageAction::HeroDatabase
+                            | StageAction::HeroScan
+                            | StageAction::HeroBoxScan
+                    ) {
                         self.hero_db_updated = hero_db_updated();
                         self.hero_box.reload();
                     }

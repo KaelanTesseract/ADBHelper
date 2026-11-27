@@ -688,3 +688,6 @@ hero-db-cards-mismatch = { $cards } hero cards were read but { $heroes } heroes 
 hero-db-portraits-unavailable = Hero portraits could not be downloaded, so stored ones and the hall cards are used: { $error }
 hero-db-portraits-added = { $count } hero portraits downloaded.
 app-hero-box-load-portraits = Load portraits
+activity-hero-box-scan = Hero Box scan
+app-hero-box-scan = Scan ascension and stars
+app-hero-box-scan-hint = Reads only ascension and EX weapon stars of every owned hero. The full hero database scan with stats and skills is in Settings.

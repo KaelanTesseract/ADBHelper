@@ -31,6 +31,7 @@ pub enum Action {
     HeroScan,
     GuildScan,
     HeroDatabase,
+    HeroBoxScan,
     Fishing,
 }
 
@@ -118,6 +119,7 @@ impl Action {
             Self::GuildScan => 25,
             Self::Fishing => 26,
             Self::HeroDatabase => 27,
+            Self::HeroBoxScan => 28,
         }
     }
 
@@ -144,6 +146,7 @@ impl Action {
             Self::HeroScan => GameMode::HeroScan.label(),
             Self::GuildScan => GameMode::GuildScan.label(),
             Self::HeroDatabase => GameMode::HeroDatabase.label(),
+            Self::HeroBoxScan => GameMode::HeroBoxScan.label(),
             Self::Fishing => GameMode::Fishing.label(),
             Self::Daily => "Daily",
             Self::AfkRewards => tr!("routine-afk-rewards-2-claims"),

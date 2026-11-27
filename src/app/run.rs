@@ -43,7 +43,10 @@ impl PlayerApp {
         self.daily_step = None;
         if matches!(
             action,
-            StageAction::HeroScan | StageAction::GuildScan | StageAction::HeroDatabase
+            StageAction::HeroScan
+                | StageAction::GuildScan
+                | StageAction::HeroDatabase
+                | StageAction::HeroBoxScan
         ) {
             self.scan_exports.retain(|(owner, _)| *owner != action);
         }
@@ -163,7 +166,7 @@ pub(super) fn run_step(
     };
     if matches!(
         mode,
-        GameMode::HeroScan | GameMode::GuildScan | GameMode::HeroDatabase
+        GameMode::HeroScan | GameMode::GuildScan | GameMode::HeroDatabase | GameMode::HeroBoxScan
     ) {
         return scanner::run(
             serial,
@@ -309,7 +312,10 @@ pub(super) fn run_step(
                 StageAction::Fishing => {
                     crate::afk_journey::fishing::run(serial, cancelled, &mut log, report)
                 }
-                StageAction::HeroScan | StageAction::GuildScan | StageAction::HeroDatabase => {
+                StageAction::HeroScan
+                | StageAction::GuildScan
+                | StageAction::HeroDatabase
+                | StageAction::HeroBoxScan => {
                     unreachable!()
                 }
             }
