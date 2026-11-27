@@ -9,7 +9,7 @@ const STAR_BAND_Y: std::ops::Range<u32> = 1650..1705;
 /// A star is at least this many pixel columns wide (measured 21–22).
 const STAR_WIDTH: u32 = 12;
 /// Upper body of the hero art, below the name and left of the side icons.
-const PORTRAIT_AREA: (u32, u32, u32) = (300, 160, 560);
+const PORTRAIT_AREA: (u32, u32, u32) = (300, 230, 560);
 pub const PORTRAIT_SIZE: u32 = 256;
 
 /// The light blue of the stars (measured about 180, 225, 250).
