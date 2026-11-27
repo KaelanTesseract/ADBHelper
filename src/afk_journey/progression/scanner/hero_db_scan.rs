@@ -52,10 +52,12 @@ pub(super) fn record_for_alias<'a>(
     key: &str,
     aliases: &BTreeMap<String, String>,
 ) -> &'a mut HeroRecord {
+    // Only roster heroes count as known: a record from an earlier misread
+    // must not catch later reads of the real hero.
     let known = |db: &HeroDatabase, key: &str| {
         db.heroes
             .values()
-            .any(|record| ascii_key(&record.name) == key)
+            .any(|record| ascii_key(&record.name) == key && record.sources.contains_key("list"))
     };
     if !known(db, key) {
         if let Some(real) = aliases.get(key).filter(|real| known(db, real)) {
@@ -178,15 +180,21 @@ pub(super) fn merge_strays(db: &mut HeroDatabase) {
         let Some(target) = closest_hero(db, &key) else {
             continue;
         };
-        if db.heroes[&target].owned {
-            continue;
-        }
         let Some(record) = db.heroes.remove(&stray) else {
             continue;
         };
         let hero = db.heroes.get_mut(&target).expect("target exists");
         hero.owned = true;
-        hero.progress = record.progress.or(hero.progress.take());
+        // The later reading wins; on the same day the misread one was the
+        // last write, because the real hero could not be found then.
+        let newer = match (&record.progress, &hero.progress) {
+            (Some(read), Some(stored)) => read.scanned >= stored.scanned,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if newer {
+            hero.progress = record.progress;
+        }
         hero.stars = record.stars.or(hero.stars);
         hero.stats = record.stats.or(hero.stats.take());
         if record.skills.iter().any(|skill| skill.source == "game") {
@@ -448,8 +456,8 @@ mod tests {
 
     #[test]
     fn ocr_variants_use_the_tracker_aliases() {
-        let mut db = HeroDatabase::default();
-        db.record("Elijah & Lailah");
+        // Heroes come from the tracker roster, as in a scan.
+        let mut db = roster(&["Elijah & Lailah"]);
         let aliases = [("elijahlilah".to_owned(), "elijahlailah".to_owned())].into();
         record_for_alias(&mut db, "elijahlilah", &aliases).owned = true;
         assert!(db.heroes["elijah-&-lailah"].owned);
@@ -562,6 +570,29 @@ mod tests {
                 println!("{id} -> {:?}", closest_hero(&db, &ascii_key(&record.name)));
             }
         }
+    }
+
+    #[test]
+    fn a_stray_never_catches_later_reads_of_a_known_hero() {
+        let mut db = roster(&["Solise", "Soren"]);
+        db.record("Solise").owned = true;
+        let stray = db.record("soli");
+        stray.owned = true;
+        stray.progress = Some(Progress {
+            ascension: Some("Paragon 4".into()),
+            ex_weapon: Some(10),
+            ..Progress::default()
+        });
+        merge_strays(&mut db);
+        assert!(!db.heroes.contains_key("soli"));
+        assert_eq!(
+            db.heroes["solise"].progress.as_ref().unwrap().ex_weapon,
+            Some(10)
+        );
+        let aliases = BTreeMap::new();
+        record_for_alias(&mut db, "soli", &aliases).stars = Some(1);
+        assert!(!db.heroes.contains_key("soli"));
+        assert_eq!(db.heroes["solise"].stars, Some(1));
     }
 
     #[test]

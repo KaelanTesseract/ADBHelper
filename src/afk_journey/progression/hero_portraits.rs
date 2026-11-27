@@ -25,27 +25,16 @@ pub fn web_folder() -> std::io::Result<PathBuf> {
 /// Portrait files whose names are not the hero's name in the collection.
 const OTHER_NAMES: [(&str, &str); 1] = [("twins", "elijahlailah")];
 
-/// Edit distance between two name keys.
-fn distance(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut previous = row[0];
-        row[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let current = row[j + 1];
-            row[j + 1] = (row[j + 1] + 1)
-                .min(row[j] + 1)
-                .min(previous + usize::from(ca != *cb));
-            previous = current;
-        }
-    }
-    row[b.len()]
+/// `short` can be read out of `long` by dropping letters ("smokeymeerky"
+/// in "smokeyandmeerky").
+fn is_subsequence(short: &str, long: &str) -> bool {
+    let mut rest = long.chars();
+    short.chars().all(|c| rest.any(|other| other == c))
 }
 
 /// The portrait file of a hero among `files`: its own name, a known other
-/// name ("twins"), a short form ("lucy" for Lucy Heartfilia) or a near spelling
-/// ("smokeymeerky" for Smokey and Meerky).
+/// name ("twins"), a short form ("lucy" for Lucy Heartfilia) or a spelling
+/// with letters left out ("smokeymeerky" for Smokey and Meerky).
 fn portrait_file_for(hero_name: &str, files: &[String]) -> Option<String> {
     let key = ascii_key(hero_name);
     let stem = |file: &String| file.trim_end_matches(".png").to_owned();
@@ -57,23 +46,17 @@ fn portrait_file_for(hero_name: &str, files: &[String]) -> Option<String> {
             return Some(file.clone());
         }
     }
-    let mut close: Vec<(usize, &String)> = files
+    // A short form or a spelling with letters left out; a different hero
+    // with a similar name ("temesia" for Tephesia) is never taken.
+    let close: Vec<&String> = files
         .iter()
-        .filter_map(|file| {
+        .filter(|file| {
             let stem = stem(file);
-            let score = if stem.len() >= 4 && key.starts_with(&stem) {
-                1
-            } else {
-                distance(&stem, &key)
-            };
-            (score <= (key.len().max(stem.len()) / 4).max(1)).then_some((score, file))
+            stem.len() >= 4 && stem != key && is_subsequence(&stem, &key)
         })
         .collect();
-    close.sort();
     match close.as_slice() {
-        [(best, file), rest @ ..] if rest.first().is_none_or(|(next, _)| next > best) => {
-            Some((*file).clone())
-        }
+        [only] => Some((*only).clone()),
         _ => None,
     }
 }
@@ -254,6 +237,9 @@ mod tests {
         assert_eq!(find("Elijah & Lailah").as_deref(), Some("twins.png"));
         assert_eq!(find("Lyca").as_deref(), Some("lyca.png"));
         assert_eq!(find("Tephesia"), None);
+        // A near name of another hero is not a match.
+        let others = vec!["temesia.png".to_owned()];
+        assert_eq!(portrait_file_for("Tephesia", &others), None);
     }
 
     #[test]
