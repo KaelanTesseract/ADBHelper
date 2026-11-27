@@ -85,3 +85,12 @@ Freigegeben von Dennis am 2026-11-27.
 - Wie die Zahlen je Fertigkeitsstufe aus dem Text getrennt werden (OCR mit Farbe).
 - Ob das Spiel bei nicht besessenen Helden (Collections) Werte zeigt – nicht prüfbar mit dem Testkonto.
 - Einbindung von gacha.gg, sobald eine Antwort da ist.
+
+## Ergänzung 2026-11-27: Tab „Hero Box“ (von Dennis gewünscht und bestätigt)
+
+- Neuer Tab **Hero Box** neben „Settings“. Dort ebenfalls Start/Stopp des Heldendatenbank-Scans (der Knopf in den Einstellungen bleibt).
+- Raster mit **allen** Helden: Porträt, Markierung **S+** (Aufstieg Supreme+ oder höher, also auch Paragon) und **Anzahl Sterne** (die Sterne auf der Heldenkarte in der Resonating Hall). Nicht besessene Helden grau mit Namen, ohne Porträt.
+- Knopf **„Bild erstellen“**: ein PNG mit allen gescannten (besessenen) Helden inkl. Porträt, S+ und Sternen, gelegt in die **Zwischenablage** (Windows), damit es direkt in Discord eingefügt werden kann; zusätzlich als Datei `hero-box.png` neben `heroes.json`. Unter Ubuntu nur die Datei.
+- Porträts schneidet der Scan aus dem eigenen Spiel aus und speichert sie lokal unter `heroes/portraits/<id>.png`. Keine fremden Bilder, nichts wird mitgeliefert.
+- Neue Felder: `HeroRecord.stars: Option<u32>`, `HeroRecord.portrait: Option<String>` (Dateiname).
+- Wie Sterne und Porträt im Spiel gelesen werden (Heldenkarte im Raster der Resonating Hall vs. Profil), klärt der Emulator-Blick; bis dahin zeigt die Hero Box, was in `heroes.json` steht.

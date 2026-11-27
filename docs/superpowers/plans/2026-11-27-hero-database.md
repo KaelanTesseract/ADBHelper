@@ -144,3 +144,20 @@
 
 - [ ] Ask Dennis for a go. Run the hero database scan on 3 heroes (temporary env `ADBHELPER_HERO_DB_LIMIT=3` read only in the `#[ignore]` test `connected_emulator_hero_db_three_heroes`), save stats/skill captures privately to `.update-test/hero-db/`, run the capture tests from Tasks 3–4, inspect `heroes.json`.
 - [ ] Delete scratchpad traces, update the vault note, commit only after Dennis' OK.
+
+---
+
+## Ergänzung: Hero Box (Tasks 8–11, nach Spec-Ergänzung 2026-11-27)
+
+### Task 8: Felder und Kennzeichen
+- `HeroRecord.stars: Option<u32>`, `HeroRecord.portrait: Option<String>`; `pub fn is_supreme_plus(ascension: &str) -> bool` (Supreme+ und Paragon 1–4 → true, Supreme/Mythic+ → false). Tests: `supreme_plus_includes_paragon`, `old_files_without_stars_load`.
+
+### Task 9: Übersichtsbild und Zwischenablage
+- `src/hero_box_image.rs`: `pub fn compose(heroes: &[BoxHero]) -> RgbaImage` (Raster, 8 Spalten, Kachel 128×128 + Sternzeile, S+-Rahmen gold, Sterne als gezeichnete Formen, „S+“ mit kleiner Pixelschrift), `pub fn dib(image: &RgbaImage) -> Vec<u8>` (BITMAPINFOHEADER + BGRA bottom-up), `pub fn copy_to_clipboard(image) -> Result<(), String>` (Windows: CF_DIB; sonst Err „unsupported“). windows-sys Features `Win32_System_DataExchange`, `Win32_System_Memory`, `Win32_System_Ole` ergänzen (keine neue Abhängigkeit).
+- Tests: `compose_places_heroes_in_rows` (9 Helden → 2 Zeilen, Größe), `supreme_plus_gets_a_gold_frame` (Pixelfarbe am Rand), `dib_is_bottom_up_bgra` (Header 40 Byte, Breite/Höhe, erstes Pixel = letzte Zeile).
+
+### Task 10: Tab „Hero Box“
+- `Page::HeroBox` neben Settings; `src/app/hero_box.rs`: Kopf mit Scan-Start/Stopp (gleiche Logik wie Settings, als gemeinsame Funktion), Knopf „Bild erstellen“, Raster aller Helden (Porträt-Textur aus Datei, sonst grau mit Name), S+-Rahmen, Sterne. Daten werden beim Öffnen des Tabs und nach Scan-Ende neu geladen. Texte via `tr!` en/de.
+
+### Task 11: Porträt und Sterne lesen (nach Emulator-Blick mit Go)
+- Lesebereiche festlegen, Porträt zuschneiden und speichern, Sterne zählen; Tests mit privaten Aufnahmen.
