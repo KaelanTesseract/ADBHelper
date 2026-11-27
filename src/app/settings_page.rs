@@ -146,6 +146,8 @@ impl PlayerApp {
                         .desired_width((ui.available_width() - 150.0).max(120.0)),
                 );
                 if ui.button(tr!("app-settings-page-apply-path")).clicked() {
+                    self.adb_path_applied =
+                        Some(self.adb_path.trim().to_owned()).filter(|path| !path.is_empty());
                     if self.adb_path.trim().is_empty() {
                         std::env::remove_var("ADB_PATH");
                         self.log(tr!("app-settings-page-using-adb-from-path"));

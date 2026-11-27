@@ -7,6 +7,7 @@ mod dashboard;
 mod fishing_warning;
 mod install_migration;
 mod run;
+mod saved_settings;
 mod settings_page;
 mod updates;
 mod widgets;
@@ -177,6 +178,11 @@ pub struct PlayerApp {
     daily_settings_error: Option<String>,
     daily_step: Option<usize>,
     adb_path: String,
+    /// The ADB path the user applied in Settings; `None` finds ADB itself.
+    adb_path_applied: Option<String>,
+    /// Settings as last written to `settings.json`.
+    saved_settings: saved_settings::SavedSettings,
+    settings_save_error: Option<String>,
     stage_cancel: Option<Arc<AtomicBool>>,
     stage_selection: StageSelection,
     tower_selection: TowerSelection,
@@ -264,6 +270,9 @@ impl PlayerApp {
             adb_path: std::env::var("ADB_PATH")
                 .or_else(|_| std::env::var("ADBUTILS_ADB_PATH"))
                 .unwrap_or_else(|_| adb::suggested_adb_path()),
+            adb_path_applied: None,
+            saved_settings: saved_settings::SavedSettings::default(),
+            settings_save_error: None,
             stage_cancel: None,
             stage_selection: StageSelection::default(),
             tower_selection: TowerSelection::default(),
@@ -313,6 +322,11 @@ impl PlayerApp {
             std::env::consts::OS
         ));
         app.log(tr!("app-afk-journey-app-started-connect-an"));
+        match saved_settings::SavedSettings::load() {
+            Ok(saved) => saved.apply(&mut app),
+            Err(error) => app.log(tr!("app-settings-could-not-be-loaded", error = error)),
+        }
+        app.saved_settings = saved_settings::SavedSettings::from_app(&app);
         app.refresh_devices();
         let update_sender = app.sender.clone();
         let update_context = context.egui_ctx.clone();
@@ -328,6 +342,30 @@ impl PlayerApp {
         });
         design_system::apply_theme(&context.egui_ctx);
         app
+    }
+
+    /// Writes `settings.json` when a setting changed since the last write; a
+    /// failure is logged once until saving works again.
+    fn save_settings_if_changed(&mut self) {
+        let current = saved_settings::SavedSettings::from_app(self);
+        if current == self.saved_settings {
+            return;
+        }
+        match current.save() {
+            Ok(()) => {
+                self.saved_settings = current;
+                self.settings_save_error = None;
+            }
+            Err(error) => {
+                if self.settings_save_error.as_deref() != Some(error.as_str()) {
+                    self.log(tr!(
+                        "app-settings-could-not-be-saved",
+                        error = error.clone()
+                    ));
+                    self.settings_save_error = Some(error);
+                }
+            }
+        }
     }
 
     fn log(&mut self, message: impl Into<String>) {
@@ -479,6 +517,7 @@ impl eframe::App for PlayerApp {
             .show(ui, |ui| {
                 let context = ui.ctx().clone();
                 self.receive_events(&context);
+                self.save_settings_if_changed();
                 if self.close_for_update {
                     context.send_viewport_cmd(egui::ViewportCommand::Close);
                     return;
