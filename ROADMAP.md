@@ -91,6 +91,7 @@ Verfügbare Events zuerst umsetzen. Titan Reaver und Synergy & CC benötigen die
 
 ## Release-Stand
 
+- 0.5.6: Records-Teams werden bis zum Listenende probiert, auch wenn zwei Spieler dieselbe Aufstellung nutzen (Union Campaign brach nach 3 Teams ab). 211 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.6)
 - 0.5.5: Fishing angelt jede Stelle mit voller Bildrate, erkennt sofort auswerfende Stellen und liest den Ortspfeil robuster. 210 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.5)
 - 0.5.4: Fishing startet auch im Homestead (tippt erst „World“). 209 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.4)
 - 0.5.3 mit Fishing von Anfang bis Ende: Karten absuchen, zu jeder Stelle laufen, Biss in der Balkenmitte, Ende von selbst. 209 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.3)
