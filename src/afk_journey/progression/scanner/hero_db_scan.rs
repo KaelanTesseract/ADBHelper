@@ -339,7 +339,10 @@ pub(super) fn scan(
                 _ => None,
             };
             let weapon = ascension.as_deref().is_some_and(has_weapon);
-            let stars = hero_card::count_ex_stars(&profile.color);
+            // The EX level gives the stars; counting them is only the fallback.
+            let stars = ex_weapon
+                .and_then(hero_card::stars_for_ex_level)
+                .or_else(|| hero_card::count_ex_stars(&profile.color));
             let fresh = {
                 let record = record_for_alias(&mut db, &name, &aliases);
                 record.owned = true;

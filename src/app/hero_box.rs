@@ -108,6 +108,16 @@ fn paint_star(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
     }
 }
 
+/// EX weapon stars: from the stored EX level when there is one (reliable),
+/// else as counted by the scan.
+fn stars_of(hero: &HeroRecord) -> Option<u32> {
+    hero.progress
+        .as_ref()
+        .and_then(|progress| progress.ex_weapon)
+        .and_then(crate::afk_journey::progression::hero_card::stars_for_ex_level)
+        .or(hero.stars)
+}
+
 /// "S+", "P4", ... for the hero's ascension.
 fn badge_of(hero: &HeroRecord) -> Option<&'static str> {
     hero.progress
@@ -167,7 +177,7 @@ impl PlayerApp {
             .filter(|hero| hero.owned && self.hero_box.filter.matches(hero))
             .map(|hero| hero_box_image::BoxHero {
                 name: hero.name.clone(),
-                stars: hero.stars,
+                stars: stars_of(hero),
                 portrait: portrait_image(hero),
                 supreme_plus: is_s_plus(hero),
                 badge: badge_of(hero),
@@ -421,7 +431,7 @@ impl PlayerApp {
             left += galley.size().x + 4.0;
         }
         let mut right = rect.right();
-        if let Some(stars) = hero.stars.filter(|&stars| stars > 0) {
+        if let Some(stars) = stars_of(hero).filter(|&stars| stars > 0) {
             let galley = painter.layout_no_wrap(stars.to_string(), small.clone(), STAR);
             right -= galley.size().x;
             painter.galley(

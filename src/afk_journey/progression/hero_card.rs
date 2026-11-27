@@ -96,6 +96,13 @@ fn centre(mark: &Mark) -> (f32, f32) {
     )
 }
 
+/// Stars of an EX weapon level: one, plus one for every five levels (+5 = 2,
+/// +10 = 3, +25 = 6; matched on 90 heroes). The level is read more reliably
+/// than the stars, which sit on an arc and overlap.
+pub fn stars_for_ex_level(level: u32) -> Option<u32> {
+    (level > 0).then_some(1 + level / 5)
+}
+
 /// Stars under the EX weapon badge on the profile; `None` without a badge.
 pub fn count_ex_stars(screen: &RgbImage) -> Option<u32> {
     let too_big = |mark: &Mark| {
@@ -164,6 +171,18 @@ mod tests {
             }
         }
         image
+    }
+
+    #[test]
+    fn stars_follow_the_ex_weapon_level() {
+        // Measured on 90 heroes: one star, plus one for every five levels.
+        assert_eq!(stars_for_ex_level(5), Some(2));
+        assert_eq!(stars_for_ex_level(9), Some(2));
+        assert_eq!(stars_for_ex_level(10), Some(3));
+        assert_eq!(stars_for_ex_level(14), Some(3));
+        assert_eq!(stars_for_ex_level(20), Some(5));
+        assert_eq!(stars_for_ex_level(25), Some(6));
+        assert_eq!(stars_for_ex_level(0), None);
     }
 
     #[test]
