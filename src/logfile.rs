@@ -64,11 +64,11 @@ impl Stamp {
         }
     }
 
-    fn date(&self) -> String {
+    pub fn date(&self) -> String {
         format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }
 
-    fn time(&self) -> String {
+    pub fn time(&self) -> String {
         format!("{:02}:{:02}:{:02}", self.hour, self.minute, self.second)
     }
 
