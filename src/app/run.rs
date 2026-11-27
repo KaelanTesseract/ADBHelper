@@ -41,7 +41,10 @@ impl PlayerApp {
             self.daily_notice = None;
         }
         self.daily_step = None;
-        if matches!(action, StageAction::HeroScan | StageAction::GuildScan) {
+        if matches!(
+            action,
+            StageAction::HeroScan | StageAction::GuildScan | StageAction::HeroDatabase
+        ) {
             self.scan_exports.retain(|(owner, _)| *owner != action);
         }
         let steps = if action == StageAction::Daily {
@@ -65,6 +68,7 @@ impl PlayerApp {
             diamond_hourglasses: self.daily_routine.diamond_hourglasses,
             emporium: self.daily_routine.emporium,
             guild_scan: self.guild_scan.clone(),
+            hero_db_max_age_days: self.hero_db_max_age_days,
         };
         for step in &steps {
             if settings.mode(*step).is_none() {
@@ -157,11 +161,17 @@ pub(super) fn run_step(
     let mut log = |message| {
         let _ = sender.send(Event::Log(message));
     };
-    if matches!(mode, GameMode::HeroScan | GameMode::GuildScan) {
+    if matches!(
+        mode,
+        GameMode::HeroScan | GameMode::GuildScan | GameMode::HeroDatabase
+    ) {
         return scanner::run(
             serial,
             mode,
-            &settings.guild_scan,
+            &scanner::ScanOptions {
+                guild: &settings.guild_scan,
+                hero_db_max_age_days: settings.hero_db_max_age_days,
+            },
             cancelled,
             &mut log,
             &mut |event| {
@@ -299,7 +309,9 @@ pub(super) fn run_step(
                 StageAction::Fishing => {
                     crate::afk_journey::fishing::run(serial, cancelled, &mut log, report)
                 }
-                StageAction::HeroScan | StageAction::GuildScan => unreachable!(),
+                StageAction::HeroScan | StageAction::GuildScan | StageAction::HeroDatabase => {
+                    unreachable!()
+                }
             }
         },
         |message| {

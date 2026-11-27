@@ -656,3 +656,8 @@ updater-the-download-does-not-match = The download does not match the published 
 updater-could-not-start-the-installer = Could not start the installer: { $e }
 
 hero-db-facts-unavailable = Hero facts from afjk-characters could not be loaded, so the stored ones are kept: { $error }
+activity-hero-database = Hero database
+hero-db-roster-unavailable = The hero list from AFKJ Tracker could not be loaded, so the stored one is kept: { $error }
+hero-db-not-saved = The hero database could not be saved: { $error }
+hero-db-broken-file-kept = The hero database file could not be read and was kept aside as { $file }. A new one is started.
+hero-db-no-hero-read = No hero could be read. Open AFK Journey and try again.

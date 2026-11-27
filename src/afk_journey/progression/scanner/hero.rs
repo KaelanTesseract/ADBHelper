@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const TRACKER: &str = "https://afkj-tracker.vercel.app/data/";
 
-fn reference(name: &str) -> Result<Value, ActionError> {
+pub(super) fn reference(name: &str) -> Result<Value, ActionError> {
     client()
         .get(format!("{TRACKER}{name}"))
         .call()
@@ -44,7 +44,7 @@ fn ascension_label(label: &str) -> Option<&'static str> {
     })
 }
 
-fn ascension(screen: &Screen) -> Result<Option<&'static str>, ActionError> {
+pub(super) fn ascension(screen: &Screen) -> Result<Option<&'static str>, ActionError> {
     for (asset, label) in [
         ("progression/scan_crown.png", "Paragon 4"),
         ("progression/scan_paragon_three.png", "Paragon 3"),
@@ -81,7 +81,7 @@ fn weapon_level(label: &str) -> Option<u32> {
     digits.parse().ok().filter(|level| *level <= 40)
 }
 
-fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionError> {
+pub(super) fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionError> {
     // Only the weapon badge occupies this strip. The surrounding artwork,
     // upgrade arrow, and the neighboring level label can confuse OCR.
     let mut badge = image::imageops::crop_imm(&screen.gray, 82, 1514, 69, 31).to_image();
@@ -140,6 +140,7 @@ pub(super) fn scan(
         .filter_map(|(alias, name)| Some((ascii_key(alias), *canonical.get(&ascii_key(name))?)))
         .collect();
     let mut visited = BTreeSet::new();
+    let mut scanned: Vec<super::hero_db_scan::ScannedProgress> = Vec::new();
     let mut count = 0;
     let mut unresolved = 0;
     let mut finished = false;
@@ -179,6 +180,12 @@ pub(super) fn scan(
                             unresolved += 1;
                         }
                     }
+                    let roster_name = hero["name"].as_str().unwrap_or_default().to_owned();
+                    let ex_weapon = hero["currentExWeaponLevel"]
+                        .as_u64()
+                        .and_then(|level| u32::try_from(level).ok())
+                        .filter(|_| has_weapon);
+                    scanned.push((roster_name, ascension.to_owned(), ex_weapon));
                     count += 1;
                     report(ActivityEvent::Collected(GameMode::HeroScan, 1));
                 } else {
@@ -199,6 +206,7 @@ pub(super) fn scan(
         } else {
             save("afkj_tracker_partial.json", &backup)?;
         }
+        super::hero_db_scan::store_progress(&backup, &scanned, log);
     }
     result?;
     if !finished || unresolved > 0 {

@@ -2,6 +2,7 @@
 use crate::afk_journey::error::ActionError;
 mod guild;
 mod hero;
+mod hero_db_scan;
 
 use super::{tr, Driver, Screen};
 use crate::activity::{ActivityEvent, GameMode};
@@ -87,10 +88,17 @@ impl Default for GuildSettings {
     }
 }
 
+/// What the scanners need besides the device.
+pub struct ScanOptions<'a> {
+    pub guild: &'a GuildSettings,
+    /// Hero database: skip heroes whose stats are newer than this.
+    pub hero_db_max_age_days: Option<u32>,
+}
+
 pub fn run(
     serial: &str,
     mode: GameMode,
-    guild_settings: &GuildSettings,
+    options: &ScanOptions<'_>,
     cancelled: &AtomicBool,
     log: &mut impl FnMut(String),
     report: &mut dyn FnMut(ActivityEvent),
@@ -115,7 +123,10 @@ pub fn run(
     };
     match mode {
         GameMode::HeroScan => hero::scan(&driver, log, report, &mut save),
-        GameMode::GuildScan => guild::scan(&driver, guild_settings, log, report, &mut save),
+        GameMode::GuildScan => guild::scan(&driver, options.guild, log, report, &mut save),
+        GameMode::HeroDatabase => {
+            hero_db_scan::scan(&driver, options.hero_db_max_age_days, log, report)
+        }
         _ => Err("Invalid scanner action".into()),
     }
 }
@@ -174,11 +185,17 @@ mod tests {
     fn connected_emulator_scanner() {
         let serial = std::env::var("ADBHELPER_TEST_SERIAL").expect("device serial");
         let case = std::env::var("ADBHELPER_TEST_SCANNER").expect("scanner kind");
-        let mode = if case == "hero" {
-            GameMode::HeroScan
-        } else {
-            GameMode::GuildScan
+        let mode = match case.as_str() {
+            "hero" => GameMode::HeroScan,
+            "herodb" => GameMode::HeroDatabase,
+            _ => GameMode::GuildScan,
         };
+        // ADBHELPER_HERO_DB_LIMIT stops the hero database scan after that many heroes.
+        let limit: Option<u32> = std::env::var("ADBHELPER_HERO_DB_LIMIT")
+            .ok()
+            .and_then(|value| value.parse().ok());
+        let cancelled = AtomicBool::new(false);
+        let mut collected = 0;
         let settings = GuildSettings {
             dream_days: u8::from(case == "dream" || case == "guild"),
             supreme_arena: case == "supreme",
@@ -189,17 +206,29 @@ mod tests {
         let result = run(
             &serial,
             mode,
-            &settings,
-            &AtomicBool::new(false),
+            &ScanOptions {
+                guild: &settings,
+                hero_db_max_age_days: None,
+            },
+            &cancelled,
             &mut |line| println!("{line}"),
             &mut |event| {
-                if !matches!(event, ActivityEvent::Collected(..)) {
+                if let ActivityEvent::Collected(..) = event {
+                    collected += 1;
+                    if limit.is_some_and(|limit| collected >= limit) {
+                        cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                } else {
                     println!("{event:?}");
                 }
             },
             &mut |path| println!("Export: {}", path.display()),
         );
         println!("Scan result: {result:?}");
-        assert!(result.is_ok_and(|rows| rows > 0));
+        if limit.is_some() {
+            assert!(collected > 0);
+        } else {
+            assert!(result.is_ok_and(|rows| rows > 0));
+        }
     }
 }

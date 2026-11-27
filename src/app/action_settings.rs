@@ -190,6 +190,8 @@ impl PlayerApp {
                                             "app-action-settings-uses-your-three-in-game-teams"
                                         ));
                                     }
+                                    // Started and set up on the Settings page.
+                                    StageAction::HeroDatabase => {}
                                     StageAction::Fishing => {
                                         ui.label(tr!(
                                     "app-action-settings-uses-available-fishing-spots-on-the"

@@ -77,6 +77,23 @@ impl Stamp {
     }
 }
 
+/// Day number of a "2026-11-27" date, for counting days between dates.
+pub fn day_number(date: &str) -> Option<i64> {
+    let mut parts = date.trim().splitn(3, '-');
+    let year = parts.next()?.parse().ok()?;
+    let month = parts
+        .next()?
+        .parse()
+        .ok()
+        .filter(|m| (1..=12).contains(m))?;
+    let day = parts
+        .next()?
+        .parse()
+        .ok()
+        .filter(|d| (1..=31).contains(d))?;
+    Some(days_from_civil(year, month, day))
+}
+
 // Howard Hinnant's civil calendar conversions (proleptic Gregorian calendar).
 fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
     let year = i64::from(year) - i64::from(month <= 2);

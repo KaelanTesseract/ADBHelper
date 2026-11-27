@@ -1,7 +1,5 @@
 //! Reads a hero's skills in the game's "Full" view, with the numbers of
 //! every skill level.
-// The hero database scan that calls `read_skills` follows in a later step.
-#![allow(dead_code)]
 
 use super::hero_db::{Skill, SkillLevel};
 use super::{ocr, Driver, Screen};

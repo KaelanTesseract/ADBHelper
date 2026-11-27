@@ -119,6 +119,7 @@ struct RunSettings {
     diamond_hourglasses: crate::routine::DiamondHourglassSettings,
     emporium: crate::routine::EmporiumSettings,
     guild_scan: scanner::GuildSettings,
+    hero_db_max_age_days: Option<u32>,
 }
 
 impl RunSettings {
@@ -149,6 +150,7 @@ impl RunSettings {
             StageAction::EssenceSwap => Some(GameMode::EssenceSwap),
             StageAction::HeroScan => Some(GameMode::HeroScan),
             StageAction::GuildScan => Some(GameMode::GuildScan),
+            StageAction::HeroDatabase => Some(GameMode::HeroDatabase),
             StageAction::Fishing => Some(GameMode::Fishing),
             StageAction::AfkRewards => Some(GameMode::AfkRewards),
             StageAction::FreeHourglasses => Some(GameMode::FreeHourglasses),
@@ -192,6 +194,8 @@ pub struct PlayerApp {
     dream_battle_limit_error: Option<String>,
     guild_scan: scanner::GuildSettings,
     guild_access_error: Option<String>,
+    /// Hero database scan: skip heroes whose stats are newer than this.
+    hero_db_max_age_days: Option<u32>,
     scan_exports: Vec<(StageAction, std::path::PathBuf)>,
     active_action: Option<StageAction>,
     battle_options: [ActionBattleOptions; 6],
@@ -286,6 +290,7 @@ impl PlayerApp {
                 settings
             },
             guild_access_error: None,
+            hero_db_max_age_days: Some(7),
             scan_exports: Vec::new(),
             active_action: None,
             battle_options: [ActionBattleOptions::default(); 6],

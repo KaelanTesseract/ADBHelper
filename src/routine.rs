@@ -30,6 +30,7 @@ pub enum Action {
     EssenceSwap,
     HeroScan,
     GuildScan,
+    HeroDatabase,
     Fishing,
 }
 
@@ -116,6 +117,7 @@ impl Action {
             Self::HeroScan => 24,
             Self::GuildScan => 25,
             Self::Fishing => 26,
+            Self::HeroDatabase => 27,
         }
     }
 
@@ -141,6 +143,7 @@ impl Action {
             Self::EssenceSwap => GameMode::EssenceSwap.label(),
             Self::HeroScan => GameMode::HeroScan.label(),
             Self::GuildScan => GameMode::GuildScan.label(),
+            Self::HeroDatabase => GameMode::HeroDatabase.label(),
             Self::Fishing => GameMode::Fishing.label(),
             Self::Daily => "Daily",
             Self::AfkRewards => tr!("routine-afk-rewards-2-claims"),

@@ -1,8 +1,6 @@
 //! Facts from github.com/arnecls/afjk-characters. The repository has no
 //! license, so only game facts are taken (faction, class, damage type,
 //! range, cooldowns, unlock levels), never its texts. Fetched at run time.
-// The hero database scan that calls `fetch_facts` follows in a later step.
-#![allow(dead_code)]
 
 use super::hero_db::{HeroFacts, SkillFacts};
 use crate::localization::tr;

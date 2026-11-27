@@ -1,0 +1,239 @@
+//! The hero database scan: every owned hero's progress, current stats and
+//! skills into `heroes.json`, plus the full roster and facts.
+
+use super::hero::{ascension, exclusive_level, reference};
+use super::{tr, ActivityEvent, Driver, GameMode};
+use crate::afk_journey::error::ActionError;
+use crate::afk_journey::progression::hero_db::{today, HeroDatabase, HeroRecord, Progress};
+use crate::afk_journey::progression::{hall, hero_facts, hero_skills, hero_stats};
+use crate::afk_journey::text_match::ascii_key;
+use crate::afk_journey::vision;
+
+/// True when the hero has no stats yet, or they are older than
+/// `max_age_days`. `None` scans every hero.
+pub(super) fn needs_scan(record: &HeroRecord, today: &str, max_age_days: Option<u32>) -> bool {
+    let Some(max_age) = max_age_days else {
+        return true;
+    };
+    let Some(stats) = &record.stats else {
+        return true;
+    };
+    match (
+        crate::logfile::day_number(&stats.scanned),
+        crate::logfile::day_number(today),
+    ) {
+        (Some(scanned), Some(now)) => now - scanned > i64::from(max_age),
+        _ => true,
+    }
+}
+
+/// The record whose name matches the profile's name key ("frieren",
+/// "elijahlailah"); a hero the roster does not know gets a new record.
+pub(super) fn record_for<'a>(db: &'a mut HeroDatabase, key: &str) -> &'a mut HeroRecord {
+    let known = db
+        .heroes
+        .iter()
+        .find(|(_, record)| ascii_key(&record.name) == key)
+        .map(|(id, _)| id.clone());
+    match known {
+        Some(id) => db.heroes.get_mut(&id).expect("id was just found"),
+        None => db.record(key),
+    }
+}
+
+/// What the AFKJ Tracker scan read: roster name, ascension, EX weapon level.
+pub(super) type ScannedProgress = (String, String, Option<u32>);
+
+/// Roster and progress from the AFKJ Tracker scan; stats and skills stay.
+pub(super) fn apply_progress(
+    db: &mut HeroDatabase,
+    template: &serde_json::Value,
+    scanned: &[ScannedProgress],
+    day: &str,
+) {
+    db.merge_roster(template);
+    for (name, ascension, ex_weapon) in scanned {
+        let record = record_for(db, &ascii_key(name));
+        record.owned = true;
+        record.progress = Some(Progress {
+            level: None,
+            ascension: Some(ascension.clone()),
+            ex_weapon: *ex_weapon,
+            scanned: day.to_owned(),
+        });
+    }
+}
+
+/// Stores what the AFKJ Tracker scan read; a failure is only logged, the
+/// tracker export does not depend on it.
+pub(super) fn store_progress(
+    template: &serde_json::Value,
+    scanned: &[ScannedProgress],
+    log: &mut impl FnMut(String),
+) {
+    let result = HeroDatabase::load().and_then(|(mut db, warning)| {
+        if let Some(warning) = warning {
+            log(tr!("hero-db-broken-file-kept", file = warning));
+        }
+        apply_progress(&mut db, template, scanned, &today());
+        db.save()
+    });
+    if let Err(error) = result {
+        log(tr!("hero-db-not-saved", error = error));
+    }
+}
+
+/// Adds the AFKJ Tracker roster; on failure the stored roster stays.
+pub(super) fn merge_tracker_roster(db: &mut HeroDatabase, log: &mut impl FnMut(String)) {
+    match reference("heroes-template.json") {
+        Ok(template) => db.merge_roster(&template),
+        Err(error) => log(tr!("hero-db-roster-unavailable", error = error.to_string())),
+    }
+}
+
+fn save(db: &mut HeroDatabase) -> Result<(), ActionError> {
+    db.save()
+        .map_err(|error| ActionError::from(tr!("hero-db-not-saved", error = error)))
+}
+
+pub(super) fn scan(
+    driver: &Driver<'_>,
+    max_age_days: Option<u32>,
+    log: &mut impl FnMut(String),
+    report: &mut dyn FnMut(ActivityEvent),
+) -> Result<u32, ActionError> {
+    let (mut db, warning) = HeroDatabase::load().map_err(ActionError::from)?;
+    if let Some(warning) = warning {
+        log(tr!("hero-db-broken-file-kept", file = warning));
+    }
+    merge_tracker_roster(&mut db, log);
+    db.merge_facts(&hero_facts::fetch_facts(log));
+    save(&mut db)?;
+    let roster_size = db.heroes.len().max(1);
+    let day = today();
+    let mut count = 0;
+    hall::open_first_hero(driver, log)?;
+    let (mut profile, mut nameplate) = hall::wait_for_affinity_profile(driver, None)?;
+    let first = nameplate.clone();
+    for position in 0..roster_size + 30 {
+        vision::ensure_not_cancelled(driver.cancelled)?;
+        let name = hall::hero_name(&profile).unwrap_or_default();
+        if matches!(name.as_str(), "chippy" | "hammie")
+            || profile
+                .template("dailies/resonating_hall/chippy.png", 15..590, 20..330, 0.88)?
+                .is_some()
+            || (position > 0 && first.matches(&nameplate))
+        {
+            break;
+        }
+        if !name.is_empty() {
+            let ascension = ascension(&profile)?.map(str::to_owned);
+            let ex_weapon = exclusive_level(&profile)?;
+            let fresh = {
+                let record = record_for(&mut db, &name);
+                record.owned = true;
+                record.progress = Some(Progress {
+                    level: None,
+                    ascension,
+                    ex_weapon,
+                    scanned: day.clone(),
+                });
+                needs_scan(record, &day, max_age_days)
+            };
+            if fresh {
+                let stats = hero_stats::read_stats(driver, &profile)?;
+                profile = driver.read()?;
+                let skills = hero_skills::read_skills(driver, &profile)?;
+                profile = driver.read()?;
+                let record = record_for(&mut db, &name);
+                if let Some(stats) = stats {
+                    record.stats = Some(stats);
+                    record.sources.insert("stats".into(), "game".into());
+                }
+                if !skills.is_empty() {
+                    record.skills.retain(|old| {
+                        old.source != "game" && skills.iter().all(|new| new.slot != old.slot)
+                    });
+                    record.skills.extend(skills);
+                    record.sources.insert("skills".into(), "game".into());
+                }
+            }
+            save(&mut db)?;
+            count += 1;
+            report(ActivityEvent::Collected(GameMode::HeroDatabase, 1));
+        }
+        driver.tap(&profile, hall::NEXT_HERO)?;
+        (profile, nameplate) = hall::wait_for_affinity_profile(driver, Some(&nameplate))?;
+    }
+    driver.back()?;
+    if count == 0 {
+        return Err(tr!("hero-db-no-hero-read").into());
+    }
+    Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::afk_journey::progression::hero_db::{HeroRecord, Stats};
+
+    fn with_stats(scanned: &str) -> HeroRecord {
+        HeroRecord {
+            stats: Some(Stats {
+                scanned: scanned.into(),
+                ..Stats::default()
+            }),
+            ..HeroRecord::default()
+        }
+    }
+
+    #[test]
+    fn the_tracker_scan_records_progress_without_touching_stats() {
+        let mut db = HeroDatabase::default();
+        record_for(&mut db, "frieren").stats = Some(Stats {
+            scanned: "2026-11-20".into(),
+            ..Stats::default()
+        });
+        let template = serde_json::json!({"heroes": [
+            {"id": "frieren", "name": "Frieren", "class": "Mage"}
+        ]});
+        apply_progress(
+            &mut db,
+            &template,
+            &[("Frieren".into(), "Supreme+".into(), Some(25))],
+            "2026-11-27",
+        );
+        let frieren = &db.heroes["frieren"];
+        assert!(frieren.owned);
+        let progress = frieren.progress.as_ref().unwrap();
+        assert_eq!(progress.ascension.as_deref(), Some("Supreme+"));
+        assert_eq!(progress.ex_weapon, Some(25));
+        assert_eq!(progress.scanned, "2026-11-27");
+        assert_eq!(frieren.stats.as_ref().unwrap().scanned, "2026-11-20");
+        assert_eq!(db.heroes.len(), 1, "the roster name and the record match");
+    }
+
+    #[test]
+    fn profile_names_find_their_roster_record() {
+        let mut db = HeroDatabase::default();
+        db.record("Elijah & Lailah");
+        record_for(&mut db, "elijahlailah").owned = true;
+        assert!(db.heroes["elijah-&-lailah"].owned);
+        record_for(&mut db, "newhero").owned = true;
+        assert!(
+            db.heroes["newhero"].owned,
+            "an unknown hero gets its own record"
+        );
+        assert_eq!(db.heroes.len(), 2);
+    }
+
+    #[test]
+    fn fresh_heroes_are_skipped() {
+        let fresh = with_stats("2026-11-27");
+        assert!(needs_scan(&fresh, "2026-11-30", None));
+        assert!(!needs_scan(&fresh, "2026-11-30", Some(5)));
+        assert!(needs_scan(&fresh, "2026-11-30", Some(2)));
+        assert!(needs_scan(&HeroRecord::default(), "2026-11-30", Some(5)));
+        assert!(needs_scan(&with_stats("broken"), "2026-11-30", Some(5)));
+    }
+}

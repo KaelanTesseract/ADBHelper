@@ -656,3 +656,8 @@ updater-the-download-does-not-match = Der Download stimmt nicht mit der veröffe
 updater-could-not-start-the-installer = Der Installer konnte nicht gestartet werden: { $e }
 
 hero-db-facts-unavailable = Heldenfakten von afjk-characters konnten nicht geladen werden, die gespeicherten bleiben erhalten: { $error }
+activity-hero-database = Heldendatenbank
+hero-db-roster-unavailable = Die Heldenliste von AFKJ Tracker konnte nicht geladen werden, die gespeicherte bleibt erhalten: { $error }
+hero-db-not-saved = Die Heldendatenbank konnte nicht gespeichert werden: { $error }
+hero-db-broken-file-kept = Die Datei der Heldendatenbank war nicht lesbar und wurde als { $file } beiseitegelegt. Eine neue wird angelegt.
+hero-db-no-hero-read = Es konnte kein Held gelesen werden. Öffne AFK Journey und versuche es erneut.

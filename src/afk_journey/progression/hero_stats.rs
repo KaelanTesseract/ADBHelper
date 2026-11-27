@@ -1,6 +1,4 @@
 //! Reads the game's "Hero Stats" list (the "i" beside a hero's power).
-// The hero database scan that calls `read_stats` follows in a later step.
-#![allow(dead_code)]
 
 use super::hero_db::{today, Stats};
 use super::{ocr, Driver, Screen};

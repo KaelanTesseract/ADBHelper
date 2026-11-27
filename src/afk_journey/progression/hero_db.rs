@@ -1,8 +1,6 @@
 //! Local hero database `heroes.json`: every hero from the AFKJ Tracker roster,
 //! facts from afjk-characters (numbers only, no texts), and what the hero
 //! database scan read in the game.
-// The scan that uses loading and saving follows in a later step.
-#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
