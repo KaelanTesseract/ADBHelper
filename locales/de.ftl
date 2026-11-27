@@ -654,3 +654,5 @@ app-install-delete-failed = Die alte Kopie konnte nicht gelöscht werden: { $err
 updater-the-latest-release-has-no-signed-installer = Das neueste Release hat noch keinen signierten Installer. Versuche es später noch einmal.
 updater-the-download-does-not-match = Der Download stimmt nicht mit der veröffentlichten Datei überein. Es wurde nichts installiert.
 updater-could-not-start-the-installer = Der Installer konnte nicht gestartet werden: { $e }
+
+hero-db-facts-unavailable = Heldenfakten von afjk-characters konnten nicht geladen werden, die gespeicherten bleiben erhalten: { $error }

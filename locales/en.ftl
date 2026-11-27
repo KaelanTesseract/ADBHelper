@@ -654,3 +654,5 @@ app-install-delete-failed = Could not delete the old copy: { $error }. Close it 
 updater-the-latest-release-has-no-signed-installer = The latest release has no signed installer yet. Try again later.
 updater-the-download-does-not-match = The download does not match the published file. Nothing was installed.
 updater-could-not-start-the-installer = Could not start the installer: { $e }
+
+hero-db-facts-unavailable = Hero facts from afjk-characters could not be loaded, so the stored ones are kept: { $error }

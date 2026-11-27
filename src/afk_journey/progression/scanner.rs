@@ -131,7 +131,7 @@ fn write_export(folder: &Path, name: &str, value: &impl Serialize) -> Result<Pat
     Ok(path)
 }
 
-fn client() -> ureq::Agent {
+pub(in crate::afk_journey::progression) fn client() -> ureq::Agent {
     ureq::Agent::config_builder()
         .https_only(true)
         .max_redirects(0)
