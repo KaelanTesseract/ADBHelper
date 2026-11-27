@@ -96,7 +96,8 @@ fn s_plus(image: &mut RgbaImage, x: u32, y: u32, scale: u32) {
 /// for S+, and the stars below.
 pub fn compose(heroes: &[BoxHero]) -> RgbaImage {
     let rows = (heroes.len() as u32).div_ceil(COLUMNS).max(1);
-    let width = MARGIN * 2 + COLUMNS * TILE + (COLUMNS - 1) * GAP;
+    let columns = (heroes.len() as u32).clamp(1, COLUMNS);
+    let width = MARGIN * 2 + columns * TILE + (columns - 1) * GAP;
     let height = MARGIN * 2 + rows * (TILE + STAR_ROW) + (rows - 1) * GAP;
     let mut image = RgbaImage::from_pixel(width, height, BACKGROUND);
     for (index, hero) in heroes.iter().enumerate() {
@@ -218,6 +219,12 @@ mod tests {
             MARGIN * 2 + COLUMNS * TILE + (COLUMNS - 1) * GAP
         );
         assert_eq!(image.height(), MARGIN * 2 + 2 * (TILE + STAR_ROW) + GAP);
+    }
+
+    #[test]
+    fn a_short_row_is_only_as_wide_as_its_heroes() {
+        let heroes: Vec<BoxHero> = (0..3).map(|_| hero(false, None)).collect();
+        assert_eq!(compose(&heroes).width(), MARGIN * 2 + 3 * TILE + 2 * GAP);
     }
 
     #[test]
