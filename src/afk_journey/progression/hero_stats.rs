@@ -52,7 +52,8 @@ fn tidy(value: f64, shown: &str) -> f64 {
 
 /// Pairs each label on the left with the value on its row. Rows without a
 /// readable value are left out, never stored as 0.
-pub fn parse_stat_rows(lines: &[ocr::TextLine]) -> BTreeMap<String, f64> {
+#[cfg(test)]
+fn parse_stat_rows(lines: &[ocr::TextLine]) -> BTreeMap<String, f64> {
     rows_with(lines, |text, _| text.to_owned())
 }
 
