@@ -293,6 +293,31 @@ fn manual_formation_visible(screen: &GrayImage) -> Result<bool, ActionError> {
     .is_some())
 }
 
+/// The selected player card above a Records formation. It shows the next
+/// player on every page, even when two players used the very same team.
+const RECORD_PLAYERS: Rect = Rect {
+    x: 330,
+    y: 290,
+    width: 420,
+    height: 130,
+};
+
+/// Mean brightness change on the player card that marks a new Records page.
+/// Measured 21.7 to 66.5 between pages, including two with the same team.
+const RECORD_PLAYERS_CHANGE: f64 = 8.0;
+
+/// True when the Records page shows another player than before.
+fn record_page_changed(before: &GrayImage, after: &GrayImage) -> bool {
+    let mut total = 0u64;
+    for y in RECORD_PLAYERS.y..RECORD_PLAYERS.y + RECORD_PLAYERS.height {
+        for x in RECORD_PLAYERS.x..RECORD_PLAYERS.x + RECORD_PLAYERS.width {
+            total += u64::from(before.get_pixel(x, y)[0].abs_diff(after.get_pixel(x, y)[0]));
+        }
+    }
+    let pixels = f64::from(RECORD_PLAYERS.width * RECORD_PLAYERS.height);
+    total as f64 / pixels > RECORD_PLAYERS_CHANGE
+}
+
 struct AdbFormationBrowser<'a, L> {
     serial: &'a str,
     mode: GameMode,
@@ -354,7 +379,8 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
         };
         tap_match(self.serial, next, size)?;
         settle_cancellable(self.cancelled)?;
-        // Do not advance the index until the central formation actually changes.
+        // Do not advance the index until the page actually changes: the central
+        // formation, or the player row when two players used the same team.
         let roi = Rect {
             x: 216,
             y: 288,
@@ -368,7 +394,9 @@ impl<L: FnMut(String)> FormationBrowser for AdbFormationBrowser<'_, L> {
         while started.elapsed() < crate::timing::secs(5) {
             ensure_not_cancelled(self.cancelled)?;
             let (screen, _) = screenshot(self.serial)?;
-            if normalized_correlation(&screen, (roi.x, roi.y), &samples) < 0.95 {
+            if normalized_correlation(&screen, (roi.x, roi.y), &samples) < 0.95
+                || record_page_changed(&before, &screen)
+            {
                 settle_cancellable(self.cancelled)?;
                 return Ok(true);
             }
@@ -2484,5 +2512,87 @@ mod tests {
             assert_eq!(result.unwrap_err(), "Cancelled by user.");
             assert!(events.is_empty());
         }
+    }
+
+    #[test]
+    fn a_new_player_in_the_records_row_is_a_new_page() {
+        let before = GrayImage::from_pixel(BASE_RESOLUTION.0, BASE_RESOLUTION.1, image::Luma([90]));
+        let mut next_player = before.clone();
+        for y in 300..400 {
+            for x in 100..900 {
+                next_player.put_pixel(x, y, image::Luma([200]));
+            }
+        }
+        assert!(record_page_changed(&before, &next_player));
+        assert!(!record_page_changed(&before, &before));
+        let mut elsewhere = before.clone();
+        for y in 1700..1800 {
+            for x in 100..900 {
+                elsewhere.put_pixel(x, y, image::Luma([200]));
+            }
+        }
+        assert!(!record_page_changed(&before, &elsewhere));
+    }
+
+    #[test]
+    #[ignore = "needs captured Records pages (ADBHELPER_TEST_UNION_RECORDS)"]
+    fn captured_records_with_the_same_team_are_different_pages() {
+        let folder = std::env::var_os("ADBHELPER_TEST_UNION_RECORDS").expect("capture folder");
+        let load = |name: &str| {
+            image::open(std::path::Path::new(&folder).join(format!("{name}.png")))
+                .unwrap()
+                .to_luma8()
+        };
+        let before = load("same-team-before");
+        let after = load("same-team-after");
+        assert!(record_page_changed(&before, &after));
+        assert!(!record_page_changed(&before, &before));
+    }
+
+    #[test]
+    #[ignore = "pages Union Campaign Records on a connected emulator without a battle"]
+    fn connected_emulator_union_records_paging() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").unwrap();
+        let out = std::path::PathBuf::from(std::env::var("ADBHELPER_RECORDS_OUT").unwrap());
+        std::fs::create_dir_all(&out).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut log = |m: String| println!("{m}");
+        super::super::union_campaign::navigate(&serial, &cancelled, &mut log).unwrap();
+        super::super::union_campaign::prepare_floor(&serial, &cancelled).unwrap();
+        let mut browser = AdbFormationBrowser {
+            serial: &serial,
+            mode: GameMode::UnionCampaign,
+            cancelled: &cancelled,
+            log: &mut log,
+        };
+        println!("open: {:?}", browser.open());
+        for shown in 1..=12 {
+            let (screen, _) = screenshot(&serial).unwrap();
+            screen
+                .save(out.join(format!("record-{shown:02}.png")))
+                .unwrap();
+            let next = find_template(
+                &screen,
+                "battle/formation_next.png",
+                Rect {
+                    x: BASE_RESOLUTION.0 * 4 / 5,
+                    y: BASE_RESOLUTION.1 / 2,
+                    width: BASE_RESOLUTION.0 / 5,
+                    height: BASE_RESOLUTION.1 / 10,
+                },
+                0.5,
+            );
+            println!("record {shown}: next arrow {next:?}");
+            let moved = browser.next();
+            println!("record {shown}: next() -> {moved:?}");
+            if !matches!(moved, Ok(true)) {
+                let (screen, _) = screenshot(&serial).unwrap();
+                screen
+                    .save(out.join(format!("record-{shown:02}-after.png")))
+                    .unwrap();
+                break;
+            }
+        }
+        adb::press_back(&serial).unwrap();
     }
 }
