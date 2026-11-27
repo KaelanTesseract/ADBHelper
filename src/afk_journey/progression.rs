@@ -4,6 +4,7 @@ use crate::afk_journey::text_match::ascii_key;
 mod hall;
 pub mod hero_db;
 mod hero_facts;
+mod hero_skills;
 mod hero_stats;
 pub mod scanner;
 mod shop;
