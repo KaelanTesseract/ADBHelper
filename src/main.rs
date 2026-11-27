@@ -7,6 +7,7 @@ mod app;
 mod charts;
 mod credentials;
 pub mod design_system;
+mod hero_box_image;
 mod install_info;
 mod localization;
 mod logfile;

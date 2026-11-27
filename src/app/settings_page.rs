@@ -8,6 +8,14 @@ impl PlayerApp {
         card(ui, |ui| {
             ui.strong(tr!("app-settings-hero-db-title"));
             ui.label(tr!("app-settings-hero-db-explain"));
+            self.hero_database_controls(ui);
+        });
+    }
+
+    /// Age option, last scan, start/stop and errors of the hero database
+    /// scan; shown on the Settings page and in the Hero Box.
+    pub(super) fn hero_database_controls(&mut self, ui: &mut egui::Ui) {
+        {
             let mut only_old = self.hero_db_max_age_days.is_some();
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!self.busy, |ui| {
@@ -67,7 +75,7 @@ impl PlayerApp {
                         .wrap(),
                 );
             }
-        });
+        }
     }
 
     pub(super) fn show_settings(&mut self, ui: &mut egui::Ui) {

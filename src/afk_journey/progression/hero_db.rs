@@ -37,6 +37,11 @@ pub struct HeroRecord {
     pub damage_type: String,
     pub range: String,
     pub owned: bool,
+    /// Stars on the hero's card in the Resonating Hall.
+    pub stars: Option<u32>,
+    /// File name of the portrait cut from the user's own game, in
+    /// `heroes/portraits` next to `heroes.json`.
+    pub portrait: Option<String>,
     pub progress: Option<Progress>,
     pub stats: Option<Stats>,
     pub skills: Vec<Skill>,
@@ -105,6 +110,16 @@ pub struct SkillFacts {
     pub unlock: Option<String>,
 }
 
+/// Supreme+ or higher (Paragon 1–4), shown as "S+".
+pub fn is_supreme_plus(ascension: &str) -> bool {
+    ascension == "Supreme+" || ascension.starts_with("Paragon")
+}
+
+/// Folder of the portraits, next to `heroes.json`.
+pub fn portrait_folder() -> std::io::Result<std::path::PathBuf> {
+    crate::settings::file("heroes").map(|folder| folder.join("portraits"))
+}
+
 /// The tracker's hero id: lowercase, spaces become "-".
 pub fn hero_id(name: &str) -> String {
     name.split_whitespace()
@@ -140,6 +155,19 @@ impl HeroDatabase {
     /// where it is, the scan sets it aside and says so.
     pub fn updated() -> Option<String> {
         Self::updated_at(&crate::settings::file(FILE).ok()?)
+    }
+
+    /// The stored database for display; a missing or broken file gives an
+    /// empty one and stays where it is.
+    pub fn load_quietly() -> Self {
+        crate::settings::file(FILE)
+            .ok()
+            .and_then(|path| Self::read_only(&path))
+            .unwrap_or_default()
+    }
+
+    fn read_only(path: &std::path::Path) -> Option<Self> {
+        serde_json::from_slice(&std::fs::read(path).ok()?).ok()
     }
 
     fn updated_at(path: &std::path::Path) -> Option<String> {
@@ -374,6 +402,7 @@ mod tests {
         let path = folder.join("heroes.json");
         std::fs::write(&path, b"{ not json").unwrap();
         assert_eq!(HeroDatabase::updated_at(&path), None);
+        assert!(HeroDatabase::read_only(&path).is_none());
         assert!(path.exists(), "only the scan may set a broken file aside");
         std::fs::write(&path, br#"{"updated":"2026-11-27 15:00:00"}"#).unwrap();
         assert_eq!(
@@ -381,6 +410,23 @@ mod tests {
             Some("2026-11-27 15:00:00")
         );
         std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn supreme_plus_includes_paragon() {
+        assert!(is_supreme_plus("Supreme+"));
+        assert!(is_supreme_plus("Paragon 1"));
+        assert!(is_supreme_plus("Paragon 4"));
+        assert!(!is_supreme_plus("Supreme"));
+        assert!(!is_supreme_plus("Mythic+"));
+    }
+
+    #[test]
+    fn old_files_without_stars_load() {
+        let db: HeroDatabase =
+            serde_json::from_str(r#"{"heroes":{"frieren":{"name":"Frieren"}}}"#).unwrap();
+        assert_eq!(db.heroes["frieren"].stars, None);
+        assert_eq!(db.heroes["frieren"].portrait, None);
     }
 
     #[test]
