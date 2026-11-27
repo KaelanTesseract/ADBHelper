@@ -110,7 +110,27 @@ pub struct SkillFacts {
     pub unlock: Option<String>,
 }
 
-/// Supreme+ or higher (Paragon 1–4), shown as "S+".
+/// The short badge of an ascension as shown in the Hero Box: "S+", "P3",
+/// "M+", ... `None` for a value the scan does not know.
+pub fn tier_badge(ascension: &str) -> Option<&'static str> {
+    Some(match ascension {
+        "Paragon 4" => "P4",
+        "Paragon 3" => "P3",
+        "Paragon 2" => "P2",
+        "Paragon 1" => "P1",
+        "Supreme+" => "S+",
+        "Supreme" => "S",
+        "Mythic+" => "M+",
+        "Mythic" => "M",
+        "Legendary+" => "L+",
+        "Legendary" => "L",
+        "Epic+" | "Elite+" => "E+",
+        "Epic" | "Elite" => "E",
+        _ => return None,
+    })
+}
+
+/// Supreme+ or higher (Paragon 1–4); these badges are drawn in gold.
 pub fn is_supreme_plus(ascension: &str) -> bool {
     ascension == "Supreme+" || ascension.starts_with("Paragon")
 }
@@ -410,6 +430,19 @@ mod tests {
             Some("2026-11-27 15:00:00")
         );
         std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn every_ascension_has_a_short_badge() {
+        assert_eq!(tier_badge("Supreme+"), Some("S+"));
+        assert_eq!(tier_badge("Supreme"), Some("S"));
+        assert_eq!(tier_badge("Paragon 1"), Some("P1"));
+        assert_eq!(tier_badge("Paragon 4"), Some("P4"));
+        assert_eq!(tier_badge("Mythic+"), Some("M+"));
+        assert_eq!(tier_badge("Legendary+"), Some("L+"));
+        assert_eq!(tier_badge("Epic"), Some("E"));
+        assert_eq!(tier_badge("Elite+"), Some("E+"));
+        assert_eq!(tier_badge("something"), None);
     }
 
     #[test]

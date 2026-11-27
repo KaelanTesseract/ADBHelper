@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::afk_journey::progression::hero_db::{
-    is_supreme_plus, portrait_folder, HeroDatabase, HeroRecord,
+    is_supreme_plus, portrait_folder, tier_badge, HeroDatabase, HeroRecord,
 };
 use crate::hero_box_image;
 use std::collections::HashMap;
@@ -79,6 +79,14 @@ impl HeroBox {
     }
 }
 
+/// "S+", "P4", ... for the hero's ascension.
+fn badge_of(hero: &HeroRecord) -> Option<&'static str> {
+    hero.progress
+        .as_ref()
+        .and_then(|progress| progress.ascension.as_deref())
+        .and_then(tier_badge)
+}
+
 fn is_s_plus(hero: &HeroRecord) -> bool {
     hero.progress
         .as_ref()
@@ -129,6 +137,7 @@ impl PlayerApp {
             .map(|hero| hero_box_image::BoxHero {
                 portrait: portrait_image(hero),
                 supreme_plus: is_s_plus(hero),
+                badge: badge_of(hero),
             })
             .collect();
         if heroes.is_empty() {
@@ -279,13 +288,27 @@ impl PlayerApp {
                 egui::Stroke::new(3.0, GOLD),
                 egui::StrokeKind::Inside,
             );
-            painter.text(
-                portrait.min + egui::vec2(6.0, 4.0),
-                egui::Align2::LEFT_TOP,
-                "S+",
+        }
+        if let Some(text) = badge_of(hero) {
+            let anchor = portrait.min + egui::vec2(6.0, 5.0);
+            let galley = painter.layout_no_wrap(
+                text.to_owned(),
                 egui::FontId::proportional(13.0),
-                GOLD,
+                if is_s_plus(hero) {
+                    GOLD
+                } else {
+                    egui::Color32::from_gray(235)
+                },
             );
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    anchor - egui::vec2(3.0, 1.0),
+                    galley.size() + egui::vec2(6.0, 2.0),
+                ),
+                3.0,
+                egui::Color32::from_black_alpha(200),
+            );
+            painter.galley(anchor, galley, egui::Color32::WHITE);
         }
         painter.text(
             egui::pos2(rect.center().x, rect.bottom() - 9.0),

@@ -19,6 +19,8 @@ const BADGE: Rgba<u8> = Rgba([20, 20, 20, 255]);
 pub struct BoxHero {
     pub portrait: Option<RgbaImage>,
     pub supreme_plus: bool,
+    /// Ascension badge such as "S+", "P3", "M+".
+    pub badge: Option<&'static str>,
 }
 
 fn fill(image: &mut RgbaImage, x: u32, y: u32, width: u32, height: u32, color: Rgba<u8>) {
@@ -29,16 +31,50 @@ fn fill(image: &mut RgbaImage, x: u32, y: u32, width: u32, height: u32, color: R
     }
 }
 
-/// "S+" in a 5×7 pixel font, each dot `scale` pixels.
-fn s_plus(image: &mut RgbaImage, x: u32, y: u32, scale: u32) {
-    const S: [&str; 7] = [
-        ".###.", "#...#", "#....", ".###.", "....#", "#...#", ".###.",
-    ];
-    const PLUS: [&str; 7] = [
-        ".....", "..#..", "..#..", "#####", "..#..", "..#..", ".....",
-    ];
-    fill(image, x, y, scale * 13, scale * 9, BADGE);
-    for (offset, glyph) in [(1, S), (7, PLUS)] {
+/// One character of the 5×7 pixel font used for badges.
+fn glyph(c: char) -> Option<[&'static str; 7]> {
+    Some(match c {
+        'S' => [
+            ".###.", "#...#", "#....", ".###.", "....#", "#...#", ".###.",
+        ],
+        'P' => [
+            "####.", "#...#", "#...#", "####.", "#....", "#....", "#....",
+        ],
+        'M' => [
+            "#...#", "##.##", "#.#.#", "#...#", "#...#", "#...#", "#...#",
+        ],
+        'L' => [
+            "#....", "#....", "#....", "#....", "#....", "#....", "#####",
+        ],
+        'E' => [
+            "#####", "#....", "#....", "####.", "#....", "#....", "#####",
+        ],
+        '+' => [
+            ".....", "..#..", "..#..", "#####", "..#..", "..#..", ".....",
+        ],
+        '1' => [
+            "..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###.",
+        ],
+        '2' => [
+            ".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####",
+        ],
+        '3' => [
+            "####.", "....#", "....#", ".###.", "....#", "....#", "####.",
+        ],
+        '4' => [
+            "...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#.",
+        ],
+        _ => return None,
+    })
+}
+
+/// A badge such as "P3" on a dark box, each dot `scale` pixels.
+fn badge(image: &mut RgbaImage, x: u32, y: u32, text: &str, scale: u32, color: Rgba<u8>) {
+    let glyphs: Vec<_> = text.chars().filter_map(glyph).collect();
+    let width = 1 + glyphs.len() as u32 * 6;
+    fill(image, x, y, scale * width, scale * 9, BADGE);
+    for (index, glyph) in glyphs.iter().enumerate() {
+        let offset = 1 + index as u32 * 6;
         for (row, line) in glyph.iter().enumerate() {
             for (column, dot) in line.chars().enumerate() {
                 if dot == '#' {
@@ -48,7 +84,7 @@ fn s_plus(image: &mut RgbaImage, x: u32, y: u32, scale: u32) {
                         y + (1 + row as u32) * scale,
                         scale,
                         scale,
-                        GOLD,
+                        color,
                     );
                 }
             }
@@ -81,7 +117,14 @@ pub fn compose(heroes: &[BoxHero]) -> RgbaImage {
             fill(&mut image, x, y + TILE_HEIGHT - FRAME, TILE, FRAME, GOLD);
             fill(&mut image, x, y, FRAME, TILE_HEIGHT, GOLD);
             fill(&mut image, x + TILE - FRAME, y, FRAME, TILE_HEIGHT, GOLD);
-            s_plus(&mut image, x + FRAME + 2, y + FRAME + 2, 2);
+        }
+        if let Some(text) = hero.badge {
+            let color = if hero.supreme_plus {
+                GOLD
+            } else {
+                Rgba([235, 235, 235, 255])
+            };
+            badge(&mut image, x + FRAME + 2, y + FRAME + 2, text, 2, color);
         }
     }
     image
@@ -163,6 +206,7 @@ mod tests {
         BoxHero {
             portrait: Some(RgbaImage::from_pixel(152, 228, Rgba([10, 120, 200, 255]))),
             supreme_plus,
+            badge: None,
         }
     }
 
@@ -181,6 +225,23 @@ mod tests {
     fn a_short_row_is_only_as_wide_as_its_heroes() {
         let heroes: Vec<BoxHero> = (0..3).map(|_| hero(false)).collect();
         assert_eq!(compose(&heroes).width(), MARGIN * 2 + 3 * TILE + 2 * GAP);
+    }
+
+    #[test]
+    fn badges_differ_by_ascension() {
+        let with = |badge: &'static str| {
+            let mut hero = hero(true);
+            hero.badge = Some(badge);
+            compose(&[hero])
+        };
+        let area = |image: &RgbaImage| {
+            (MARGIN..MARGIN + 40)
+                .flat_map(|x| (MARGIN..MARGIN + 24).map(move |y| (x, y)))
+                .map(|(x, y)| *image.get_pixel(x, y))
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(area(&with("P4")), area(&with("S+")));
+        assert_ne!(area(&with("P4")), area(&with("P3")));
     }
 
     #[test]
