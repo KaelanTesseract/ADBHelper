@@ -107,12 +107,22 @@ fn weapon_level(label: &str) -> Option<u32> {
     digits.parse().ok().filter(|level| *level <= 40)
 }
 
-pub(super) fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionError> {
+/// The "+N" strip of the EX weapon badge (x, y, width, height). Heroes below
+/// Supreme+ have it higher, because "Reach Supreme+" sits under the badges;
+/// there it is cut tighter, as the light art around it confuses OCR.
+const BADGE: (u32, u32, u32, u32) = (82, 1514, 69, 31);
+const RAISED_BADGE: (u32, u32, u32, u32) = (92, 1430, 54, 30);
+
+/// The "+N" on the EX weapon badge strip, read on its own.
+fn badge_level(
+    screen: &Screen,
+    (x, y, width, height): (u32, u32, u32, u32),
+) -> Result<Option<u32>, ActionError> {
     // Only the weapon badge occupies this strip. The surrounding artwork,
     // upgrade arrow, and the neighboring level label can confuse OCR.
-    let mut badge = image::imageops::crop_imm(&screen.gray, 82, 1514, 69, 31).to_image();
+    let mut badge = image::imageops::crop_imm(&screen.gray, x, y, width, height).to_image();
     image::imageops::invert(&mut badge);
-    let mut padded = image::GrayImage::from_pixel(101, 63, image::Luma([255]));
+    let mut padded = image::GrayImage::from_pixel(width + 32, height + 32, image::Luma([255]));
     image::imageops::replace(&mut padded, &badge, 16, 16);
     let padded = image::imageops::resize(
         &padded,
@@ -120,10 +130,13 @@ pub(super) fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionErro
         padded.height() * 3,
         image::imageops::FilterType::CatmullRom,
     );
-    if let Some(level) = super::super::ocr::recognize(&padded)?
+    Ok(super::super::ocr::recognize(&padded)?
         .first()
-        .and_then(|line| weapon_level(&line.text))
-    {
+        .and_then(|line| weapon_level(&line.text)))
+}
+
+pub(super) fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionError> {
+    if let Some(level) = badge_level(screen, BADGE)? {
         return Ok(Some(level));
     }
     let mut values = BTreeSet::new();
@@ -141,8 +154,11 @@ pub(super) fn exclusive_level(screen: &Screen) -> Result<Option<u32>, ActionErro
         return Ok(values.first().copied());
     }
     // Heroes below Supreme+ show "Reach Supreme+" under the badges, which
-    // pushes the EX weapon badge about 70 px up; the usual spot then holds at
+    // pushes the EX weapon badge about 85 px up; the usual spot then holds at
     // most a cut-off part of the level.
+    if let Some(level) = badge_level(screen, RAISED_BADGE)? {
+        return Ok(Some(level));
+    }
     let mut raised = BTreeSet::new();
     for line in crop(screen, 0, 1380, 240, 140)? {
         raised.extend(weapon_level(&line.text));
@@ -280,6 +296,16 @@ mod tests {
         let aneva = hero_db_capture("profile-aneva-supreme-ex13.png");
         assert_eq!(ascension(&aneva).unwrap(), Some("Supreme"));
         assert_eq!(exclusive_level(&aneva).unwrap(), Some(13));
+        // Seen while walking with "next": raised badge on a light background.
+        let athalia = hero_db_capture("profile-athalia-supreme-ex10.png");
+        for line in crop(&athalia, 0, 1380, 240, 140).unwrap() {
+            println!("raised: {:?} at {:?}", line.text, line.center());
+        }
+        assert_eq!(exclusive_level(&athalia).unwrap(), Some(10));
+        let ravion = hero_db_capture("profile-ravion-paragon1.png");
+        assert_eq!(ascension(&ravion).unwrap(), Some("Paragon 1"));
+        let aneva_walk = hero_db_capture("profile-aneva-walk.png");
+        assert_eq!(exclusive_level(&aneva_walk).unwrap(), Some(13));
         // Earlier captures keep their values.
         let alna = hero_db_capture("profile-6-stars.png");
         assert_eq!(ascension(&alna).unwrap(), Some("Supreme+"));

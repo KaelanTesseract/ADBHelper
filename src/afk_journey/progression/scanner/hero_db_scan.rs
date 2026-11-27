@@ -562,6 +562,41 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "walks the open hero profiles with next on an emulator and saves chosen ones"]
+    fn connected_emulator_save_profiles() {
+        let serial = std::env::var("ADBHELPER_TEST_SERIAL").unwrap();
+        let out = std::path::PathBuf::from(std::env::var("ADBHELPER_PROFILE_OUT").unwrap());
+        let wanted: Vec<String> = std::env::var("ADBHELPER_PROFILE_NAMES")
+            .unwrap()
+            .split(',')
+            .map(str::to_owned)
+            .collect();
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let driver = Driver {
+            serial: &serial,
+            cancelled: &cancelled,
+        };
+        let (mut profile, mut nameplate) = hall::wait_for_affinity_profile(&driver, None).unwrap();
+        for _ in 0..150 {
+            let name = hall::hero_name(&profile).unwrap_or_default();
+            println!(
+                "{name}: {:?} {:?}",
+                ascension(&profile).unwrap(),
+                exclusive_level(&profile).unwrap()
+            );
+            if wanted.contains(&name) {
+                profile
+                    .color
+                    .save(out.join(format!("walk-{name}.png")))
+                    .unwrap();
+            }
+            driver.tap(&profile, hall::NEXT_HERO).unwrap();
+            (profile, nameplate) =
+                hall::wait_for_affinity_profile(&driver, Some(&nameplate)).unwrap();
+        }
+    }
+
+    #[test]
     #[ignore = "prints how the stored misread names would be matched"]
     fn stored_strays_match() {
         let db = HeroDatabase::load_quietly();
