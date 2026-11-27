@@ -232,10 +232,7 @@ pub struct PlayerApp {
 
 /// When heroes.json was last written, if it exists and can be read.
 fn hero_db_updated() -> Option<String> {
-    crate::afk_journey::progression::hero_db::HeroDatabase::load()
-        .ok()
-        .map(|(db, _)| db.updated)
-        .filter(|updated| !updated.is_empty())
+    crate::afk_journey::progression::hero_db::HeroDatabase::updated()
 }
 
 impl PlayerApp {

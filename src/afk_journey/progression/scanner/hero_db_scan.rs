@@ -4,10 +4,11 @@
 use super::hero::{ascension, exclusive_level, reference};
 use super::{tr, ActivityEvent, Driver, GameMode};
 use crate::afk_journey::error::ActionError;
-use crate::afk_journey::progression::hero_db::{today, HeroDatabase, HeroRecord, Progress};
+use crate::afk_journey::progression::hero_db::{today, HeroDatabase, HeroRecord, Progress, Skill};
 use crate::afk_journey::progression::{hall, hero_facts, hero_skills, hero_stats};
 use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
+use std::collections::BTreeMap;
 
 /// True when the hero has no stats yet, or they are older than
 /// `max_age_days`. `None` scans every hero.
@@ -38,6 +39,70 @@ pub(super) fn record_for<'a>(db: &'a mut HeroDatabase, key: &str) -> &'a mut Her
     match known {
         Some(id) => db.heroes.get_mut(&id).expect("id was just found"),
         None => db.record(key),
+    }
+}
+
+/// Like `record_for`, but an OCR variant listed in the tracker's
+/// `hero_synonyms.json` (alias key → name key) finds the real hero.
+pub(super) fn record_for_alias<'a>(
+    db: &'a mut HeroDatabase,
+    key: &str,
+    aliases: &BTreeMap<String, String>,
+) -> &'a mut HeroRecord {
+    let known = |db: &HeroDatabase, key: &str| {
+        db.heroes
+            .values()
+            .any(|record| ascii_key(&record.name) == key)
+    };
+    match aliases.get(key) {
+        Some(real) if !known(db, key) && known(db, real) => record_for(db, real),
+        _ => record_for(db, key),
+    }
+}
+
+/// The tracker's aliases as alias key → name key; empty when unavailable.
+fn alias_keys() -> BTreeMap<String, String> {
+    reference("hero_synonyms.json")
+        .ok()
+        .and_then(|json| serde_json::from_value::<BTreeMap<String, String>>(json).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(alias, name)| (ascii_key(&alias), ascii_key(&name)))
+        .collect()
+}
+
+/// Weapon levels exist from Mythic+ on, as in the AFKJ Tracker scan.
+pub(super) fn has_weapon(ascension: &str) -> bool {
+    matches!(ascension, "Mythic+" | "Supreme" | "Supreme+") || ascension.starts_with("Paragon")
+}
+
+/// New progress; a value that could not be read keeps the earlier one.
+pub(super) fn merged_progress(
+    old: Option<&Progress>,
+    ascension: Option<String>,
+    ex_weapon: Option<u32>,
+    day: &str,
+) -> Progress {
+    Progress {
+        level: old.and_then(|old| old.level),
+        ascension: ascension.or_else(|| old.and_then(|old| old.ascension.clone())),
+        ex_weapon: ex_weapon.or_else(|| old.and_then(|old| old.ex_weapon)),
+        scanned: day.to_owned(),
+    }
+}
+
+/// Puts the skills read in the game in place of earlier ones of the same
+/// slot, keeping the facts (cooldown, unlock) those had.
+pub(super) fn replace_game_skills(record: &mut HeroRecord, skills: Vec<Skill>) {
+    for mut skill in skills {
+        if let Some(index) = record.skills.iter().position(|old| old.slot == skill.slot) {
+            let old = record.skills.remove(index);
+            skill.cooldown_s = skill.cooldown_s.or(old.cooldown_s);
+            if skill.unlock.is_none() {
+                skill.unlock = old.unlock;
+            }
+        }
+        record.skills.push(skill);
     }
 }
 
@@ -91,6 +156,13 @@ pub(super) fn merge_tracker_roster(db: &mut HeroDatabase, log: &mut impl FnMut(S
     }
 }
 
+/// The hero profile again after Hero Stats or the skill tab closed.
+fn back_on_profile(driver: &Driver<'_>) -> Result<super::Screen, ActionError> {
+    driver
+        .wait_for(hall::hero_profile)?
+        .ok_or_else(|| tr!("hero-db-profile-lost").into())
+}
+
 fn save(db: &mut HeroDatabase) -> Result<(), ActionError> {
     db.save()
         .map_err(|error| ActionError::from(tr!("hero-db-not-saved", error = error)))
@@ -107,8 +179,9 @@ pub(super) fn scan(
         log(tr!("hero-db-broken-file-kept", file = warning));
     }
     merge_tracker_roster(&mut db, log);
-    db.merge_facts(&hero_facts::fetch_facts(log));
+    db.merge_facts(&hero_facts::fetch_facts(log, driver.cancelled)?);
     save(&mut db)?;
+    let aliases = alias_keys();
     let roster_size = db.heroes.len().max(1);
     let day = today();
     let mut count = 0;
@@ -128,33 +201,33 @@ pub(super) fn scan(
         }
         if !name.is_empty() {
             let ascension = ascension(&profile)?.map(str::to_owned);
-            let ex_weapon = exclusive_level(&profile)?;
+            let ex_weapon = match ascension.as_deref() {
+                Some(read) if has_weapon(read) => exclusive_level(&profile)?,
+                _ => None,
+            };
             let fresh = {
-                let record = record_for(&mut db, &name);
+                let record = record_for_alias(&mut db, &name, &aliases);
                 record.owned = true;
-                record.progress = Some(Progress {
-                    level: None,
+                record.progress = Some(merged_progress(
+                    record.progress.as_ref(),
                     ascension,
                     ex_weapon,
-                    scanned: day.clone(),
-                });
+                    &day,
+                ));
                 needs_scan(record, &day, max_age_days)
             };
             if fresh {
                 let stats = hero_stats::read_stats(driver, &profile)?;
-                profile = driver.read()?;
+                profile = back_on_profile(driver)?;
                 let skills = hero_skills::read_skills(driver, &profile)?;
-                profile = driver.read()?;
-                let record = record_for(&mut db, &name);
+                profile = back_on_profile(driver)?;
+                let record = record_for_alias(&mut db, &name, &aliases);
                 if let Some(stats) = stats {
                     record.stats = Some(stats);
                     record.sources.insert("stats".into(), "game".into());
                 }
                 if !skills.is_empty() {
-                    record.skills.retain(|old| {
-                        old.source != "game" && skills.iter().all(|new| new.slot != old.slot)
-                    });
-                    record.skills.extend(skills);
+                    replace_game_skills(record, skills);
                     record.sources.insert("skills".into(), "game".into());
                 }
             }
@@ -175,7 +248,7 @@ pub(super) fn scan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::afk_journey::progression::hero_db::{HeroRecord, Stats};
+    use crate::afk_journey::progression::hero_db::{HeroRecord, Skill, Stats};
 
     fn with_stats(scanned: &str) -> HeroRecord {
         HeroRecord {
@@ -211,6 +284,79 @@ mod tests {
         assert_eq!(progress.scanned, "2026-11-27");
         assert_eq!(frieren.stats.as_ref().unwrap().scanned, "2026-11-20");
         assert_eq!(db.heroes.len(), 1, "the roster name and the record match");
+    }
+
+    #[test]
+    fn a_hero_scanned_before_the_tracker_knew_it_is_merged_later() {
+        let mut db = HeroDatabase::default();
+        record_for(&mut db, "ashwing").owned = true;
+        db.merge_roster(&serde_json::json!({"heroes": [
+            {"id": "ash-wing", "name": "Ash Wing", "class": "Mage"}
+        ]}));
+        assert_eq!(db.heroes.len(), 1, "{:?}", db.heroes.keys());
+        assert!(db.heroes["ash-wing"].owned);
+        assert_eq!(db.heroes["ash-wing"].name, "Ash Wing");
+    }
+
+    #[test]
+    fn ocr_variants_use_the_tracker_aliases() {
+        let mut db = HeroDatabase::default();
+        db.record("Elijah & Lailah");
+        let aliases = [("elijahlilah".to_owned(), "elijahlailah".to_owned())].into();
+        record_for_alias(&mut db, "elijahlilah", &aliases).owned = true;
+        assert!(db.heroes["elijah-&-lailah"].owned);
+        assert_eq!(db.heroes.len(), 1);
+    }
+
+    #[test]
+    fn game_skills_keep_the_facts_of_their_slot() {
+        let mut record = HeroRecord::default();
+        record.skills.push(Skill {
+            slot: "s1".into(),
+            cooldown_s: Some(15.0),
+            unlock: Some("Unlocks at Level 11".into()),
+            source: "afjk-characters".into(),
+            ..Skill::default()
+        });
+        replace_game_skills(
+            &mut record,
+            vec![Skill {
+                slot: "s1".into(),
+                name: "Soul Plunder".into(),
+                source: "game".into(),
+                ..Skill::default()
+            }],
+        );
+        assert_eq!(record.skills.len(), 1);
+        let s1 = &record.skills[0];
+        assert_eq!(s1.name, "Soul Plunder");
+        assert_eq!(s1.unlock.as_deref(), Some("Unlocks at Level 11"));
+        assert_eq!(s1.cooldown_s, Some(15.0));
+    }
+
+    #[test]
+    fn unreadable_progress_keeps_what_was_read_before() {
+        let old = Progress {
+            ascension: Some("Supreme+".into()),
+            ex_weapon: Some(25),
+            scanned: "2026-11-20".into(),
+            ..Progress::default()
+        };
+        let new = merged_progress(Some(&old), None, None, "2026-11-27");
+        assert_eq!(new.ascension.as_deref(), Some("Supreme+"));
+        assert_eq!(new.ex_weapon, Some(25));
+        assert_eq!(new.scanned, "2026-11-27");
+        let read = merged_progress(Some(&old), Some("Paragon 1".into()), Some(30), "2026-11-27");
+        assert_eq!(read.ascension.as_deref(), Some("Paragon 1"));
+        assert_eq!(read.ex_weapon, Some(30));
+    }
+
+    #[test]
+    fn heroes_below_mythic_plus_have_no_weapon_to_read() {
+        assert!(!has_weapon("Legendary+"));
+        assert!(has_weapon("Mythic+"));
+        assert!(has_weapon("Supreme"));
+        assert!(has_weapon("Paragon 2"));
     }
 
     #[test]

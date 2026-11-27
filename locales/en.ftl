@@ -671,3 +671,4 @@ app-settings-hero-db-start = Scan hero database
 app-settings-hero-db-open-folder = Open folder
 app-settings-hero-db-stop = Stop
 app-settings-hero-db-folder-error = The folder could not be opened: { $error }
+hero-db-profile-lost = The hero profile did not come back after reading stats or skills, so the hero database scan stopped. Everything read so far is saved.

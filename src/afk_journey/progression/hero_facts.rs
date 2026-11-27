@@ -3,8 +3,10 @@
 //! range, cooldowns, unlock levels), never its texts. Fetched at run time.
 
 use super::hero_db::{HeroFacts, SkillFacts};
+use crate::afk_journey::error::ActionError;
 use crate::localization::tr;
 use serde_json::Value;
+use std::sync::atomic::AtomicBool;
 
 const BASE: &str = "https://raw.githubusercontent.com/arnecls/afjk-characters/main/data/";
 
@@ -83,26 +85,58 @@ fn download(path: &str) -> Result<Value, String> {
         .map_err(|error| error.to_string())
 }
 
-/// Facts for every hero in the roster. A failed download is logged once and
-/// the facts read so far are returned, so stored values are kept.
-pub fn fetch_facts(log: &mut impl FnMut(String)) -> Vec<HeroFacts> {
+/// Facts for `ids`, one download each. A failed hero is counted and
+/// skipped; stopping the scan ends the downloads.
+fn collect_facts(
+    ids: &[&str],
+    cancelled: &AtomicBool,
+    mut download: impl FnMut(&str) -> Result<Value, String>,
+) -> Result<(Vec<HeroFacts>, usize), ActionError> {
     let mut facts = Vec::new();
-    let result = (|| {
-        let roster = download("roster.json")?;
-        let ids = roster
-            .get("heroes")
-            .and_then(Value::as_array)
-            .ok_or("roster.json has no heroes")?;
-        for id in ids.iter().filter_map(|hero| hero.get("id")?.as_str()) {
-            let file = download(&format!("heroes/{id}/source.json"))?;
-            facts.extend(parse_facts(id, &file));
+    let mut failed = 0;
+    for id in ids {
+        crate::afk_journey::vision::ensure_not_cancelled(cancelled)?;
+        match download(id) {
+            Ok(file) => facts.extend(parse_facts(id, &file)),
+            Err(_) => failed += 1,
         }
-        Ok::<(), String>(())
-    })();
-    if let Err(error) = result {
-        log(tr!("hero-db-facts-unavailable", error = error));
     }
-    facts
+    Ok((facts, failed))
+}
+
+/// Facts for every hero in the roster. Missing facts are logged once; the
+/// stored ones stay because merging only fills empty fields.
+pub fn fetch_facts(
+    log: &mut impl FnMut(String),
+    cancelled: &AtomicBool,
+) -> Result<Vec<HeroFacts>, ActionError> {
+    let roster = match download("roster.json") {
+        Ok(roster) => roster,
+        Err(error) => {
+            log(tr!("hero-db-facts-unavailable", error = error));
+            return Ok(Vec::new());
+        }
+    };
+    let ids: Vec<&str> = roster
+        .get("heroes")
+        .and_then(Value::as_array)
+        .map(|heroes| {
+            heroes
+                .iter()
+                .filter_map(|hero| hero.get("id")?.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let (facts, failed) = collect_facts(&ids, cancelled, |id| {
+        download(&format!("heroes/{id}/source.json"))
+    })?;
+    if failed > 0 || ids.is_empty() {
+        log(tr!(
+            "hero-db-facts-unavailable",
+            error = format!("{failed}/{}", ids.len())
+        ));
+    }
+    Ok(facts)
 }
 
 #[cfg(test)]
@@ -155,9 +189,34 @@ mod tests {
     #[test]
     #[ignore = "downloads afjk-characters over the network"]
     fn facts_download() {
-        let facts = fetch_facts(&mut |line| println!("{line}"));
+        let facts = fetch_facts(
+            &mut |line| println!("{line}"),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
         println!("{} heroes with facts", facts.len());
         assert!(facts.len() >= 130);
+    }
+
+    #[test]
+    fn one_failed_hero_does_not_stop_the_others() {
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let (facts, failed) = collect_facts(&["thoran", "missing", "thoran2"], &cancelled, |id| {
+            if id == "missing" {
+                Err("404".into())
+            } else {
+                Ok(thoran())
+            }
+        })
+        .unwrap();
+        assert_eq!(facts.len(), 2);
+        assert_eq!(failed, 1);
+    }
+
+    #[test]
+    fn stopping_ends_the_download() {
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        assert!(collect_facts(&["thoran"], &cancelled, |_| Ok(thoran())).is_err());
     }
 
     #[test]

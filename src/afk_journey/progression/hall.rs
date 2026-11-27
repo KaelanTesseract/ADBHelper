@@ -27,7 +27,7 @@ fn open_hall(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen
         .ok_or_else(|| tr!("hall-could-not-verify-the-resonating-hall").into())
 }
 
-fn hero_profile(screen: &Screen) -> bool {
+pub(super) fn hero_profile(screen: &Screen) -> bool {
     // The Skin button shifts Affinity to the left on some hero profiles.
     let affinity = screen
         .line(680..1070, 75..160, |value| value.starts_with("affin"))

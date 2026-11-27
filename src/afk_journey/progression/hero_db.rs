@@ -136,6 +136,20 @@ impl HeroDatabase {
         Self::load_from(&crate::settings::file(FILE).map_err(|e| e.to_string())?)
     }
 
+    /// When `heroes.json` was last written. Only reads: a broken file stays
+    /// where it is, the scan sets it aside and says so.
+    pub fn updated() -> Option<String> {
+        Self::updated_at(&crate::settings::file(FILE).ok()?)
+    }
+
+    fn updated_at(path: &std::path::Path) -> Option<String> {
+        let bytes = std::fs::read(path).ok()?;
+        serde_json::from_slice::<Self>(&bytes)
+            .ok()
+            .map(|db| db.updated)
+            .filter(|updated| !updated.is_empty())
+    }
+
     fn load_from(path: &std::path::Path) -> Result<(Self, Option<String>), String> {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
@@ -187,6 +201,21 @@ impl HeroDatabase {
             let id = Some(text("id"))
                 .filter(|id| !id.is_empty())
                 .map_or_else(|| hero_id(name), str::to_owned);
+            if !self.heroes.contains_key(&id) {
+                // A hero scanned before the tracker listed it sits under its
+                // name key; it moves to the tracker id.
+                let key = crate::afk_journey::text_match::ascii_key(name);
+                let earlier = self
+                    .heroes
+                    .iter()
+                    .find(|(_, record)| {
+                        crate::afk_journey::text_match::ascii_key(&record.name) == key
+                    })
+                    .map(|(old, _)| old.clone());
+                if let Some(record) = earlier.and_then(|old| self.heroes.remove(&old)) {
+                    self.heroes.insert(id.clone(), record);
+                }
+            }
             let record = self.heroes.entry(id).or_default();
             fill(&mut record.name, name);
             fill(&mut record.class, text("class"));
@@ -335,6 +364,22 @@ mod tests {
             b"{ not json"
         );
         assert!(!path.exists());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn reading_the_date_never_moves_a_broken_file() {
+        let folder = std::env::temp_dir().join(format!("hero-db-peek-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("heroes.json");
+        std::fs::write(&path, b"{ not json").unwrap();
+        assert_eq!(HeroDatabase::updated_at(&path), None);
+        assert!(path.exists(), "only the scan may set a broken file aside");
+        std::fs::write(&path, br#"{"updated":"2026-11-27 15:00:00"}"#).unwrap();
+        assert_eq!(
+            HeroDatabase::updated_at(&path).as_deref(),
+            Some("2026-11-27 15:00:00")
+        );
         std::fs::remove_dir_all(folder).unwrap();
     }
 

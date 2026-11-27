@@ -671,3 +671,4 @@ app-settings-hero-db-start = Heldendatenbank scannen
 app-settings-hero-db-open-folder = Ordner öffnen
 app-settings-hero-db-stop = Stopp
 app-settings-hero-db-folder-error = Der Ordner konnte nicht geöffnet werden: { $error }
+hero-db-profile-lost = Nach dem Lesen der Werte oder Fertigkeiten kam das Heldenprofil nicht zurück, deshalb wurde der Scan der Heldendatenbank beendet. Alles bis dahin Gelesene ist gespeichert.
