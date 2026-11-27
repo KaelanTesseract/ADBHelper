@@ -16,7 +16,10 @@ fn hall(screen: &Screen) -> bool {
             .is_some()
 }
 
-fn open_hall(driver: &Driver<'_>, log: &mut impl FnMut(String)) -> Result<Screen, ActionError> {
+pub(super) fn open_hall(
+    driver: &Driver<'_>,
+    log: &mut impl FnMut(String),
+) -> Result<Screen, ActionError> {
     let screen = driver.read()?;
     if hall(&screen) {
         return Ok(screen);

@@ -1,5 +1,6 @@
 //! The Hero Box page: every hero from heroes.json with portrait, S+ frame
-//! and stars, the hero database scan, and the picture for Discord.
+//! from the Resonating Hall cards, the hero database scan, and the picture
+//! for Discord.
 
 use super::*;
 use crate::afk_journey::progression::hero_db::{
@@ -9,9 +10,9 @@ use crate::hero_box_image;
 use std::collections::HashMap;
 
 const TILE: f32 = 96.0;
-const STAR_SIZE: f32 = 12.0;
+/// Hall cards are half again as tall as wide.
+const TILE_HEIGHT: f32 = 144.0;
 const GOLD: egui::Color32 = egui::Color32::from_rgb(212, 175, 55);
-const STAR: egui::Color32 = egui::Color32::from_rgb(255, 214, 90);
 
 /// What the Hero Box page shows; loaded when the page opens and after a scan.
 #[derive(Default)]
@@ -97,31 +98,6 @@ fn portrait_image(hero: &HeroRecord) -> Option<image::RgbaImage> {
     image::open(file).ok().map(|image| image.to_rgba8())
 }
 
-/// A small filled star: five spike triangles around a pentagon.
-fn paint_star(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
-    let point = |index: usize, r: f32| {
-        let angle = std::f32::consts::PI * (index as f32 / 5.0) - std::f32::consts::FRAC_PI_2;
-        center + egui::vec2(r * angle.cos(), r * angle.sin())
-    };
-    let inner = radius * 0.45;
-    let pentagon: Vec<egui::Pos2> = (0..5).map(|i| point(i * 2 + 1, inner)).collect();
-    painter.add(egui::Shape::convex_polygon(
-        pentagon,
-        STAR,
-        egui::Stroke::NONE,
-    ));
-    for i in 0..5 {
-        let tip = point(i * 2, radius);
-        let left = point((i * 2 + 9) % 10, inner);
-        let right = point(i * 2 + 1, inner);
-        painter.add(egui::Shape::convex_polygon(
-            vec![tip, right, left],
-            STAR,
-            egui::Stroke::NONE,
-        ));
-    }
-}
-
 impl PlayerApp {
     fn load_hero_box(&mut self, context: &egui::Context) {
         let db = HeroDatabase::load_quietly();
@@ -153,7 +129,6 @@ impl PlayerApp {
             .map(|hero| hero_box_image::BoxHero {
                 portrait: portrait_image(hero),
                 supreme_plus: is_s_plus(hero),
-                stars: hero.stars,
             })
             .collect();
         if heroes.is_empty() {
@@ -265,12 +240,10 @@ impl PlayerApp {
     }
 
     fn hero_tile(&self, ui: &mut egui::Ui, hero: &HeroRecord) {
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(TILE, TILE + STAR_SIZE + 22.0),
-            egui::Sense::hover(),
-        );
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(TILE, TILE_HEIGHT + 20.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
-        let portrait = egui::Rect::from_min_size(rect.min, egui::vec2(TILE, TILE));
+        let portrait = egui::Rect::from_min_size(rect.min, egui::vec2(TILE, TILE_HEIGHT));
         match self.hero_box.textures.get(&hero.name) {
             Some(texture) => {
                 painter.image(
@@ -313,20 +286,6 @@ impl PlayerApp {
                 egui::FontId::proportional(13.0),
                 GOLD,
             );
-        }
-        if let Some(stars) = hero.stars.filter(|&stars| stars > 0) {
-            let width = stars as f32 * STAR_SIZE;
-            let left = portrait.center().x - width / 2.0 + STAR_SIZE / 2.0;
-            for number in 0..stars {
-                paint_star(
-                    &painter,
-                    egui::pos2(
-                        left + number as f32 * STAR_SIZE,
-                        portrait.bottom() + STAR_SIZE / 2.0 + 2.0,
-                    ),
-                    STAR_SIZE / 2.0,
-                );
-            }
         }
         painter.text(
             egui::pos2(rect.center().x, rect.bottom() - 9.0),

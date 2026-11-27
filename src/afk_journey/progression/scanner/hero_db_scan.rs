@@ -6,7 +6,9 @@ use super::{tr, ActivityEvent, Driver, GameMode};
 use crate::afk_journey::error::ActionError;
 use crate::afk_journey::progression::hero_db::portrait_folder;
 use crate::afk_journey::progression::hero_db::{today, HeroDatabase, HeroRecord, Progress, Skill};
-use crate::afk_journey::progression::{hall, hero_card, hero_facts, hero_skills, hero_stats};
+use crate::afk_journey::progression::{
+    hall, hall_cards, hero_card, hero_facts, hero_skills, hero_stats,
+};
 use crate::afk_journey::text_match::ascii_key;
 use crate::afk_journey::vision;
 use std::collections::BTreeMap;
@@ -157,10 +159,11 @@ pub(super) fn merge_tracker_roster(db: &mut HeroDatabase, log: &mut impl FnMut(S
     }
 }
 
-/// Saves the portrait cut from the profile; returns its file name.
+/// Saves the hero's picture (its Resonating Hall card, or a cut from the
+/// profile when no card is known); returns its file name.
 fn save_portrait(
     name: &str,
-    profile: &image::RgbImage,
+    picture: &image::RgbImage,
     log: &mut impl FnMut(String),
 ) -> Option<String> {
     let file = format!("{}.png", ascii_key(name));
@@ -168,7 +171,7 @@ fn save_portrait(
         .map_err(|error| error.to_string())
         .and_then(|folder| {
             std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-            hero_card::portrait(profile)
+            picture
                 .save(folder.join(&file))
                 .map_err(|error| error.to_string())
         });
@@ -210,6 +213,13 @@ pub(super) fn scan(
     let roster_size = db.heroes.len().max(1);
     let day = today();
     let mut count = 0;
+    let cards = match hall_cards::collect_cards(driver, log) {
+        Ok(cards) => cards,
+        Err(error) => {
+            log(tr!("hero-db-cards-unavailable", error = error.to_string()));
+            Vec::new()
+        }
+    };
     hall::open_first_hero(driver, log)?;
     let (mut profile, mut nameplate) = hall::wait_for_affinity_profile(driver, None)?;
     let first = nameplate.clone();
@@ -222,6 +232,14 @@ pub(super) fn scan(
                 .is_some()
             || (position > 0 && first.matches(&nameplate))
         {
+            // Every profile before this one had its place in the card list.
+            if position != cards.len() {
+                log(tr!(
+                    "hero-db-cards-mismatch",
+                    cards = cards.len(),
+                    heroes = position
+                ));
+            }
             break;
         }
         if !name.is_empty() {
@@ -230,14 +248,16 @@ pub(super) fn scan(
                 Some(read) if has_weapon(read) => exclusive_level(&profile)?,
                 _ => None,
             };
-            let weapon = ascension.as_deref().is_some_and(has_weapon);
-            let stars = hero_card::count_stars(&profile.color);
             let fresh = {
                 let record = record_for_alias(&mut db, &name, &aliases);
                 record.owned = true;
-                record.stars = if weapon { stars.or(record.stars) } else { None };
-                if record.portrait.is_none() || needs_scan(record, &day, max_age_days) {
-                    record.portrait = save_portrait(&record.name, &profile.color, log);
+                // The card shows the stars; they are not counted.
+                record.stars = None;
+                if let Some(card) = cards.get(position) {
+                    record.portrait = save_portrait(&record.name, card, log);
+                } else if record.portrait.is_none() {
+                    record.portrait =
+                        save_portrait(&record.name, &hero_card::portrait(&profile.color), log);
                 }
                 record.progress = Some(merged_progress(
                     record.progress.as_ref(),
