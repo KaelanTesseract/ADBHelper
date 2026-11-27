@@ -196,6 +196,9 @@ pub struct PlayerApp {
     guild_access_error: Option<String>,
     /// Hero database scan: skip heroes whose stats are newer than this.
     hero_db_max_age_days: Option<u32>,
+    /// Last write of heroes.json, read at start and after each scan.
+    hero_db_updated: Option<String>,
+    hero_db_folder_error: Option<String>,
     scan_exports: Vec<(StageAction, std::path::PathBuf)>,
     active_action: Option<StageAction>,
     battle_options: [ActionBattleOptions; 6],
@@ -225,6 +228,14 @@ pub struct PlayerApp {
     old_copy: Option<std::path::PathBuf>,
     old_copy_error: Option<String>,
     update_requests: Sender<()>,
+}
+
+/// When heroes.json was last written, if it exists and can be read.
+fn hero_db_updated() -> Option<String> {
+    crate::afk_journey::progression::hero_db::HeroDatabase::load()
+        .ok()
+        .map(|(db, _)| db.updated)
+        .filter(|updated| !updated.is_empty())
 }
 
 impl PlayerApp {
@@ -291,6 +302,8 @@ impl PlayerApp {
             },
             guild_access_error: None,
             hero_db_max_age_days: Some(7),
+            hero_db_updated: hero_db_updated(),
+            hero_db_folder_error: None,
             scan_exports: Vec::new(),
             active_action: None,
             battle_options: [ActionBattleOptions::default(); 6],
@@ -445,6 +458,9 @@ impl PlayerApp {
                     self.activity.apply(event);
                 }
                 Event::StagesFinished(action, error) => {
+                    if action == StageAction::HeroDatabase || action == StageAction::HeroScan {
+                        self.hero_db_updated = hero_db_updated();
+                    }
                     self.recovery_notice = None;
                     self.daily_step = None;
                     self.log(crate::timing::summary());

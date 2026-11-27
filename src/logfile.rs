@@ -229,8 +229,12 @@ fn remove_expired(directory: &Path, today: &Stamp) {
 
 /// Opens the log folder in Windows Explorer, creating it first if needed.
 pub fn open_folder() -> Result<(), String> {
-    let directory = directory().map_err(|error| error.to_string())?;
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    open_directory(&directory().map_err(|error| error.to_string())?)
+}
+
+/// Opens `directory` in the system file manager, creating it if needed.
+pub fn open_directory(directory: &Path) -> Result<(), String> {
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     #[cfg(windows)]
     let program = "explorer";
     #[cfg(target_os = "macos")]
@@ -238,7 +242,7 @@ pub fn open_folder() -> Result<(), String> {
     #[cfg(not(any(windows, target_os = "macos")))]
     let program = "xdg-open";
     std::process::Command::new(program)
-        .arg(&directory)
+        .arg(directory)
         .spawn()
         .map(|_| ())
         .map_err(|error| error.to_string())

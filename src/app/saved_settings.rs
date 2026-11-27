@@ -71,6 +71,8 @@ pub(super) struct SavedSettings {
     /// Only a path the user applied; without one ADBHelper keeps finding ADB
     /// itself, also after an emulator update moved it.
     adb_path: Option<String>,
+    /// Hero database scan: only heroes without stats or older than this.
+    hero_db_max_age_days: Option<u32>,
 }
 
 impl Default for SavedSettings {
@@ -95,6 +97,7 @@ impl Default for SavedSettings {
             guild_activeness: guild.activeness,
             guild_afk_stages: guild.afk_stages,
             adb_path: None,
+            hero_db_max_age_days: Some(7),
         }
     }
 }
@@ -124,6 +127,7 @@ impl SavedSettings {
             guild_activeness: app.guild_scan.activeness,
             guild_afk_stages: app.guild_scan.afk_stages,
             adb_path: app.adb_path_applied.clone(),
+            hero_db_max_age_days: app.hero_db_max_age_days,
         }
     }
 
@@ -145,6 +149,7 @@ impl SavedSettings {
         app.guild_scan.supreme_arena = self.guild_supreme_arena;
         app.guild_scan.activeness = self.guild_activeness;
         app.guild_scan.afk_stages = self.guild_afk_stages;
+        app.hero_db_max_age_days = self.hero_db_max_age_days.map(|days| days.clamp(1, 60));
         if let Some(path) = self
             .adb_path
             .as_deref()
@@ -205,6 +210,22 @@ mod tests {
         assert_eq!(settings.adb_path, None);
         let partial = SavedSettings::parse(br#"{"battle": [{"max_formations": 4}]}"#);
         assert!(partial.is_err(), "the battle list always has six entries");
+    }
+
+    #[test]
+    fn hero_db_age_is_saved() {
+        assert_eq!(SavedSettings::default().hero_db_max_age_days, Some(7));
+        for age in [Some(3), None] {
+            let settings = SavedSettings {
+                hero_db_max_age_days: age,
+                ..SavedSettings::default()
+            };
+            let bytes = serde_json::to_vec(&settings).unwrap();
+            assert_eq!(
+                SavedSettings::parse(&bytes).unwrap().hero_db_max_age_days,
+                age
+            );
+        }
     }
 
     #[test]

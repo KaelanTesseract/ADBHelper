@@ -3,6 +3,73 @@
 use super::*;
 
 impl PlayerApp {
+    /// Start button and options of the hero database scan.
+    fn show_hero_database(&mut self, ui: &mut egui::Ui) {
+        card(ui, |ui| {
+            ui.strong(tr!("app-settings-hero-db-title"));
+            ui.label(tr!("app-settings-hero-db-explain"));
+            let mut only_old = self.hero_db_max_age_days.is_some();
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!self.busy, |ui| {
+                    ui.checkbox(&mut only_old, tr!("app-settings-hero-db-only-old"));
+                    let mut days = self.hero_db_max_age_days.unwrap_or(7);
+                    ui.add_enabled(
+                        only_old,
+                        egui::DragValue::new(&mut days)
+                            .range(1..=60)
+                            .suffix(tr!("app-settings-hero-db-days")),
+                    );
+                    self.hero_db_max_age_days = only_old.then_some(days);
+                });
+            });
+            match &self.hero_db_updated {
+                Some(updated) => ui.small(tr!(
+                    "app-settings-hero-db-last-scan",
+                    updated = updated.clone()
+                )),
+                None => ui.small(tr!("app-settings-hero-db-never")),
+            };
+            ui.horizontal(|ui| {
+                let can_start = !self.busy && self.selected_serial.is_some();
+                if ui
+                    .add_enabled(
+                        can_start,
+                        egui::Button::new(tr!("app-settings-hero-db-start")),
+                    )
+                    .clicked()
+                {
+                    self.start_action(StageAction::HeroDatabase);
+                }
+                if ui.button(tr!("app-settings-hero-db-open-folder")).clicked() {
+                    self.hero_db_folder_error = crate::settings::file("heroes.json")
+                        .map_err(|error| error.to_string())
+                        .and_then(|file| {
+                            crate::logfile::open_directory(
+                                file.parent().unwrap_or(std::path::Path::new(".")),
+                            )
+                        })
+                        .err();
+                }
+                if self.busy && self.active_action == Some(StageAction::HeroDatabase) {
+                    if let Some(cancel) = &self.stage_cancel {
+                        if ui.button(tr!("app-settings-hero-db-stop")).clicked() {
+                            cancel.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+            });
+            if let Some(error) = &self.hero_db_folder_error {
+                ui.label(tr!("app-settings-hero-db-folder-error", error = error));
+            }
+            if let Some((StageAction::HeroDatabase, error)) = &self.action_error {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(error).color(ColorTokens::DANGER_HOVER))
+                        .wrap(),
+                );
+            }
+        });
+    }
+
     pub(super) fn show_settings(&mut self, ui: &mut egui::Ui) {
         ui.heading(egui::RichText::new(tr!("app-settings")).color(ColorTokens::TEXT_PRIMARY));
         ui.label(tr!(
@@ -56,6 +123,8 @@ impl PlayerApp {
                 ));
             }
         });
+        ui.add_space(SpaceTokens::MD);
+        self.show_hero_database(ui);
         ui.add_space(SpaceTokens::MD);
         card(ui, |ui| {
             ui.strong(tr!("app-settings-page-app-updates"));
