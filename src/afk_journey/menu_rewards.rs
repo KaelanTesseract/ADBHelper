@@ -160,8 +160,42 @@ impl Frame {
                 self.line(660..1030, 1440..1590, |value| value == "quickclaim")
             }
             Page::Menu | Page::QuestHub => None,
-        }?;
-        phase_rewards::green_control(&self.color, line).then(|| line.center())
+        };
+        match line {
+            Some(line) => phase_rewards::green_control(&self.color, line).then(|| line.center()),
+            None => self.quick_claim_lettering(page),
+        }
+    }
+
+    /// The green Quick Claim button found by its lettering when the OCR does
+    /// not read it: the italic letters over the Fabled Road reward art are
+    /// often not recognized at all.
+    fn quick_claim_lettering(&self, page: Page) -> Option<Point> {
+        let top = match page {
+            Page::Pass => 1530,
+            Page::Daily | Page::Guild => 1420,
+            _ => return None,
+        };
+        let lettering = vision::find_template(
+            &self.gray,
+            "dailies/hamburger/quick_claim.png",
+            vision::Rect {
+                x: 600,
+                y: top,
+                width: 470,
+                height: 210,
+            },
+            0.8,
+        )
+        .ok()??;
+        let area = ocr::TextLine {
+            text: String::new(),
+            x: lettering.x as f32,
+            y: lettering.y as f32,
+            width: lettering.width as f32,
+            height: lettering.height as f32,
+        };
+        phase_rewards::green_control(&self.color, &area).then(|| lettering.center())
     }
 
     fn milestone(&self) -> Option<Point> {
@@ -418,6 +452,24 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires Windows OCR and AFK Journey captures"]
+    fn captured_fabled_road_quick_claim() {
+        let root =
+            std::path::PathBuf::from(std::env::var_os("ADBHELPER_TEST_MENU_CAPTURES").unwrap());
+        let frame = Frame::decode(
+            &std::fs::read(root.join("pass_fabled_road_trek_quick_claim.png")).unwrap(),
+        )
+        .unwrap();
+        // The OCR does not read the italic "Quick Claim" over the reward art.
+        assert_eq!(frame.page(), Some(Page::Pass));
+        let (x, y) = frame.claim_button(Page::Pass).unwrap();
+        assert!(
+            (800..900).contains(&x) && (1600..1690).contains(&y),
+            "{x},{y}"
+        );
+    }
 
     #[test]
     #[ignore = "requires Windows OCR and AFK Journey captures"]
