@@ -91,6 +91,7 @@ Verfügbare Events zuerst umsetzen. Titan Reaver und Synergy & CC benötigen die
 
 ## Release-Stand
 
+- 0.5.7: Hero Box mit Porträts, Aufstieg und EX-Waffen-Stufe, Bild für Discord und Heldenerkennung über den Beinamen (nichts wird geraten); Heldendatenbank mit Werten und Fertigkeiten; Einstellungen bleiben nach Neustart; Battle-Pass-Quick-Claim auf Fabled Road. 278 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.7)
 - 0.5.6: Records-Teams werden bis zum Listenende probiert, auch wenn zwei Spieler dieselbe Aufstellung nutzen (Union Campaign brach nach 3 Teams ab). 211 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.6)
 - 0.5.5: Fishing angelt jede Stelle mit voller Bildrate, erkennt sofort auswerfende Stellen und liest den Ortspfeil robuster. 210 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.5)
 - 0.5.4: Fishing startet auch im Homestead (tippt erst „World“). 209 automatisierte Tests bestanden. [GitHub-Release](https://github.com/KaelanTesseract/ADBHelper/releases/tag/v0.5.4)

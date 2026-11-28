@@ -107,6 +107,12 @@ Start either scanner from the dashboard with AFK Journey set to English. ADBHelp
 - **AFKJ Tracker Scan** reads hero ascension and exclusive weapon levels from the roster. Import the completed `afkj_tracker_backup.json` in [AFKJ Tracker](https://afkj-tracker.vercel.app/). Review any file marked `partial` before importing.
 - **Guild Manager Scan** exports the selected Dream Realm days, Supreme Arena, the active Season AFK phase, and guild activeness. The optional `guild_states` API URL from [AFKJ Guild Manager](https://afkj-guildmanager.vercel.app/) lets ADBHelper read the roster from Supabase for matching names and IDs. URL and key are saved in the Windows Credential Manager, and the key is only sent as a request header. **Forget saved access** removes them. Import the local JSON files in Guild Manager.
 
+## Hero Box
+
+The **Hero Box** tab next to **Settings** shows every hero with portrait, ascension and EX weapon level, filtered by faction and class if you like. **Scan ascension and EX weapon** walks through your heroes in the Resonating Hall; set the hall's faction filter to **All** first. **Create picture** copies a picture of the shown heroes to the clipboard for Discord and saves it as `hero-box.png` in `%APPDATA%\ADBHelper`.
+
+Heroes are recognized by the title above their name. A hero that cannot be named for certain is listed under **Not recognized**; pick who it is or add it as a new hero, and later scans remember it. **Settings → Hero database** also reads current stats and skills of every owned hero into `heroes.json`.
+
 ## Fishing
 
 Start **Fishing** anywhere in the game world. ADBHelper opens the world map, goes through every unlocked tab in the map strip (locked maps are skipped), zooms out and looks for fishing spots view by view. It walks to each spot that still has attempts, casts, taps the bite when the pointer reaches the middle of the timing bar, and holds the line during the pull. It stops by itself when no spot has attempts left. If you start at a spot or with the fishing screen open, that spot is fished first. A spot where nothing bites for a long time is left after a while; if a spot cannot be reached, the rest of that map is skipped for this run. Fishing is still a preview and asks for confirmation before it starts.
@@ -119,7 +125,7 @@ Start **Fishing** anywhere in the game world. ADBHelper opens the world map, goe
 | **Daily gear** | Included actions, execution order, and diamond-hourglass limits. |
 | **Settings page** | Device connection, ADB path, interface language, and app updates. |
 
-English is the default interface language. Select **Settings → Language → Deutsch** for German. The language choice and Daily routine are saved between launches. Action controls are read-only while a run is active.
+English is the default interface language. Select **Settings → Language → Deutsch** for German. Action settings, the language choice and the Daily routine are saved between launches. Action controls are read-only while a run is active.
 
 ### Add a language
 

@@ -702,5 +702,5 @@ hero-db-portraits-unavailable = Heldenporträts konnten nicht geladen werden, ge
 hero-db-portraits-added = { $count } Heldenporträts geladen.
 app-hero-box-load-portraits = Porträts laden
 activity-hero-box-scan = Hero-Box-Scan
-app-hero-box-scan = Aufstieg und Sterne scannen
-app-hero-box-scan-hint = Liest nur Aufstieg und EX-Waffen-Sterne aller eigenen Helden. Den vollen Scan der Heldendatenbank mit Werten und Fertigkeiten gibt es in den Einstellungen.
+app-hero-box-scan = Aufstieg und EX-Waffe scannen
+app-hero-box-scan-hint = Liest nur Aufstieg und EX-Waffen-Stufe jedes eigenen Helden. Stelle den Fraktionsfilter in der Resonating Hall auf „Alle“. Den vollen Scan der Heldendatenbank mit Werten und Fertigkeiten gibt es in den Einstellungen.

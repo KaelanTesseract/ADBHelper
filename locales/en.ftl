@@ -702,5 +702,5 @@ hero-db-portraits-unavailable = Hero portraits could not be downloaded, so store
 hero-db-portraits-added = { $count } hero portraits downloaded.
 app-hero-box-load-portraits = Load portraits
 activity-hero-box-scan = Hero Box scan
-app-hero-box-scan = Scan ascension and stars
-app-hero-box-scan-hint = Reads only ascension and EX weapon stars of every owned hero. The full hero database scan with stats and skills is in Settings.
+app-hero-box-scan = Scan ascension and EX weapon
+app-hero-box-scan-hint = Reads only the ascension and EX weapon level of every owned hero. Set the faction filter in the Resonating Hall to All. The full hero database scan with stats and skills is in Settings.
