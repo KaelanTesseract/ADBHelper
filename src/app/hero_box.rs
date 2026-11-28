@@ -4,7 +4,8 @@
 
 use super::*;
 use crate::afk_journey::progression::hero_db::{
-    is_supreme_plus, portrait_folder, tier_badge, HeroDatabase, HeroRecord,
+    is_supreme_plus, portrait_folder, tier_badge, Assignment, HeroDatabase, HeroRecord,
+    Unrecognized,
 };
 use crate::afk_journey::progression::hero_portraits;
 use crate::hero_box_image;
@@ -27,6 +28,18 @@ pub(super) struct HeroBox {
     filter: HeroFilter,
     /// Result of a portrait download running in the background.
     download: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
+    /// Heroes a scan could not name for certain, waiting for the user.
+    unrecognized: Vec<Unrecognized>,
+    /// Every hero of the database as (id, name), sorted by name, to pick from.
+    known: Vec<(String, String)>,
+    /// Per unrecognized hero: the hero picked in the list and a typed name.
+    picked: HashMap<usize, String>,
+    typed: HashMap<usize, String>,
+}
+
+/// Texture keys for the pictures of an unrecognized hero.
+fn unrecognized_key(index: usize, part: &str) -> String {
+    format!("unrecognized-{index}-{part}")
 }
 
 /// Faction and class shown in the Hero Box; `None` shows all.
@@ -143,9 +156,41 @@ fn portrait_image(hero: &HeroRecord) -> Option<image::RgbaImage> {
 
 impl PlayerApp {
     fn load_hero_box(&mut self, context: &egui::Context) {
-        let db = HeroDatabase::load_quietly();
+        let mut db = HeroDatabase::load_quietly();
+        db.move_strays();
+        self.hero_box.unrecognized = std::mem::take(&mut db.unrecognized);
+        let mut known: Vec<(String, String)> = db
+            .heroes
+            .iter()
+            .map(|(id, hero)| (id.clone(), hero.name.clone()))
+            .collect();
+        known.sort_by_key(|(_, name)| name.to_lowercase());
+        self.hero_box.known = known;
+        self.hero_box.picked.clear();
+        self.hero_box.typed.clear();
         self.hero_box.heroes = sorted(db);
         self.hero_box.textures.clear();
+        let folder = portrait_folder().ok();
+        for (index, entry) in self.hero_box.unrecognized.iter().enumerate() {
+            for (part, file) in [("portrait", &entry.portrait), ("header", &entry.header)] {
+                let Some(image) = file
+                    .as_ref()
+                    .zip(folder.as_ref())
+                    .and_then(|(file, folder)| image::open(folder.join(file)).ok())
+                    .map(|image| image.to_rgba8())
+                else {
+                    continue;
+                };
+                let key = unrecognized_key(index, part);
+                let size = [image.width() as usize, image.height() as usize];
+                let texture = context.load_texture(
+                    format!("hero-{key}"),
+                    egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
+                    egui::TextureOptions::LINEAR,
+                );
+                self.hero_box.textures.insert(key, texture);
+            }
+        }
         for hero in &self.hero_box.heroes {
             let Some(image) = portrait_image(hero) else {
                 continue;
@@ -235,6 +280,127 @@ impl PlayerApp {
         }
     }
 
+    /// Stores who the unrecognized hero shown at `index` is.
+    fn assign_unrecognized(&mut self, index: usize, to: Assignment) {
+        let Some(shown) = self.hero_box.unrecognized.get(index).cloned() else {
+            return;
+        };
+        let result = HeroDatabase::load().and_then(|(mut db, _)| {
+            db.move_strays();
+            let position = db
+                .unrecognized
+                .iter()
+                .position(|entry| entry == &shown)
+                .ok_or_else(|| "changed by a scan".to_owned())?;
+            let id = db.assign(position, to)?;
+            db.save()?;
+            Ok(db.heroes[&id].name.clone())
+        });
+        self.hero_box.message = Some(match result {
+            Ok(name) => tr!("app-hero-box-assigned", name = name),
+            Err(error) => tr!("app-hero-box-assign-failed", error = error),
+        });
+        self.hero_box.reload();
+    }
+
+    /// The heroes a scan could not name for certain, each with its pictures
+    /// and a choice of who it is.
+    fn unrecognized_heroes(&mut self, ui: &mut egui::Ui) {
+        if self.hero_box.unrecognized.is_empty() {
+            return;
+        }
+        let mut action = None;
+        card(ui, |ui| {
+            ui.label(
+                egui::RichText::new(tr!(
+                    "app-hero-box-unrecognized-title",
+                    count = self.hero_box.unrecognized.len()
+                ))
+                .strong()
+                .color(ColorTokens::DANGER_HOVER),
+            );
+            ui.label(tr!("app-hero-box-unrecognized-explain"));
+            ui.add_space(SpaceTokens::SM);
+            for (index, entry) in self.hero_box.unrecognized.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if let Some(texture) = self
+                        .hero_box
+                        .textures
+                        .get(&unrecognized_key(index, "portrait"))
+                    {
+                        ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(56.0, 84.0)));
+                    }
+                    if let Some(texture) = self
+                        .hero_box
+                        .textures
+                        .get(&unrecognized_key(index, "header"))
+                    {
+                        ui.add(
+                            egui::Image::new(texture).fit_to_exact_size(egui::vec2(230.0, 80.0)),
+                        );
+                    }
+                    ui.vertical(|ui| {
+                        ui.label(tr!(
+                            "app-hero-box-unrecognized-read",
+                            name = entry.name_read.clone(),
+                            title = entry.epithet.clone()
+                        ));
+                        if entry.reason == "twice" {
+                            ui.small(tr!("app-hero-box-unrecognized-twice"));
+                        }
+                        ui.horizontal(|ui| {
+                            let picked = self.hero_box.picked.entry(index).or_default();
+                            let shown = self
+                                .hero_box
+                                .known
+                                .iter()
+                                .find(|(id, _)| id == picked)
+                                .map_or(tr!("app-hero-box-pick-hero"), |(_, name)| name.as_str());
+                            egui::ComboBox::from_id_salt(("unrecognized-pick", index))
+                                .selected_text(shown)
+                                .height(400.0)
+                                .show_ui(ui, |ui| {
+                                    for (id, name) in &self.hero_box.known {
+                                        ui.selectable_value(picked, id.clone(), name);
+                                    }
+                                });
+                            if ui
+                                .add_enabled(
+                                    !picked.is_empty(),
+                                    egui::Button::new(tr!("app-hero-box-assign")),
+                                )
+                                .clicked()
+                            {
+                                action = Some((index, Assignment::Hero(picked.clone())));
+                            }
+                            ui.add_space(SpaceTokens::MD);
+                            let typed = self.hero_box.typed.entry(index).or_default();
+                            ui.add(
+                                egui::TextEdit::singleline(typed)
+                                    .hint_text(tr!("app-hero-box-new-hero-hint"))
+                                    .desired_width(160.0),
+                            );
+                            if ui
+                                .add_enabled(
+                                    typed.trim().len() >= 2,
+                                    egui::Button::new(tr!("app-hero-box-add-new-hero")),
+                                )
+                                .clicked()
+                            {
+                                action = Some((index, Assignment::New(typed.trim().to_owned())));
+                            }
+                        });
+                    });
+                });
+                ui.add_space(SpaceTokens::SM);
+            }
+        });
+        ui.add_space(SpaceTokens::MD);
+        if let Some((index, to)) = action {
+            self.assign_unrecognized(index, to);
+        }
+    }
+
     /// Downloads missing portraits on a background thread.
     fn load_portraits(&mut self, context: &egui::Context) {
         let result = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -308,6 +474,7 @@ impl PlayerApp {
             });
         });
         ui.add_space(SpaceTokens::MD);
+        self.unrecognized_heroes(ui);
         let owned = self
             .hero_box
             .heroes

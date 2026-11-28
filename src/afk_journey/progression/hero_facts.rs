@@ -1,6 +1,7 @@
 //! Facts from github.com/arnecls/afjk-characters. The repository has no
 //! license, so only game facts are taken (faction, class, damage type,
-//! range, cooldowns, unlock levels), never its texts. Fetched at run time.
+//! range, cooldowns, unlock levels, the title shown above the hero's name),
+//! never its texts. Fetched at run time.
 
 use super::hero_db::{HeroFacts, SkillFacts};
 use crate::afk_journey::error::ActionError;
@@ -139,10 +140,75 @@ pub fn fetch_facts(
     Ok(facts)
 }
 
+/// The heroes' titles from afjk-characters' `roster.json`: per hero its
+/// names there (display name, aliases, the name in its title) and the title
+/// shown above the name in the game ("Phraesto - Misty Scorpion" gives
+/// "Misty Scorpion").
+pub fn parse_titles(roster: &Value) -> Vec<(Vec<String>, String)> {
+    let Some(heroes) = roster.get("heroes").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    heroes
+        .iter()
+        .filter_map(|hero| {
+            let (name, title) = hero.get("title")?.as_str()?.split_once(" - ")?;
+            let title = title.trim();
+            if title.is_empty() {
+                return None;
+            }
+            let mut names = vec![name.trim().to_owned()];
+            names.extend(
+                hero.get("display_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            );
+            names.extend(
+                hero.get("aliases")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
+            Some((names, title.to_owned()))
+        })
+        .collect()
+}
+
+/// The heroes' titles; empty (and logged) when they cannot be loaded, so the
+/// stored ones are used.
+pub fn fetch_titles(log: &mut impl FnMut(String)) -> Vec<(Vec<String>, String)> {
+    match download("roster.json") {
+        Ok(roster) => parse_titles(&roster),
+        Err(error) => {
+            log(tr!("hero-db-facts-unavailable", error = error));
+            Vec::new()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn titles_come_with_every_name_of_the_hero() {
+        let roster = json!({"heroes": [
+            {"id": "phraesto", "display_name": "Phraesto",
+             "title": "Phraesto - Misty Scorpion", "aliases": ["Phraesto"]},
+            {"id": "twins", "display_name": "Twins",
+             "title": "Elijah & Lailah - Celestial Twins",
+             "aliases": ["Elijah & Lailah", "Twins"]},
+            {"id": "nameless", "display_name": "Nameless", "title": "Nameless"}
+        ]});
+        let titles = parse_titles(&roster);
+        assert_eq!(titles.len(), 2);
+        assert_eq!(titles[0].1, "Misty Scorpion");
+        assert_eq!(titles[1].1, "Celestial Twins");
+        assert!(titles[1].0.contains(&"Elijah & Lailah".to_owned()));
+        assert!(titles[1].0.contains(&"Twins".to_owned()));
+    }
 
     fn thoran() -> serde_json::Value {
         json!({

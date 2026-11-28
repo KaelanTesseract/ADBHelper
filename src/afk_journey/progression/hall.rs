@@ -83,30 +83,79 @@ pub(super) fn hero_name(screen: &Screen) -> Option<String> {
 }
 
 fn name_from_header(screen: &Screen) -> Option<String> {
-    // The isolated header avoids split or missing names during hero transitions.
-    let name = image::imageops::crop_imm(&screen.gray, 112, 52, 613, 99).to_image();
     // Pale backdrops such as Lily May's require a higher threshold.
-    [210, 197].into_iter().find_map(|threshold| {
-        let mut patch = GrayImage::from_pixel(name.width() + 32, name.height() + 32, Luma([255]));
-        for (x, y, pixel) in name.enumerate_pixels() {
-            if pixel.0[0] >= threshold {
-                patch.put_pixel(x + 16, y + 16, Luma([0]));
-            }
+    [210, 197]
+        .into_iter()
+        .find_map(|threshold| header_name(screen, threshold))
+}
+
+/// The stylized name in the isolated header, read with letters at least
+/// `threshold` bright. The isolated header avoids split or missing names
+/// during hero transitions.
+fn header_name(screen: &Screen, threshold: u8) -> Option<String> {
+    let name = image::imageops::crop_imm(&screen.gray, 112, 52, 613, 99).to_image();
+    let mut patch = GrayImage::from_pixel(name.width() + 32, name.height() + 32, Luma([255]));
+    for (x, y, pixel) in name.enumerate_pixels() {
+        if pixel.0[0] >= threshold {
+            patch.put_pixel(x + 16, y + 16, Luma([0]));
         }
-        let patch = image::imageops::resize(
-            &patch,
-            patch.width() * 3,
-            patch.height() * 3,
-            image::imageops::FilterType::CatmullRom,
-        );
-        let lines = ocr::recognize(&patch).ok()?;
-        lines
-            .iter()
-            .filter(|line| line.height >= 108.0 && line.text.chars().any(char::is_alphabetic))
-            .max_by(|a, b| a.height.total_cmp(&b.height))
-            .map(|line| ascii_key(&line.text))
-            .filter(|name| name.len() >= 2)
+    }
+    let patch = image::imageops::resize(
+        &patch,
+        patch.width() * 3,
+        patch.height() * 3,
+        image::imageops::FilterType::CatmullRom,
+    );
+    let lines = ocr::recognize(&patch).ok()?;
+    lines
+        .iter()
+        .filter(|line| line.height >= 108.0 && line.text.chars().any(char::is_alphabetic))
+        .max_by(|a, b| a.height.total_cmp(&b.height))
+        .map(|line| ascii_key(&line.text))
+        .filter(|name| name.len() >= 2)
+}
+
+/// Every reading of the profile's stylized name: the header at several
+/// brightness thresholds and the line on the whole screen. The OCR misreads
+/// the lettering differently at each, so the hero is looked up with all.
+pub(super) fn name_reads(screen: &Screen) -> Vec<String> {
+    if !hero_profile(screen) {
+        return Vec::new();
+    }
+    let mut reads: Vec<String> = [210, 197, 225, 185]
+        .into_iter()
+        .filter_map(|threshold| header_name(screen, threshold))
+        .collect();
+    reads.extend(hero_name(screen));
+    reads.sort();
+    reads.dedup();
+    reads
+}
+
+/// The hero's title in plain letters above its name ("Misty Scorpion" over
+/// Phraesto), as a name key. Every hero has its own.
+pub(super) fn hero_epithet(screen: &Screen) -> Option<String> {
+    screen.lines.iter().find_map(|line| {
+        // Some profiles sit a little higher ("Celestial of Dreams" at y 3).
+        if !(140.0..600.0).contains(&line.x)
+            || !(0.0..50.0).contains(&line.y)
+            || !(16.0..45.0).contains(&line.height)
+        {
+            return None;
+        }
+        let title = ascii_key(&line.text);
+        (title.len() >= 5
+            && title
+                .bytes()
+                .all(|character| character.is_ascii_alphabetic()))
+        .then_some(title)
     })
+}
+
+/// The header with title, name and badges, kept for heroes the scan could
+/// not name so the user can recognize them.
+pub(super) fn header_picture(screen: &Screen) -> image::RgbImage {
+    image::imageops::crop_imm(&screen.color, 20, 0, 720, 250).to_image()
 }
 
 fn model_view(screen: &Screen) -> bool {
@@ -147,20 +196,7 @@ impl HeroNameplate {
                 outline.push(u8::from(light >= 180 && light - dark >= 24));
             }
         }
-        let title = screen.lines.iter().find_map(|line| {
-            if !(140.0..600.0).contains(&line.x)
-                || !(16.0..50.0).contains(&line.y)
-                || !(16.0..40.0).contains(&line.height)
-            {
-                return None;
-            }
-            let title = ascii_key(&line.text);
-            (title.len() >= 5
-                && title
-                    .bytes()
-                    .all(|character| character.is_ascii_alphabetic()))
-            .then_some(title)
-        });
+        let title = hero_epithet(screen);
         (outline
             .iter()
             .map(|&pixel| usize::from(pixel))
@@ -1057,5 +1093,35 @@ mod tests {
         assert!(exclusive_equipment(&captured("weapon_final"), "kruger"));
         assert!(!exclusive_equipment(&captured("weapon_final"), "parisa"));
         assert!(swap_confirm(&captured("weapon_final")).is_none());
+    }
+
+    #[test]
+    #[ignore = "prints name readings of private profile captures (ADBHELPER_TEST_HERO_DB)"]
+    fn print_profile_name_readings() {
+        let folder = std::env::var_os("ADBHELPER_TEST_HERO_DB").expect("capture folder");
+        let mut files: Vec<_> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("profile-"))
+            })
+            .collect();
+        files.sort();
+        for file in files {
+            let screen = Screen::decode(&std::fs::read(&file).unwrap()).unwrap();
+            println!(
+                "{}: names {:?}, title {:?}",
+                file.display(),
+                name_reads(&screen),
+                hero_epithet(&screen)
+            );
+            for line in screen.lines.iter().filter(|line| line.y < 120.0) {
+                println!(
+                    "   {:?} x {} y {} h {}",
+                    line.text, line.x, line.y, line.height
+                );
+            }
+        }
     }
 }

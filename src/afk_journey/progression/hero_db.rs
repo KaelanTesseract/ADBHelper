@@ -15,6 +15,9 @@ pub struct HeroDatabase {
     /// Local date and time of the last write, "2026-11-27 15:00:00".
     pub updated: String,
     pub heroes: BTreeMap<String, HeroRecord>,
+    /// Heroes a scan read but could not name for certain. The Hero Box shows
+    /// them until the user picks the right hero.
+    pub unrecognized: Vec<Unrecognized>,
 }
 
 impl Default for HeroDatabase {
@@ -23,6 +26,7 @@ impl Default for HeroDatabase {
             version: 1,
             updated: String::new(),
             heroes: BTreeMap::new(),
+            unrecognized: Vec::new(),
         }
     }
 }
@@ -45,8 +49,58 @@ pub struct HeroRecord {
     pub progress: Option<Progress>,
     pub stats: Option<Stats>,
     pub skills: Vec<Skill>,
-    /// Where each part came from: "list", "facts", "stats", "skills".
+    /// Where each part came from: "list", "facts", "stats", "skills", and
+    /// "user" for a hero the user added in the Hero Box.
     pub sources: BTreeMap<String, String>,
+    /// The title above the hero's name on its profile ("Misty Scorpion");
+    /// every hero has its own, so it identifies the profile.
+    pub epithet: String,
+    /// Misread names the user assigned to this hero (name keys).
+    pub read_names: Vec<String>,
+}
+
+/// A hero profile the scan could not name for certain.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Unrecognized {
+    /// The name as the OCR read it.
+    pub name_read: String,
+    /// The title above the name as read (name key); may be empty.
+    pub epithet: String,
+    pub stars: Option<u32>,
+    pub progress: Option<Progress>,
+    pub stats: Option<Stats>,
+    /// Profile cut and the header with title and name, files in the
+    /// portraits folder.
+    pub portrait: Option<String>,
+    pub header: Option<String>,
+    /// "unknown": no hero fits; "twice": two profiles of one scan were read
+    /// as the same hero.
+    pub reason: String,
+}
+
+/// Who an unrecognized hero is, as the user picked it in the Hero Box.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Assignment {
+    /// A hero of the database, by id.
+    Hero(String),
+    /// A hero no list knows yet, by name.
+    New(String),
+}
+
+/// True for heroes from the roster or added by the user; only these can be
+/// found by a scan. Records from misread names are not.
+pub fn is_known(record: &HeroRecord) -> bool {
+    record.sources.contains_key("list") || record.sources.contains_key("user")
+}
+
+/// True when `read` is at least as new as `stored` (dates "YYYY-MM-DD").
+fn newer(read: Option<&str>, stored: Option<&str>) -> bool {
+    match (read, stored) {
+        (Some(read), Some(stored)) => read >= stored,
+        (Some(_), None) => true,
+        _ => false,
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -313,6 +367,144 @@ impl HeroDatabase {
                 .insert("facts".into(), "afjk-characters".into());
         }
     }
+
+    /// Adds titles from afjk-characters: `(names, title)` per hero, where
+    /// `names` are the hero's names and aliases there ("Natsu", "Twins",
+    /// "Elijah & Lailah"). A hero is found by a name, or by the start of its
+    /// longer name ("Natsu" for "Natsu Dragneel"), and only when that is clear.
+    pub fn merge_epithets(&mut self, titles: &[(Vec<String>, String)]) {
+        use crate::afk_journey::text_match::ascii_key;
+        for (names, title) in titles {
+            let keys: Vec<String> = names
+                .iter()
+                .flat_map(|name| [ascii_key(name), ascii_key(&name.replace('&', "and"))])
+                .filter(|key| key.len() >= 3)
+                .collect();
+            let fits = |exact: bool| -> Vec<String> {
+                self.heroes
+                    .iter()
+                    .filter(|(_, record)| is_known(record))
+                    .filter(|(_, record)| {
+                        let name = ascii_key(&record.name);
+                        keys.iter().any(|key| {
+                            if exact {
+                                &name == key
+                            } else {
+                                key.len() >= 4 && name.starts_with(key.as_str())
+                            }
+                        })
+                    })
+                    .map(|(id, _)| id.clone())
+                    .collect()
+            };
+            let mut found = fits(true);
+            if found.is_empty() {
+                found = fits(false);
+            }
+            if let [id] = found.as_slice() {
+                let record = self.heroes.get_mut(id).expect("id was just found");
+                title.trim().clone_into(&mut record.epithet);
+            }
+        }
+    }
+
+    /// Keeps an unrecognized hero; a later reading of the same profile (same
+    /// title, or same name when no title was read) replaces the earlier one.
+    pub fn add_unrecognized(&mut self, entry: Unrecognized) {
+        let same = |old: &Unrecognized| {
+            if entry.epithet.is_empty() {
+                old.epithet.is_empty() && old.name_read == entry.name_read
+            } else {
+                old.epithet == entry.epithet
+            }
+        };
+        self.unrecognized.retain(|old| !same(old));
+        self.unrecognized.push(entry);
+    }
+
+    /// Records left from misread names in older versions become
+    /// unrecognized heroes for the user to assign.
+    pub fn move_strays(&mut self) {
+        let strays: Vec<String> = self
+            .heroes
+            .iter()
+            .filter(|(_, record)| !is_known(record))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in strays {
+            let Some(record) = self.heroes.remove(&id) else {
+                continue;
+            };
+            if !record.owned {
+                continue;
+            }
+            self.add_unrecognized(Unrecognized {
+                name_read: record.name,
+                epithet: String::new(),
+                stars: record.stars,
+                progress: record.progress,
+                stats: record.stats,
+                portrait: record.portrait,
+                header: None,
+                reason: "unknown".into(),
+            });
+        }
+    }
+
+    /// Puts the unrecognized hero at `index` where the user said it belongs
+    /// and remembers its title and misread name for later scans. Returns the
+    /// hero's id.
+    pub fn assign(&mut self, index: usize, to: Assignment) -> Result<String, String> {
+        use crate::afk_journey::text_match::ascii_key;
+        if index >= self.unrecognized.len() {
+            return Err(format!("no unrecognized hero {index}"));
+        }
+        let id = match &to {
+            Assignment::Hero(id) if self.heroes.contains_key(id) => id.clone(),
+            Assignment::Hero(id) => return Err(format!("unknown hero {id}")),
+            Assignment::New(name) if ascii_key(name).len() >= 2 => {
+                let id = hero_id(name);
+                let record = self.record(name);
+                record.sources.insert("user".into(), "hero-box".into());
+                id
+            }
+            Assignment::New(name) => return Err(format!("invalid name {name:?}")),
+        };
+        let entry = self.unrecognized.remove(index);
+        let title_taken = !entry.epithet.is_empty()
+            && self.heroes.iter().any(|(other, record)| {
+                other != &id && ascii_key(&record.epithet) == ascii_key(&entry.epithet)
+            });
+        let record = self.heroes.get_mut(&id).expect("id exists");
+        record.owned = true;
+        let scanned = |progress: &Option<Progress>| progress.as_ref().map(|p| p.scanned.clone());
+        if newer(
+            scanned(&entry.progress).as_deref(),
+            scanned(&record.progress).as_deref(),
+        ) {
+            record.progress = entry.progress;
+            record.stars = entry.stars.or(record.stars);
+        }
+        let stats_day = |stats: &Option<Stats>| stats.as_ref().map(|s| s.scanned.clone());
+        if newer(
+            stats_day(&entry.stats).as_deref(),
+            stats_day(&record.stats).as_deref(),
+        ) {
+            record.stats = entry.stats;
+        }
+        if record.epithet.is_empty() && !entry.epithet.is_empty() && !title_taken {
+            record.epithet = entry.epithet;
+        }
+        let read = ascii_key(&entry.name_read);
+        if read.len() >= 2 && read != ascii_key(&record.name) && !record.read_names.contains(&read)
+        {
+            record.read_names.push(read);
+        }
+        if record.portrait.is_none() {
+            record.portrait = entry.portrait;
+        }
+        Ok(id)
+    }
 }
 
 #[cfg(test)]
@@ -469,5 +661,175 @@ mod tests {
         assert_eq!(db.version, 1);
         assert_eq!(db.heroes["frieren"].name, "Frieren");
         assert!(db.heroes["frieren"].skills.is_empty());
+    }
+
+    fn listed(names: &[&str]) -> HeroDatabase {
+        let heroes: Vec<Value> = names.iter().map(|name| json!({ "name": name })).collect();
+        let mut db = HeroDatabase::default();
+        db.merge_roster(&json!({ "heroes": heroes }));
+        db
+    }
+
+    fn progress(ascension: &str, ex_weapon: u32, scanned: &str) -> Option<Progress> {
+        Some(Progress {
+            level: None,
+            ascension: Some(ascension.into()),
+            ex_weapon: Some(ex_weapon),
+            scanned: scanned.into(),
+        })
+    }
+
+    #[test]
+    fn titles_reach_heroes_under_every_name() {
+        let mut db = listed(&[
+            "Phraesto",
+            "Natsu Dragneel",
+            "Elijah & Lailah",
+            "Smokey and Meerky",
+            "Lucius",
+            "Lucca",
+        ]);
+        db.merge_epithets(&[
+            (vec!["Phraesto".into()], "Misty Scorpion".into()),
+            (vec!["Natsu".into()], "Fire Dragon Slayer Mage".into()),
+            (
+                vec!["Elijah & Lailah".into(), "Twins".into()],
+                "Celestial Twins".into(),
+            ),
+            (
+                vec!["Smokey & Meerky".into()],
+                "Wasteland Apothecary".into(),
+            ),
+            // "Luc" is too short to point at one hero.
+            (vec!["Luc".into()], "Nobody".into()),
+        ]);
+        assert_eq!(db.heroes["phraesto"].epithet, "Misty Scorpion");
+        assert_eq!(
+            db.heroes["natsu-dragneel"].epithet,
+            "Fire Dragon Slayer Mage"
+        );
+        assert_eq!(db.heroes["elijah-&-lailah"].epithet, "Celestial Twins");
+        assert_eq!(
+            db.heroes["smokey-and-meerky"].epithet,
+            "Wasteland Apothecary"
+        );
+        assert_eq!(db.heroes["lucius"].epithet, "");
+        assert_eq!(db.heroes["lucca"].epithet, "");
+    }
+
+    #[test]
+    fn records_from_misread_names_wait_for_the_user() {
+        let mut db = listed(&["Solise"]);
+        let stray = db.record("lige");
+        stray.owned = true;
+        stray.progress = progress("Paragon 4", 10, "2026-11-28");
+        stray.portrait = Some("lige.png".into());
+        db.record("never-owned");
+        db.move_strays();
+        assert_eq!(db.heroes.keys().collect::<Vec<_>>(), ["solise"]);
+        assert_eq!(db.unrecognized.len(), 1);
+        let waiting = &db.unrecognized[0];
+        assert_eq!(waiting.name_read, "lige");
+        assert_eq!(waiting.portrait.as_deref(), Some("lige.png"));
+        assert_eq!(waiting.progress, progress("Paragon 4", 10, "2026-11-28"));
+    }
+
+    #[test]
+    fn the_same_profile_is_kept_once() {
+        let mut db = HeroDatabase::default();
+        for ex_weapon in [5, 10] {
+            db.add_unrecognized(Unrecognized {
+                name_read: format!("read{ex_weapon}"),
+                epithet: "palevotary".into(),
+                progress: progress("Supreme", ex_weapon, "2026-11-28"),
+                ..Unrecognized::default()
+            });
+        }
+        db.add_unrecognized(Unrecognized {
+            name_read: "lige".into(),
+            ..Unrecognized::default()
+        });
+        assert_eq!(db.unrecognized.len(), 2);
+        assert_eq!(
+            db.unrecognized[0].progress,
+            progress("Supreme", 10, "2026-11-28")
+        );
+    }
+
+    #[test]
+    fn an_assigned_hero_takes_the_reading_and_remembers_it() {
+        let mut db = listed(&["Tephesia", "Temesia"]);
+        db.heroes.get_mut("temesia").unwrap().epithet = "Lightsavior".into();
+        db.heroes.get_mut("tephesia").unwrap().progress = progress("Supreme", 5, "2026-11-20");
+        db.add_unrecognized(Unrecognized {
+            name_read: "lige".into(),
+            epithet: "palevotary".into(),
+            stars: Some(3),
+            progress: progress("Paragon 4", 10, "2026-11-28"),
+            portrait: Some("unrecognized-palevotary.png".into()),
+            reason: "unknown".into(),
+            ..Unrecognized::default()
+        });
+        assert_eq!(
+            db.assign(0, Assignment::Hero("tephesia".into())),
+            Ok("tephesia".into())
+        );
+        assert!(db.unrecognized.is_empty());
+        let tephesia = &db.heroes["tephesia"];
+        assert!(tephesia.owned);
+        assert_eq!(tephesia.progress, progress("Paragon 4", 10, "2026-11-28"));
+        assert_eq!(tephesia.stars, Some(3));
+        assert_eq!(tephesia.epithet, "palevotary");
+        assert_eq!(tephesia.read_names, ["lige"]);
+        assert_eq!(
+            tephesia.portrait.as_deref(),
+            Some("unrecognized-palevotary.png")
+        );
+    }
+
+    #[test]
+    fn an_assignment_never_takes_another_heros_title_or_older_progress() {
+        let mut db = listed(&["Tephesia", "Temesia"]);
+        db.heroes.get_mut("temesia").unwrap().epithet = "Lightsavior".into();
+        db.heroes.get_mut("tephesia").unwrap().progress = progress("Paragon 1", 10, "2026-11-28");
+        db.add_unrecognized(Unrecognized {
+            name_read: "tephesia".into(),
+            epithet: "lightsavior".into(),
+            progress: progress("Supreme", 5, "2026-11-20"),
+            ..Unrecognized::default()
+        });
+        db.assign(0, Assignment::Hero("tephesia".into())).unwrap();
+        let tephesia = &db.heroes["tephesia"];
+        assert_eq!(tephesia.epithet, "");
+        assert_eq!(tephesia.progress, progress("Paragon 1", 10, "2026-11-28"));
+        assert!(
+            tephesia.read_names.is_empty(),
+            "her own name is no misreading"
+        );
+    }
+
+    #[test]
+    fn a_new_hero_can_be_added_by_name() {
+        let mut db = listed(&["Solise"]);
+        db.add_unrecognized(Unrecognized {
+            name_read: "lige".into(),
+            epithet: "wanderingfox".into(),
+            ..Unrecognized::default()
+        });
+        assert!(db.assign(0, Assignment::New(" ".into())).is_err());
+        assert!(db.assign(0, Assignment::Hero("nobody".into())).is_err());
+        assert_eq!(
+            db.unrecognized.len(),
+            1,
+            "a failed assignment keeps the hero"
+        );
+        assert_eq!(
+            db.assign(0, Assignment::New("Liga".into())),
+            Ok("liga".into())
+        );
+        let liga = &db.heroes["liga"];
+        assert!(is_known(liga));
+        assert!(liga.owned);
+        assert_eq!(liga.epithet, "wanderingfox");
     }
 }

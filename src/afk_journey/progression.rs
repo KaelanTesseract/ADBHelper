@@ -5,6 +5,7 @@ mod hall;
 pub mod hero_card;
 pub mod hero_db;
 mod hero_facts;
+mod hero_identity;
 pub mod hero_portraits;
 mod hero_skills;
 mod hero_stats;
