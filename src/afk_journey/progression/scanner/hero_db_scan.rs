@@ -152,7 +152,8 @@ pub(super) fn closest_hero(db: &HeroDatabase, key: &str) -> Option<String> {
             } else {
                 distance(key, &name)
             };
-            let allowed = (name.len().max(key.len()) / 3).max(1);
+            // About a third of the letters may be misread, rounded up ("rhvse" → Rhys).
+            let allowed = name.len().max(key.len()).div_ceil(3).max(1);
             (if score <= allowed { score } else { usize::MAX }, id)
         })
         .filter(|(score, _)| *score != usize::MAX)
@@ -561,6 +562,9 @@ mod tests {
     #[test]
     fn misread_names_find_the_closest_hero() {
         let db = roster(&[
+            "Rhys",
+            "Evie",
+            "Thane",
             "Berial",
             "Odie",
             "Estrilda",
@@ -588,6 +592,7 @@ mod tests {
             ("natsu", "natsu-dragneel"),
             ("smokeymeerky", "smokey-and-meerky"),
             ("soise", "solise"),
+            ("rhvse", "rhys"),
         ] {
             assert_eq!(closest_hero(&db, read).as_deref(), Some(hero), "{read}");
         }

@@ -51,6 +51,17 @@ Mozilla's root certificate list from the
 Community Data License Agreement - Permissive 2.0:
 [`licenses/webpki-roots-CDLA-Permissive-2.0.txt`](licenses/webpki-roots-CDLA-Permissive-2.0.txt).
 
+## Hero portraits
+
+The installer brings hero portraits for the Hero Box (`portraits` next to
+`ADBHelper.exe`); heroes it does not cover are downloaded once to
+`%APPDATA%\ADBHelper\heroes\portraits\web`. They come from
+[arnecls/afjk-characters](https://github.com/arnecls/afjk-characters), which
+takes them from the [AFK Journey Fandom wiki](https://afk-journey.fandom.com/).
+The pictures are artwork of AFK Journey; all rights belong to its publisher.
+They are not part of this repository, carry no license, and are shown only
+inside ADBHelper.
+
 ## Rust crates
 
 All other code comes from Rust crates under the permissive licenses allowed in

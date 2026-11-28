@@ -22,6 +22,10 @@ Copy-Item -LiteralPath 'target/release/adbhelper.exe' -Destination $asset -Force
 $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath "$asset.sha256" -Value "$hash  ADBHelper-Windows-x64.exe" -Encoding ascii
 
+# Hero portraits for the Hero Box ship with the installer (game art from
+# afjk-characters, see THIRD_PARTY.md); they are fetched here, not kept in git.
+& ./scripts/Fetch-Portraits.ps1 -Destination 'target/portraits'
+
 # Installer for new users (Inno Setup 6). The updater keeps using the plain EXE above.
 $iscc = @(
     (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),

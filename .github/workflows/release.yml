@@ -21,6 +21,8 @@ jobs:
           }
       - name: Test and build with mandatory patchnotes
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/Build-Release.ps1 -Version $env:GITHUB_REF_NAME
       - name: Publish release and patchnotes
         shell: pwsh

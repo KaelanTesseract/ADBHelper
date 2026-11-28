@@ -1,7 +1,8 @@
 //! Hero portraits from github.com/arnecls/afjk-characters
 //! (`site/assets/portraits/<Name>.png`). The pictures are game art without
-//! a license, so they are never shipped: each one is downloaded once to the
-//! user's portrait folder and used from there.
+//! a license; the maintainer decided to ship them with the installer (an
+//! exception, credited in THIRD_PARTY.md, never kept in git). Portraits the
+//! installer did not bring are downloaded once to the user's portrait folder.
 
 use super::hero_db::portrait_folder;
 use crate::afk_journey::error::ActionError;
@@ -63,12 +64,29 @@ fn portrait_file_for(hero_name: &str, files: &[String]) -> Option<String> {
 
 /// The downloaded portrait of a hero, if there is one.
 pub fn web_portrait(hero_name: &str) -> Option<PathBuf> {
-    let folder = web_folder().ok()?;
-    let files: Vec<String> = std::fs::read_dir(&folder)
-        .ok()?
-        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-        .collect();
-    portrait_file_for(hero_name, &files).map(|file| folder.join(file))
+    [bundled_folder(), web_folder().ok()]
+        .into_iter()
+        .flatten()
+        .find_map(|folder| {
+            let files = file_names(&folder);
+            portrait_file_for(hero_name, &files).map(|file| folder.join(file))
+        })
+}
+
+/// Portraits the installer put next to ADBHelper.exe (`portraits`).
+fn bundled_folder() -> Option<PathBuf> {
+    let folder = std::env::current_exe().ok()?.parent()?.join("portraits");
+    folder.is_dir().then_some(folder)
+}
+
+fn file_names(folder: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(folder)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// File names of the PNG portraits in the GitHub folder listing.
@@ -162,13 +180,15 @@ pub fn fetch_missing(
             return Ok(0);
         }
     };
-    let have: BTreeSet<String> = std::fs::read_dir(&folder)
-        .map(|entries| {
-            entries
-                .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-                .collect()
-        })
-        .unwrap_or_default();
+    // Portraits that came with the installer are not downloaded again.
+    let have: BTreeSet<String> = file_names(&folder)
+        .into_iter()
+        .chain(
+            bundled_folder()
+                .map(|bundled| file_names(&bundled))
+                .unwrap_or_default(),
+        )
+        .collect();
     let wanted = missing(&portrait_names(&listing), &have);
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let _ = std::fs::write(folder.join(LISTED), b"");

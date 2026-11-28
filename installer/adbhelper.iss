@@ -50,6 +50,7 @@ Source: "..\target\release\adbhelper.exe"; DestDir: "{app}"; DestName: "ADBHelpe
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD_PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\target\portraits\*"; DestDir: "{app}\portraits"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\ADBHelper"; Filename: "{app}\ADBHelper.exe"
