@@ -130,11 +130,29 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
 
 /// Downloads every portrait that is not stored yet; returns how many were
 /// added. Failures are logged once; stored portraits stay in use.
+/// File in the portrait folder whose time says when the list was last asked.
+const LISTED: &str = ".listed";
+/// GitHub allows few requests without sign-in, so the list is asked weekly.
+const LISTING_EVERY: std::time::Duration = std::time::Duration::from_secs(7 * 86_400);
+
+/// True when the folder listing should be asked again, given how long ago it
+/// was last asked.
+fn listing_due(since_last: Option<std::time::Duration>) -> bool {
+    since_last.is_none_or(|age| age >= LISTING_EVERY)
+}
+
 pub fn fetch_missing(
     log: &mut impl FnMut(String),
     cancelled: &AtomicBool,
 ) -> Result<usize, ActionError> {
     let folder = web_folder().map_err(|error| error.to_string())?;
+    let since_last = std::fs::metadata(folder.join(LISTED))
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.elapsed().ok());
+    if !listing_due(since_last) {
+        return Ok(0);
+    }
     let listing = match download(LISTING).and_then(|bytes| {
         serde_json::from_slice::<Value>(&bytes).map_err(|error| error.to_string())
     }) {
@@ -152,6 +170,8 @@ pub fn fetch_missing(
         })
         .unwrap_or_default();
     let wanted = missing(&portrait_names(&listing), &have);
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let _ = std::fs::write(folder.join(LISTED), b"");
     if wanted.is_empty() {
         return Ok(0);
     }
@@ -240,6 +260,14 @@ mod tests {
         // A near name of another hero is not a match.
         let others = vec!["temesia.png".to_owned()];
         assert_eq!(portrait_file_for("Tephesia", &others), None);
+    }
+
+    #[test]
+    fn the_listing_is_asked_at_most_once_a_week() {
+        let day = std::time::Duration::from_secs(86_400);
+        assert!(listing_due(None));
+        assert!(!listing_due(Some(day * 3)));
+        assert!(listing_due(Some(day * 8)));
     }
 
     #[test]

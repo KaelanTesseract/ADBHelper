@@ -206,6 +206,43 @@ pub(super) fn merge_strays(db: &mut HeroDatabase) {
     }
 }
 
+/// True when the profile should be read once more: the ascension is
+/// missing, or a hero with an EX weapon shows no level. Badges still
+/// animate right after the profile opens.
+pub(super) fn read_again(ascension: Option<&str>, ex_weapon: Option<u32>) -> bool {
+    match ascension {
+        None => true,
+        Some(read) => has_weapon(read) && ex_weapon.is_none(),
+    }
+}
+
+/// Ascension and EX weapon level of the open profile, read up to four
+/// times while something is missing. `profile` becomes the last screen read.
+fn read_progress(
+    driver: &Driver<'_>,
+    profile: &mut super::Screen,
+) -> Result<(Option<String>, Option<u32>), ActionError> {
+    let mut found_ascension = None;
+    let mut found_level = None;
+    for attempt in 0..4 {
+        if attempt > 0 {
+            vision::settle_cancellable(driver.cancelled)?;
+            *profile = driver.read()?;
+        }
+        if found_ascension.is_none() {
+            found_ascension = ascension(profile)?;
+        }
+        if found_level.is_none() && found_ascension.is_none_or(has_weapon) {
+            found_level = exclusive_level(profile)?;
+        }
+        if !read_again(found_ascension, found_level) {
+            break;
+        }
+    }
+    let level = found_level.filter(|_| found_ascension.is_some_and(has_weapon));
+    Ok((found_ascension.map(str::to_owned), level))
+}
+
 /// What the AFKJ Tracker scan read: roster name, ascension, EX weapon level.
 pub(super) type ScannedProgress = (String, String, Option<u32>);
 
@@ -341,11 +378,7 @@ pub(super) fn scan(
             break;
         }
         if !name.is_empty() {
-            let ascension = ascension(&profile)?.map(str::to_owned);
-            let ex_weapon = match ascension.as_deref() {
-                Some(read) if has_weapon(read) => exclusive_level(&profile)?,
-                _ => None,
-            };
+            let (ascension, ex_weapon) = read_progress(driver, &mut profile)?;
             let weapon = ascension.as_deref().is_some_and(has_weapon);
             // The EX level gives the stars; counting them is only the fallback.
             let stars = ex_weapon
@@ -663,6 +696,18 @@ mod tests {
             "an unknown hero gets its own record"
         );
         assert_eq!(db.heroes.len(), 2);
+    }
+
+    #[test]
+    fn missing_ascension_or_ex_level_is_read_again() {
+        assert!(read_again(None, None));
+        assert!(
+            read_again(Some("Supreme"), None),
+            "Supreme has an EX weapon"
+        );
+        assert!(!read_again(Some("Supreme"), Some(13)));
+        assert!(!read_again(Some("Legendary+"), None), "no EX weapon yet");
+        assert!(!read_again(Some("Paragon 4"), Some(25)));
     }
 
     #[test]
