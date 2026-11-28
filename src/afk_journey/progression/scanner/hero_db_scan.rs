@@ -134,6 +134,25 @@ fn distance(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
+/// Letter groups the OCR reads for one letter of the stylized hero names
+/// ("He" as "fle", "w" as "vu"), replaced before names are compared.
+const OCR_SWAPS: [(&str, &str); 5] = [
+    ("fl", "h"),
+    ("vu", "w"),
+    ("vv", "w"),
+    ("rn", "m"),
+    ("cl", "d"),
+];
+
+/// A misread name key with the typical OCR swaps undone.
+fn unswapped(key: &str) -> String {
+    OCR_SWAPS
+        .iter()
+        .fold(key.to_owned(), |text, (read, letter)| {
+            text.replace(read, letter)
+        })
+}
+
 /// The roster hero whose name is closest to a misread profile name key
 /// ("lvca" → Lyca, "natsu" → Natsu Dragneel). Only a clear single best match
 /// counts; a name that fits no hero gives `None`.
@@ -150,7 +169,7 @@ pub(super) fn closest_hero(db: &HeroDatabase, key: &str) -> Option<String> {
             let score = if key.len() >= 4 && name.starts_with(key) {
                 1
             } else {
-                distance(key, &name)
+                distance(key, &name).min(distance(&unswapped(key), &name))
             };
             // About a third of the letters may be misread, rounded up ("rhvse" → Rhys).
             let allowed = name.len().max(key.len()).div_ceil(3).max(1);
@@ -562,6 +581,8 @@ mod tests {
     #[test]
     fn misread_names_find_the_closest_hero() {
         let db = roster(&[
+            "Hewynn",
+            "Eironn",
             "Rhys",
             "Evie",
             "Thane",
@@ -593,6 +614,7 @@ mod tests {
             ("smokeymeerky", "smokey-and-meerky"),
             ("soise", "solise"),
             ("rhvse", "rhys"),
+            ("flevutnn", "hewynn"),
         ] {
             assert_eq!(closest_hero(&db, read).as_deref(), Some(hero), "{read}");
         }
